@@ -514,17 +514,20 @@ async function markSuperseded(target, newId) {
   const file = join(notesDir(), target.id + '.md');
   let text = '';
   try { text = await readFile(file, 'utf8'); } catch { return false; }
-  const parsed = parseNoteFile(text);
-  const meta = {
-    id: target.id,
-    title: parsed.meta.title || target.title || target.id,
-    tags: (parsed.meta.tags || '').split(',').map((s) => s.trim()).filter(Boolean),
-    created: parsed.meta.created || target.created || '',
-    updated: new Date().toISOString(),
-    supersededBy: newId,
-    ...(parsed.meta.sensitive === 'true' ? { sensitive: true } : {}),
-  };
-  await atomicWrite(file, noteFileText(meta, parsed.body));
+  const fmEnd = text.startsWith('---') ? text.indexOf('\n---', 3) : -1;
+  let next;
+  if (fmEnd < 0) {
+    // 没有 front-matter 的旧文件：补一个最小头，正文原样保留。
+    next = `---\nid: ${target.id}\nupdated: ${new Date().toISOString()}\nsupersededBy: ${newId}\n---\n\n${text}`;
+  } else {
+    // 按行改写而不是重新序列化：未知字段（外部工具写入的）不再被静默丢掉。
+    const lines = text.slice(3, fmEnd).split('\n')
+      .filter((line) => line.trim() && !/^(updated|supersededBy)\s*:/.test(line.trim()));
+    lines.push(`updated: ${new Date().toISOString()}`);
+    lines.push(`supersededBy: ${newId}`);
+    next = `---${lines.map((line) => '\n' + line).join('')}\n---${text.slice(fmEnd + 4)}`;
+  }
+  await atomicWrite(file, next);
   return true;
 }
 
@@ -556,7 +559,8 @@ async function writeNote(args) {
       }
       if (!force && !target) {
         const near = [];
-        for (const note of existing.slice(0, 200)) {
+        // 查重只扫最近 500 条：再多会让每次写入退化成全库读盘；命中后仍可 force 写入。
+        for (const note of existing.slice(0, 500)) {
           const sim = similarity(title, content, note.title || '', await readNoteBody(note.id));
           if (sim >= 0.55) near.push({ note, sim });
         }
@@ -1011,6 +1015,16 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
           } catch { /* 响应已发出时忽略 */ }
         };
         try {
+          // Host 必须是本机回环：只比 Origin 与 Host 挡不住 DNS rebinding——
+          // 恶意域名解析到 127.0.0.1 后，Origin 与 Host 都是它自己的名字，仍然“同源”。
+          const host = String(req.headers.host || '').toLowerCase();
+          if (host) {
+            const hostName = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.replace(/:\d+$/, '');
+            if (!['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostName)) {
+              sendJson(403, { error: '仅允许本机页面访问' });
+              return;
+            }
+          }
           // 只接受同源页面调用：带 Origin 时必须与 Host 一致（跨站请求一律拒绝）。
           const origin = req.headers.origin;
           if (origin) {

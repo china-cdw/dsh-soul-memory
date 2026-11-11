@@ -122,6 +122,8 @@ dsh plugin --profile desktop add "$PWD"
 
 ## 工具
 
+下表是默认注册的 12 个工具；开启演化（`config.enabled: true` 并配置 provider/model）后还会注册 `evolve_status`、`evolve_diagnose`、`evolve_request`、`evolve_tree` 等 `evolve_*` 工具，总数最多 19 个。
+
 | 工具 | 用途 | 主要参数 |
 | --- | --- | --- |
 | `memory_write` | 写一条归档笔记 | `title`、`content`、`tags?`、`force?`、`supersedes?` |
@@ -140,6 +142,14 @@ dsh plugin --profile desktop add "$PWD"
 写入规则：`memory_write` 会做近重复检查（相似度 ≥0.55 拒写，加 `force: true` 可强写）。
 
 踩坑是自动记录的：同一会话里某工具报错、之后同工具成功，就记一条「错误 + 生效做法」；同类错误合并计数。判定优先看结构化信号：`isError`、退出码（正则取值，退出码 0 视为成功，`grep` 这类 1 也放过）；只有拿不到结构化信号时，才用正文里的失败字样兜底。读文件类工具和记忆/编码工具自身不记。
+
+### 设置页接口
+
+风格设置页通过同源 `fetch` 调用本机路由 `/dsh-x-memory/persona`（只在宿主提供 `webServer` 时注册）：
+
+- `GET` 返回 `{ persona, presets, maxCustom }`；
+- `POST` 要求 `Content-Type: application/json`、请求体 ≤16KB，返回 200 或 400/403/413/415；
+- 只接受本机回环 Host（`localhost` / `127.0.0.1` / `[::1]`），且带 Origin 时必须与 Host 一致——防止 DNS rebinding 与跨站提示注入。
 
 ---
 

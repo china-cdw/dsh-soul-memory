@@ -3,10 +3,12 @@
 // 运行：node scripts/dsh-memory-audit.mjs
 // 环境：临时 DSH_HOME（不会碰真实记忆）。
 import { mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { assert, callTool, makeCtx, makeHome, suite, waitFor } from './_testkit.mjs';
 import { registerCoreMemory } from '../src/core-memory.js';
+import { snapshotGraph } from '../src/memory/util.js';
 import { readPersona } from '../src/persona.js';
 
 const home = await makeHome('dsh-mem-core-');
@@ -317,6 +319,46 @@ await t.test('persona 文件无 front-matter 时视为 custom 并注入', async 
   const text = await ctx1.sections[0].text();
   assert.match(text, /## 回复风格/);
   assert.match(text, /多用短句/);
+});
+
+await t.test('persona 路由拒绝非本机 Host（DNS rebinding）', async () => {
+  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const res = fakeRes();
+  await route.handler(fakeReq({ method: 'GET', headers: { host: 'evil.example' } }), res);
+  assert.equal(res.statusCode, 403);
+});
+
+await t.test('取代旧记忆时保留未知 front-matter 字段', async () => {
+  const saved = await callTool(tools1, 'memory_write', { title: '取代保留字段', content: '旧结论 A。', force: true });
+  const oldId = /\[([^\]]+)\]/.exec(saved)[1];
+  const file = join(notesDir, oldId + '.md');
+  const text = await readFile(file, 'utf8');
+  // 模拟外部工具写入的未知字段：取代时不能被重新序列化丢掉。
+  await writeFile(file, text.replace(/\nupdated:/, '\nowner: alice\nupdated:'));
+  const next = await callTool(tools1, 'memory_write', {
+    title: '取代保留字段-新', content: '新结论 B。', force: true, supersedes: oldId,
+  });
+  assert.match(next, /已标记为「已被/);
+  const after = await readFile(file, 'utf8');
+  assert.match(after, /owner: alice/);
+  assert.match(after, /supersededBy:/);
+});
+
+await t.test('snapshotGraph 用 VACUUM INTO 把图谱库写进当天快照', async () => {
+  const written = [];
+  const fakeDb = {
+    exec(sql) {
+      const m = /VACUUM INTO '([^']+)'/.exec(sql);
+      if (!m) throw new Error('unexpected sql: ' + sql);
+      writeFileSync(m[1], 'sqlite-bytes');
+      written.push(m[1]);
+    },
+  };
+  const res = await snapshotGraph(fakeDb);
+  assert.equal(res.skipped, false);
+  assert.equal(written.length, 1);
+  assert.match(written[0], /\.snapshots[\\/][^\\/]+[\\/]evolve\.sqlite$/);
+  assert.equal(await readFile(written[0], 'utf8'), 'sqlite-bytes');
 });
 
 const result = t.finish();

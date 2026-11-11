@@ -160,6 +160,36 @@ export async function snapshotMemory({ keep = 7 } = {}) {
   return { skipped: false, dir: dest, copied };
 }
 
+/**
+ * 把会话图谱库并入当天快照。用 SQLite 的 VACUUM INTO 生成一致副本，
+ * 直接 copyFile 会把 WAL 里未 checkpoint 的内容漏掉。
+ * 失败只跳过：图谱库打不开时文件记忆照常可用。
+ */
+export async function snapshotGraph(db, { keep = 7 } = {}) {
+  if (!db || typeof db.exec !== 'function') return { skipped: true };
+  const dir = memoryPath('.snapshots');
+  await mkdir(dir, { recursive: true });
+  const today = new Date().toISOString().slice(0, 10);
+  const names = (await readdir(dir).catch(() => [])).filter((n) => !n.startsWith('.'));
+  let target = names.filter((n) => n.startsWith(today)).sort().pop();
+  if (!target) {
+    target = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    await mkdir(join(dir, target), { recursive: true });
+  }
+  const dest = join(dir, target, 'evolve.sqlite');
+  try {
+    await stat(dest);
+    return { skipped: true, dir: join(dir, target) };
+  } catch { /* 今天还没备份过，继续 */ }
+  try {
+    db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
+    await rotateSnapshots(dir, keep);
+    return { skipped: false, dir: join(dir, target), copied: true };
+  } catch (e) {
+    return { skipped: true, error: e && e.message ? e.message : String(e) };
+  }
+}
+
 /** 按目录 mtime 轮转：时间戳目录名在跨时区/手工改名时不一定有序，mtime 更可靠。 */
 async function rotateSnapshots(dir, keep) {
   const names = (await readdir(dir).catch(() => [])).filter((n) => !n.startsWith('.'));

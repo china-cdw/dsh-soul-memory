@@ -20,6 +20,7 @@ import { createComponents, cwdForAgent } from './src/components.js'
 import { assertVerifier, validationSettings } from './src/validation.js'
 import { runChecks } from './src/probe.js'
 import { registerCoreMemory } from './src/core-memory.js'
+import { snapshotGraph } from './src/memory/util.js'
 
 export const name = 'dsh-x-memory'
 export const inject = ['tools', 'systemPrompt', 'commands']
@@ -225,6 +226,8 @@ export function apply(ctx, input = {}) {
     console.error('dsh-x-memory: 图谱库打开失败，已降级为纯文件记忆（MEMORY.md / notes / 编码规范 / 踩坑记录仍可用）：' + (e?.message ?? e))
     return
   }
+  // 图谱库也进每日快照：文件记忆有备份、图谱没有，等于一半记忆无副本。
+  snapshotGraph(store.db).catch(() => {})
 
   const recorder = new Recorder()
   const disposers = []

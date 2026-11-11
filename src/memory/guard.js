@@ -5,7 +5,8 @@
 //   sensitive —— 疑似凭据赋值，允许落盘但不进系统提示、检索结果里隐藏正文。
 //
 // 机器级规则可以放在 <DSH_HOME>/memory/GUARD.json（{"reject": [...], "sensitive": [...]}），
-// 整份替换默认值；代码里保留一条私钥块兜底规则，数据文件关不掉它（living-memory 的做法）。
+// 按类替换默认值：只写 reject 时 sensitive 仍用内置默认，反之同理；两类都空则整份回落默认。
+// 代码里保留一条私钥块兜底规则，数据文件关不掉它（living-memory 的做法）。
 // 正则非法、文件坏掉都静默退回默认值，守卫本身不能把记忆写崩。
 
 import { readFileSync, statSync } from 'node:fs';

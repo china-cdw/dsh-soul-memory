@@ -122,6 +122,8 @@ To verify, call `memory_brief`: it reports core-memory size, archived note count
 
 ## Tools
 
+The table below lists the 12 tools registered by default. With evolution enabled (`config.enabled: true` plus a provider/model) the `evolve_*` tools (`evolve_status`, `evolve_diagnose`, `evolve_request`, `evolve_tree`, …) are registered too, for at most 19 tools.
+
 | Tool | Purpose | Main arguments |
 | --- | --- | --- |
 | `memory_write` | Write an archived note | `title`, `content`, `tags?`, `force?`, `supersedes?` |
@@ -140,6 +142,14 @@ To verify, call `memory_brief`: it reports core-memory size, archived note count
 Write rules: `memory_write` runs a near-duplicate check (similarity ≥ 0.55 is rejected; pass `force: true` to write anyway).
 
 Mistake notes are captured automatically: within one session, if a tool errors and the same tool later succeeds, a note "error + fix that worked" is recorded, and repeats of the same error are merged into a count. Structured signals come first: `isError` and exit codes (parsed from the result line; exit code 0 counts as success, and benign 1 from tools like `grep` is ignored). Only when no structured signal exists is the response text checked as a fallback. File-reader tools and the memory/coding tools themselves are never captured.
+
+### Settings route
+
+The style settings page calls the local route `/dsh-x-memory/persona` over same-origin `fetch` (registered only when the host provides `webServer`):
+
+- `GET` returns `{ persona, presets, maxCustom }`;
+- `POST` requires `Content-Type: application/json` and a body of at most 16KB; it answers 200 or 400/403/413/415;
+- only loopback hosts (`localhost`, `127.0.0.1`, `[::1]`) are accepted, and any Origin must match the Host — this blocks DNS rebinding and cross-site prompt injection.
 
 ---
 
