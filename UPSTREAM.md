@@ -7,7 +7,7 @@ dsh-x-memory 是 **dsh-soul 2.0.1** 的 fork，并移植了 **dsh-core-memory 1.
 
 | 路径 | 说明 |
 | --- | --- |
-| `src/memory/util.js` | 四层共用的路径 / 原子写 / 写队列 / 敏感信息过滤 |
+| `src/memory/util.js` | 五层共用的路径 / 原子写 / 写队列 / 敏感信息过滤 |
 | `src/core-memory.js` | 移植自 dsh-core-memory，另加 3 处增强（查重、时间衰减、体检） |
 | `src/persona.js` | 移植自 dsh-core-memory，自定义正文持久化修复 |
 | `src/coding.js` | 新增：编码规范固定记忆层（全局 CODING.md + 项目规则文件） |
@@ -28,7 +28,7 @@ dsh-x-memory 是 **dsh-soul 2.0.1** 的 fork，并移植了 **dsh-core-memory 1.
    `coding: { enabled: boolean(input.coding?.enabled, true, 'coding.enabled'), budget: integer(input.coding?.budget, 2000, 400, 8000, 'coding.budget') }`，
    `lessons: { enabled: boolean(input.lessons?.enabled, true, 'lessons.enabled'), budget: integer(input.lessons?.budget, 600, 200, 4000, 'lessons.budget') }`，
    `bridge: { enabled: boolean(input.bridge?.enabled, true, 'bridge.enabled'), sessionsDir: ..., maxSessions: ..., maxChars: ... }`。
-3. 创建 Store 之后：`process.env.DSH_SOUL_DATABASE = config.database`。
+3. 创建 Store 之前先留住原值：`const previousSoulDatabase = process.env.DSH_SOUL_DATABASE`；创建 Store 之后 `process.env.DSH_SOUL_DATABASE = config.database`。插件要能卸载/重载，所以 `stop()` 的 `finally` 里必须还原它（原值为 `undefined` 时 `delete process.env.DSH_SOUL_DATABASE`），启动失败路径同理——否则关掉本插件后，其它插件仍读到我们的数据库路径。
 4. 在合适位置调用：
    `registerCoreMemory(ctx, { graphSearch, graphStats, coding: config.coding, lessons: config.lessons, bridge: config.bridge })`，
    其中 `graphSearch(scope, query)` 用 `recall(store, scope, query, { limit: 6 }).hits`，
@@ -44,9 +44,10 @@ node scripts/sync-upstream.mjs --check
 node scripts/sync-upstream.mjs --from /path/to/dsh-soul
 
 # 3. 按上面「接线点」重放 index.js（脚本不会自动合并）
-# 4. 语法与回归
+# 4. 语法与回归（自检脚本随包发布在 scripts/ 下）
 node --check index.js
-node dsh-memory-audit.mjs && node dsh-memory-coding-audit.mjs && node dsh-memory-lessons-audit.mjs && node lessons-replay-test.mjs && node dsh-memory-bridge-audit.mjs
+npm test
+node scripts/preflight.mjs
 
 # 5. 更新 package.json 的 dshMemory.upstream.version，安装副本重新同步
 ```

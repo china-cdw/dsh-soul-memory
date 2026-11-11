@@ -15,7 +15,7 @@
 // 按 UPSTREAM.md 的「index.js 接线点」逐条重放即可。
 
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,6 +29,10 @@ const OUR_FILES = new Set([
   'package.json',
   'cordis.patch.yml',
   'README.md',
+  'README.en.md',
+  'CHANGELOG.md',
+  '.gitignore',
+  'LICENSE',
   'UPSTREAM.md',
   'upstream-manifest.json',
   'src/core-memory.js',
@@ -92,6 +96,11 @@ async function localHashes(files) {
   return out;
 }
 
+/** 清单里的镜像条目，排除已经「归我们」的文件（历史清单可能还记着它们，不应再报漂移）。 */
+function mirroredFiles(manifest) {
+  return Object.fromEntries(Object.entries(manifest.files).filter(([rel]) => !OUR_FILES.has(rel)));
+}
+
 function reportDrift(manifest, local) {
   const bad = [];
   for (const [rel, expected] of Object.entries(manifest.files)) {
@@ -120,37 +129,75 @@ async function initWith(from) {
   }
 }
 
+/** 列出 src/ 下实际存在的文件（相对插件根目录）。 */
+async function listLocal(dirRel) {
+  const out = [];
+  async function visit(dir) {
+    let entries = [];
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const abs = join(dir, entry.name);
+      const rel = relative(ROOT, abs).split(sep).join('/');
+      if (SKIP.some((re) => re.test(rel))) continue;
+      if (entry.isDirectory()) await visit(abs);
+      else if (entry.isFile()) out.push(rel);
+    }
+  }
+  await visit(join(ROOT, dirRel));
+  return out;
+}
+
+/** src/ 下既不在清单、也不是我们自己的文件：多半是上游新增了文件却没重跑 --init。 */
+async function unregisteredSrc(manifest) {
+  const all = await listLocal('src');
+  return all.filter((rel) => !manifest.files[rel] && !OUR_FILES.has(rel)).sort();
+}
+
 async function check() {
   const manifest = await loadManifest();
-  const local = await localHashes(Object.keys(manifest.files));
-  const bad = reportDrift(manifest, local);
-  console.log(`清单：上游 ${manifest.upstream.name}@${manifest.upstream.version}，${Object.keys(manifest.files).length} 个镜像文件`);
+  const mirrored = mirroredFiles(manifest);
+  const local = await localHashes(Object.keys(mirrored));
+  const bad = reportDrift({ files: mirrored }, local);
+  const extras = await unregisteredSrc(manifest);
+  console.log(`清单：上游 ${manifest.upstream.name}@${manifest.upstream.version}，${Object.keys(mirrored).length} 个镜像文件`);
+  for (const rel of extras) bad.push(`未登记      ${rel}`);
   if (!bad.length) {
     console.log('镜像未被本地修改，清单完整。');
     return 0;
   }
   console.log(`发现 ${bad.length} 处不一致：`);
   for (const line of bad) console.log('  ' + line);
-  console.log('这些文件应属于上游；若确实需要本地改动，请改成我们自己的文件（见 UPSTREAM.md）。');
+  console.log('这些文件应属于上游；若确实需要本地改动，请改成我们自己的文件（见 UPSTREAM.md）；未登记文件重跑 --init。');
   return 1;
 }
 
 async function sync(from) {
   const { pkg, hashes } = await upstreamInfo(from);
   const old = await loadManifest().catch(() => ({ files: {} }));
+  // 先写暂存目录，全部落地后再逐个 rename 替换：中途失败不会留下半截文件。
+  const staging = join(ROOT, '.sync-staging-' + process.pid);
   let copied = 0;
   let removed = 0;
-  for (const [rel, hash] of Object.entries(hashes)) {
-    if (old.files[rel] === hash) continue;
-    const dest = join(ROOT, rel);
-    await mkdir(dirname(dest), { recursive: true });
-    await writeFile(dest, await readFile(join(from, rel)));
-    copied += 1;
-  }
-  for (const rel of Object.keys(old.files)) {
-    if (hashes[rel]) continue;
-    await rm(join(ROOT, rel), { force: true });
-    removed += 1;
+  await rm(staging, { recursive: true, force: true });
+  await mkdir(staging, { recursive: true });
+  try {
+    for (const [rel, hash] of Object.entries(hashes)) {
+      if (old.files[rel] === hash) continue;
+      const tmp = join(staging, rel.split('/').join(sep));
+      await mkdir(dirname(tmp), { recursive: true });
+      await writeFile(tmp, await readFile(join(from, rel)));
+      const dest = join(ROOT, rel);
+      await mkdir(dirname(dest), { recursive: true });
+      await rename(tmp, dest); // 同卷 rename：读者要么看到旧文件，要么看到新文件
+      copied += 1;
+    }
+    for (const rel of Object.keys(old.files)) {
+      if (hashes[rel] || OUR_FILES.has(rel)) continue;
+      await rm(join(ROOT, rel), { force: true });
+      removed += 1;
+    }
+  } finally {
+    await rm(staging, { recursive: true, force: true }).catch(() => {});
   }
   const manifest = {
     upstream: { name: pkg.name, version: pkg.version },
@@ -162,7 +209,7 @@ async function sync(from) {
   console.log('下一步：');
   console.log('  1) 按 UPSTREAM.md 的「index.js 接线点」重放我们的改动（上游改过 index.js 时）');
   console.log('  2) node --check index.js src/core-memory.js src/coding.js src/lessons.js src/memory/util.js');
-  console.log('  3) node dsh-x-memory-audit.mjs && node dsh-x-memory-coding-audit.mjs && node dsh-x-memory-lessons-audit.mjs && node lessons-replay-test.mjs');
+  console.log('  3) npm test');
   console.log('  4) 更新 package.json 的 dshMemory.upstream.version 与 files 通配符');
 }
 

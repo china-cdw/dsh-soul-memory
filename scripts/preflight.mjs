@@ -10,13 +10,15 @@
 // "相对路径"、"相对路径:行号" 或 "相对路径:行号 类别"）。
 
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { join, relative, dirname } from 'node:path';
+import { join, relative, dirname, basename, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const IGNORE_FILE = '.preflight-ignore.json';
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage', '.snapshots', '.github']);
 const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.json', '.md', '.yml', '.yaml', '.ts', '.txt', '.sh']);
+// 无扩展名但确定是文本、必须放行的常见仓库文件。
+const NO_EXT_OK = new Set(['LICENSE', 'LICENCE', '.gitignore', '.gitattributes', '.editorconfig', '.npmrc']);
 const MAX_BYTES = 2 * 1024 * 1024;
 
 const DRIVE = /[A-Za-z]:[\\/]/;
@@ -58,8 +60,7 @@ async function walk(dir, out) {
       if (SKIP_DIRS.has(ent.name)) continue;
       await walk(full, out);
     } else if (ent.isFile()) {
-      const dot = ent.name.lastIndexOf('.');
-      if (dot < 0 || !TEXT_EXT.has(ent.name.slice(dot).toLowerCase())) continue;
+      // 先全部收进来，未识别扩展名/超大/.env 由 scan 明确报 SKIPPED，而不是静默放过。
       out.push({ path: full });
     }
   }
@@ -102,15 +103,33 @@ async function scan() {
       continue;
     }
     let buf;
+    const base = basename(f.path);
+    const ext = extname(base).toLowerCase();
+    // .env / .env.local / .env.production：绝不能发布，明确拦下。
+    if (/^\.env(\.|$)/i.test(base)) {
+      findings.push({ rel, line: 0, cls: 'SKIPPED_ENV' });
+      continue;
+    }
+    if (!TEXT_EXT.has(ext) && !NO_EXT_OK.has(base)) {
+      // 未识别扩展名不当作「没问题」：无法扫描就必须报出来，由人确认。
+      findings.push({ rel, line: 0, cls: 'SKIPPED_EXT' });
+      continue;
+    }
     try {
       const st = await stat(f.path);
-      if (st.size > MAX_BYTES) continue;
+      if (st.size > MAX_BYTES) {
+        findings.push({ rel, line: 0, cls: 'SKIPPED_TOO_LARGE' });
+        continue;
+      }
       buf = await readFile(f.path, 'utf8');
     } catch {
       findings.push({ rel, line: 0, cls: 'UNREADABLE' });
       continue;
     }
-    if (buf.includes('\u0000')) continue;
+    if (buf.includes('\u0000')) {
+      findings.push({ rel, line: 0, cls: 'SKIPPED_BINARY' });
+      continue;
+    }
     const lines = buf.split('\n');
     for (let i = 0; i < lines.length; i++) {
       const cls = classify(lines[i]);
@@ -129,6 +148,7 @@ if (findings.length) {
     console.error('  ' + f.rel + ':' + f.line + '  ' + f.cls);
   }
   console.error('处理：删除/替换该处内容；确认是误报时在 ' + IGNORE_FILE + ' 里加豁免（数组：相对路径 / 相对路径:行号 / 相对路径:行号 类别）。');
+  console.error('SKIPPED_* 表示文件无法被扫描（.env / 未识别扩展名 / 超大 / 二进制）：确认可发布后再加豁免，或把扩展名补进 TEXT_EXT。');
   process.exit(1);
 }
 console.log('preflight 通过：未发现私钥、凭据、绝对家目录或高熵块。');

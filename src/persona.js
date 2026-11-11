@@ -193,11 +193,13 @@ function parsePersonaFile(text) {
   if (typeof text !== 'string' || !text.length) return out;
   const raw = text.replace(/\r\n/g, '\n');
   if (!raw.startsWith('---')) {
-    // 无 front-matter：整个文件视为自定义正文（便于手工创建），跳过注释行
+    // 无 front-matter：整个文件视为自定义正文（便于手工创建），跳过注释行。
+    // 有正文就必须落到 custom 预设，否则 preset 仍是 default，正文永远不会被注入。
     out.custom = trimBody(raw
       .split('\n')
       .filter((line) => !/^\s*#/.test(line))
       .join('\n'));
+    if (out.custom) out.preset = 'custom';
     return out;
   }
   const end = raw.indexOf('\n---', 3);

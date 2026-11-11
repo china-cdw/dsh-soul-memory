@@ -1,6 +1,6 @@
 {
   "name": "dsh-x-memory",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "DSH 分层记忆：核心记忆常驻 + 归档笔记 + 踩坑记录 + 编码规范 + 会话图谱 + billion-context 摘要桥接",
   "license": "MIT",
   "author": "china-cdw",
@@ -16,7 +16,8 @@
   "main": "index.js",
   "scripts": {
     "preflight": "node scripts/preflight.mjs",
-    "prepublishOnly": "node scripts/preflight.mjs"
+    "prepublishOnly": "node scripts/preflight.mjs",
+    "test": "node scripts/dsh-memory-audit.mjs && node scripts/dsh-memory-coding-audit.mjs && node scripts/dsh-memory-lessons-audit.mjs && node scripts/lessons-replay-test.mjs && node scripts/dsh-memory-bridge-audit.mjs && node scripts/dsh-memory-regression.mjs"
   },
   "exports": {
     ".": "./index.js",
@@ -37,6 +38,7 @@
     "index.js",
     "compaction.js",
     "src/**/*.js",
+    "scripts/",
     "harness/default/*.md",
     "locale/*.json",
     "cordis.patch.yml",

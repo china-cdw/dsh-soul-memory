@@ -16,14 +16,37 @@ import { readdirSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { safeJson } from './util.js';
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_DEPTH = 3;
 /** 单次注入的摘要上限（保守，避免把上下文又撑大）。 */
 const DEFAULT_MAX_CHARS = 1200;
+/** 解析结果缓存容量：只保留最近用到的若干会话文件，避免长会话里无限增长。 */
+const CACHE_MAX = 32;
 
-/** 解析后的块缓存：绝对路径 → { mtimeMs, size, entries } */
+/** 解析后的块缓存：绝对路径 → { mtimeMs, size, entries }，按最近使用排序（LRU）。 */
 const cache = new Map();
+
+function cacheGet(file, mtimeMs, size) {
+  const hit = cache.get(file);
+  if (!hit) return null;
+  if (hit.mtimeMs !== mtimeMs || hit.size !== size) { cache.delete(file); return null; }
+  // 命中后移到队尾，维持 LRU 顺序。
+  cache.delete(file);
+  cache.set(file, hit);
+  return hit.entries;
+}
+
+function cacheSet(file, value) {
+  cache.delete(file);
+  cache.set(file, value);
+  while (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
 
 export function biliSessionsDir(explicit) {
   if (typeof explicit === 'string' && explicit.trim()) return explicit.trim();
@@ -53,12 +76,13 @@ function collectJsonFiles(dir, out, depth) {
 async function loadSessionFile(file) {
   const st = await stat(file);
   if (!st.isFile() || st.size === 0 || st.size > MAX_FILE_BYTES) return [];
-  const hit = cache.get(file);
-  const mtimeSec = Math.floor(st.mtimeMs / 1000);
-  if (hit && hit.mtimeSec === mtimeSec && hit.size === st.size) return hit.entries;
+  // 用毫秒 mtime：同一秒内被重写的会话文件也必须重新解析。
+  const cached = cacheGet(file, st.mtimeMs, st.size);
+  if (cached) return cached;
 
   const raw = await readFile(file, 'utf8');
-  const doc = JSON.parse(raw);
+  const doc = safeJson(raw, null);
+  if (!doc || typeof doc !== 'object') return [];
   const payload = (doc && doc.payload) || {};
   const state = (payload.state) || {};
   const blocks = Array.isArray(state.blocks) ? state.blocks : [];
@@ -82,7 +106,7 @@ async function loadSessionFile(file) {
     });
   }
   entries.sort((a, b) => b.createdAt - a.createdAt);
-  cache.set(file, { mtimeSec, size: st.size, entries });
+  cacheSet(file, { mtimeMs: st.mtimeMs, size: st.size, entries });
   return entries;
 }
 

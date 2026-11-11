@@ -51,7 +51,8 @@ function readCapped(path, cap = FILE_CHAR_CAP) {
     if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
     text = text.replace(/\r\n/g, '\n').trim();
     if (!text) return null;
-    if (text.length > cap) text = text.slice(0, cap) + '\n…（文件过长，已截断）';
+    // cap=Infinity 表示「写回用的完整读取」：截断只用于注入与展示，绝不能拿截断文本回写。
+    if (Number.isFinite(cap) && text.length > cap) text = text.slice(0, cap) + '\n…（文件过长，已截断）';
     return text;
   } catch {
     return null;
@@ -108,13 +109,17 @@ export function collectRules(cwd, { budget = DEFAULT_BUDGET, globalText = null }
 
   const lines = [];
   const files = [];
-  const head = [
+  const headLines = [
     '# 编码规范（dsh-x-memory）',
     '',
     '以下是本机与当前项目的编码约定。写代码、改文件时遵守；与用户当轮明确指令冲突时以用户为准。',
     '用户纠正你的写法后，用 coding_rules action=add 记到全局层，下次会话仍然生效。',
     '',
-  ].join('\n');
+  ];
+  if (budget < 800) {
+    headLines.push('（预算提示：编码规范注入预算只有 ' + budget + ' 字，规则会被大幅截断；可在插件设置里调大 coding.budget。）', '');
+  }
+  const head = headLines.join('\n');
   const room = Math.max(120, budget - head.length - 1);
   let used = 0;
   let truncated = false;
@@ -165,7 +170,8 @@ export async function addRule(text) {
   if (rule.length > MAX_RULE_TEXT) return { ok: false, error: `规则太长（${rule.length} 字），上限 ${MAX_RULE_TEXT} 字。` };
   return enqueue(async () => {
     const path = codingPath();
-    const existing = readCapped(path) ?? TEMPLATE;
+    // 写回必须基于完整文件：readCapped 的默认 cap 只用于注入，不能用来改文件。
+    const existing = readCapped(path, Infinity) ?? TEMPLATE;
     const lines = existing.split('\n');
     if (lines.some((line) => ruleKey(line.replace(/^\s*-\s*/, '')) === ruleKey(rule))) {
       return { ok: false, error: '已有相同规则，未重复写入。' };
@@ -188,7 +194,7 @@ export async function forgetRule(text) {
   if (!rule) return { ok: false, error: '要删除的规则内容不能为空。' };
   return enqueue(async () => {
     const path = codingPath();
-    const existing = readCapped(path);
+    const existing = readCapped(path, Infinity);
     if (!existing) return { ok: false, error: '全局编码规范还是空的。' };
     const lines = existing.split('\n');
     const kept = lines.filter((line) => {
@@ -215,6 +221,8 @@ export function registerCodingRules(ctx, options = {}) {
   const section = ctx.systemPrompt.section({
     name: 'dsh-x-memory:coding',
     order: 61,
+    // 规则文件是用户内容，可能含 {{...}}；关闭插值，按纯文本注入。
+    interpolate: false,
     text: ({ agent } = {}) => {
       try {
         const cwd = agent?.session?.header?.cwd || null;

@@ -82,7 +82,7 @@ Core memory (injected into every session) rejects both categories outright.
 
 ### 3. Daily snapshots
 
-On the first load each day the whole memory directory is copied to `$DSH_HOME/memory/.snapshots/<timestamp>/`, keeping the last 7. If something gets corrupted, copy a snapshot back; `memory_brief` shows "snapshot: N".
+On the first load each day the whole memory directory is copied to `$DSH_HOME/memory/.snapshots/<timestamp>/`, keeping the last 7. Rotation orders snapshots by directory mtime, not by name, and an empty memory directory never leaves an empty snapshot behind. If something gets corrupted, copy a snapshot back; `memory_brief` shows "snapshot: N".
 
 ### 4. billion-context bridge (read-only)
 
@@ -139,7 +139,7 @@ To verify, call `memory_brief`: it reports core-memory size, archived note count
 
 Write rules: `memory_write` runs a near-duplicate check (similarity ≥ 0.55 is rejected; pass `force: true` to write anyway).
 
-Mistake notes are captured automatically: within one session, if a tool errors and the same tool later succeeds, a note "error + fix that worked" is recorded, and repeats of the same error are merged into a count. Only structured failure signals (`isError`, exit codes) are used — response text is not scanned; file-reader tools and the memory/coding tools themselves are never captured.
+Mistake notes are captured automatically: within one session, if a tool errors and the same tool later succeeds, a note "error + fix that worked" is recorded, and repeats of the same error are merged into a count. Structured signals come first: `isError` and exit codes (parsed from the result line; exit code 0 counts as success, and benign 1 from tools like `grep` is ignored). Only when no structured signal exists is the response text checked as a fallback. File-reader tools and the memory/coding tools themselves are never captured.
 
 ---
 
@@ -176,12 +176,12 @@ When `bridge.sessionsDir` is empty, it looks at `BILI_SESSIONS_DIR` first, then 
 
 ```
 $DSH_HOME/memory/
-├── MEMORY.md            # core memory (injected every turn, keep under ~3KB)
+├── MEMORY.md            # core memory (injected every turn, 3000 chars max)
 ├── PERSONA.md           # reply style
 ├── CODING.md            # global coding conventions
 ├── GUARD.json           # optional, custom guard rules
 ├── LESSONS.jsonl        # mistake notes (max 400)
-├── index.json           # note index, rebuilt from notes/ if corrupted
+├── index.json           # note index (atomic writes + file lock); rebuilt from notes/ if corrupt, reconciled by id at startup (missing entries added, lost files marked missing)
 ├── notes/               # archived notes, one .md per note
 └── .snapshots/          # daily snapshots, last 7 kept
 ```
@@ -201,7 +201,7 @@ The graph database lives at `$DSH_HOME/dsh-soul/<profile>/evolve.sqlite` (reusin
 npm run preflight
 ```
 
-Scans for private keys, credential shapes, absolute home paths and high-entropy blobs. Any hit fails the run and prints only `relative/path:line  CLASS` — never the matched text.
+Scans for private keys, credential shapes, absolute home paths and high-entropy blobs. Any hit fails the run and prints only `relative/path:line  CLASS` — never the matched text. Files that cannot be scanned (`.env*`, oversized files, binaries, unknown extensions) are not skipped silently: they produce a `SKIPPED` line and also fail the run until you add them to the ignore list.
 
 For confirmed false positives, create `.preflight-ignore.json` in the repository root:
 
@@ -256,7 +256,11 @@ node scripts/sync-upstream.mjs --check
 npm run preflight
 ```
 
-There is also a development-only test suite (99 core assertions, 15 coding, 12 mistake notes, 11 replay, 25 bridge) covering edge cases in writes, search, supersede, guard, snapshots and the bridge. It currently lives in the development workspace and is not shipped with the package.
+```bash
+npm test          # every self-check script; any failure exits non-zero
+```
+
+The checks ship in `scripts/`: 21 core assertions, 8 coding, 12 mistake notes, 11 event-replay, 14 billion-context bridge and 9 regression assertions — 75 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
 
 ---
 

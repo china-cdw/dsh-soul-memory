@@ -12,10 +12,11 @@
 //   2. memory_search 的相关度加入时间衰减项（越新越靠前，但不压过关键词命中）；
 //   3. memory_brief 一次返回核心记忆、归档、风格与会话图谱的体检数据；
 //      memory_search 在关键词无命中或命中不足时，可回落到会话图谱检索（由 index.js 注入）。
-import { readFile, mkdir, readdir } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { atomicWrite, createQueue, latestSnapshot, memoryPath, snapshotMemory } from './memory/util.js';
+import { readFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { readFileSync, statSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { dirname, join } from 'node:path';
+import { atomicWrite, createQueue, latestSnapshot, memoryPath, safeJson, snapshotMemory } from './memory/util.js';
 import { checkGuard, isSensitive } from './memory/guard.js';
 import {
   buildPersonaText,
@@ -35,10 +36,14 @@ const corePath = () => memoryPath('MEMORY.md');
 const notesDir = () => memoryPath('notes');
 const indexPath = () => memoryPath('index.json');
 
+// 核心记忆的唯一预算：注入截断、写入告警、体检提示、模板提示都用它，
+// 避免「已截断却还说不超限」这类文档与实现不一致。
+const CORE_BUDGET = 3000;
+
 const TEMPLATE = [
   '# DSH 核心记忆',
   '',
-  '> 由 dsh-x-memory 插件维护，并注入每个会话的系统提示。保持精炼（建议 6KB 内）。',
+  '> 由 dsh-x-memory 插件维护，并注入每个会话的系统提示。保持精炼（建议 ' + CORE_BUDGET + ' 字内）。',
   '> 可用 memory_core 工具增删改，也可手工编辑（插件每次组装时同步读取，立即可见）。',
   '',
   '## 用户',
@@ -107,7 +112,10 @@ function makeId(title, existing) {
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = '' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
   const slug = String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32).replace(/-+$/g, '');
-  const base = stamp + (slug ? '-' + slug : '');
+  // 随机后缀：并发写入（或同一秒内两条记忆）不会抢同一个文件名，
+  // 索引里也不会出现「先写后覆盖」的静默丢条目。
+  const rand = randomUUID().replace(/-/g, '').slice(0, 6);
+  const base = stamp + (slug ? '-' + slug : '') + '-' + rand;
   const taken = new Set(existing.map((n) => n.id));
   let candidate = base;
   let n = 2;
@@ -156,8 +164,9 @@ function similarity(aTitle, aBody, bTitle, bBody) {
 }
 
 function scoreNote(note, query, bodyText, now = Date.now()) {
-  const q = query.toLowerCase();
-  const tokens = q.split(/\s+/).filter(Boolean);
+  const q = String(query || '').toLowerCase();
+  // 与相似度判定共用同一套分词（中文 bigram），否则「近重复能识别、检索却搜不到」。
+  const tokens = [...new Set(tokensOf(q))];
   const title = (note.title || '').toLowerCase();
   const tagStr = (note.tags || []).join(' ').toLowerCase();
   const body = (bodyText || '').toLowerCase();
@@ -210,15 +219,50 @@ function readFileSyncOrNull(path) {
   try { return readFileSync(path, 'utf8'); } catch { return null; }
 }
 
-async function rebuildIndex() {
+/** 写索引：跨进程用 index.json.lock 串行化，锁超时视为崩溃残留并清理。 */
+const INDEX_LOCK_STALE_MS = 10000;
+const INDEX_LOCK_WAIT_MS = 2000;
+
+async function withIndexLock(job) {
+  const lock = indexPath() + '.lock';
+  await mkdir(dirname(lock), { recursive: true });
+  const started = Date.now();
+  for (;;) {
+    try {
+      // wx：已存在就失败，天然互斥，不需要额外判断。
+      await writeFile(lock, String(process.pid), { flag: 'wx' });
+      break;
+    } catch (e) {
+      if (e && e.code !== 'EEXIST') throw e;
+      try {
+        const st = await stat(lock);
+        if (Date.now() - st.mtimeMs > INDEX_LOCK_STALE_MS) { await rm(lock, { force: true }); continue; }
+      } catch { continue; /* 锁刚好被持有者删掉，立即重试 */ }
+      if (Date.now() - started > INDEX_LOCK_WAIT_MS) throw new Error('索引写入被占用（index.json.lock 超过 ' + (INDEX_LOCK_WAIT_MS / 1000) + ' 秒未释放）');
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+  try {
+    return await job();
+  } finally {
+    await rm(lock, { force: true }).catch(() => {});
+  }
+}
+
+async function persistIndex(notes) {
+  await withIndexLock(() => atomicWrite(indexPath(), JSON.stringify({ version: 1, notes }, null, 2)));
+}
+
+async function rebuildIndex({ persist = true } = {}) {
   bodyCache.clear();
   const out = [];
   let entries = [];
-  try { entries = await readdir(notesDir()); } catch { return out; }
+  const dir = notesDir();
+  try { entries = await readdir(dir); } catch { entries = []; }
   for (const name of entries) {
     if (!name.endsWith('.md')) continue;
     try {
-      const text = await readFile(join(notesDir(), name), 'utf8');
+      const text = await readFile(join(dir, name), 'utf8');
       const parsed = parseNoteFile(text);
       if (parsed.meta.deleted === 'true') continue; // 墓碑文件不复活
       const id = name.slice(0, -3);
@@ -234,18 +278,78 @@ async function rebuildIndex() {
       });
     } catch { /* 跳过无法解析的文件 */ }
   }
-  return out.sort(noteSort);
+  const sorted = out.sort(noteSort);
+  if (persist) {
+    // 重建结果写回索引（原子写 + 锁）；写不进去也返回内存结果，下一次再试。
+    try { await persistIndex(sorted); } catch { /* 索引暂时不可写 */ }
+  }
+  return sorted;
 }
 
 async function loadIndex() {
-  try {
-    const raw = await readFile(indexPath(), 'utf8');
-    const parsed = JSON.parse(raw);
+  let raw = null;
+  try { raw = await readFile(indexPath(), 'utf8'); } catch { raw = null; }
+  if (raw !== null) {
+    const parsed = safeJson(raw, null);
     if (parsed && Array.isArray(parsed.notes)) {
       return parsed.notes.filter((n) => n && typeof n.id === 'string').sort(noteSort);
     }
-  } catch { /* 缺失或损坏 → 从 notes/ 重建 */ }
+  }
   return rebuildIndex();
+}
+
+/**
+ * 启动对账：notes/ 与 index.json 谁多出来的都要收口。
+ * - 文件有、索引无：补录（外部新增或上次写到一半）；
+ * - 索引有、文件无：标 missing，不再当作正常条目展示，但保留 id 供人工处理。
+ */
+async function reconcileIndex() {
+  const notes = await loadIndex();
+  const byId = new Map(notes.map((n) => [n.id, n]));
+  const dir = notesDir();
+  let files = [];
+  try { files = await readdir(dir); } catch { files = []; }
+  const fileIds = new Set();
+  let changed = false;
+  for (const name of files) {
+    if (!name.endsWith('.md')) continue;
+    const id = name.slice(0, -3);
+    let parsed = null;
+    try { parsed = parseNoteFile(await readFile(join(dir, name), 'utf8')); } catch { continue; }
+    if (parsed.meta.deleted === 'true') {
+      // 墓碑：若索引里还留着（上次删除在写索引前中断），这里补完删除。
+      if (byId.has(id)) { byId.delete(id); changed = true; }
+      continue;
+    }
+    fileIds.add(id);
+    if (byId.has(id)) continue;
+    byId.set(id, {
+      id,
+      title: parsed.meta.title || id,
+      tags: (parsed.meta.tags || '').split(',').map((s) => s.trim()).filter(Boolean),
+      created: parsed.meta.created || '',
+      updated: parsed.meta.updated || parsed.meta.created || '',
+      size: parsed.meta.size ? Number(parsed.meta.size) : 0,
+      ...(parsed.meta.supersededBy ? { supersededBy: parsed.meta.supersededBy } : {}),
+      ...(parsed.meta.sensitive === 'true' ? { sensitive: true } : {}),
+    });
+    changed = true;
+  }
+  for (const note of [...byId.values()]) {
+    const missing = !fileIds.has(note.id);
+    if (Boolean(note.missing) === missing) continue;
+    const next = { ...note };
+    delete next.missing;
+    if (missing) next.missing = true;
+    byId.set(note.id, next);
+    changed = true;
+  }
+  const merged = [...byId.values()].sort(noteSort);
+  if (changed) {
+    bodyCache.clear();
+    try { await persistIndex(merged); } catch { /* 对账写失败不影响读取 */ }
+  }
+  return merged;
 }
 
 // 写串行化：同进程多 agent 并发写也按序落盘
@@ -269,10 +373,23 @@ function readBody(req, limit = 16384) {
 }
 
 // ---------- 召回节（同步读，每次模型组装永远新鲜） ----------
-// 核心记忆的唯一预算：注入截断、写入告警、体检提示都用它，避免「已截断却还说不超限」。
-const CORE_BUDGET = 3000;
+// 节文本缓存：模型每次组装都会调用，但底层文件通常隔很久才变；
+// 用 core/index/persona 三个文件的 mtime+size 作键，任何一处手改都会重建。
+let sectionCache = null; // { key, text }
+
+function fileStamp(file) {
+  try { const st = statSync(file); return st.mtimeMs + ':' + st.size; } catch { return '-'; }
+}
 
 function buildSectionText() {
+  const key = fileStamp(corePath()) + '|' + fileStamp(indexPath()) + '|' + fileStamp(personaPath());
+  if (sectionCache && sectionCache.key === key) return sectionCache.text;
+  const text = renderSectionText();
+  sectionCache = { key, text };
+  return text;
+}
+
+function renderSectionText() {
   try {
     let core = '';
     const coreRaw = readFileSyncOrNull(corePath());
@@ -285,13 +402,13 @@ function buildSectionText() {
     let notes = [];
     const indexRaw = readFileSyncOrNull(indexPath());
     if (indexRaw) {
-      try {
-        const p = JSON.parse(indexRaw);
-        if (p && Array.isArray(p.notes)) notes = p.notes.filter((n) => n && typeof n.id === 'string').sort(noteSort);
-      } catch { /* 索引损坏时本节不列归档，工具侧会重建 */ }
+      const parsed = safeJson(indexRaw, null);
+      if (parsed && Array.isArray(parsed.notes)) notes = parsed.notes.filter((n) => n && typeof n.id === 'string').sort(noteSort);
     }
-    const recent = notes.filter((n) => !n.sensitive).slice(0, 12).map((n) =>
-      '- [' + n.id + '] ' + n.title + ((n.tags && n.tags.length) ? '  #' + n.tags.join(' #') : '') +
+    // 标题/标签来自用户输入，注入系统提示前必须过 sanitize（防 {{ }} 模板插值注入）。
+    const recent = notes.filter((n) => !n.sensitive && !n.missing).slice(0, 12).map((n) =>
+      '- [' + sanitize(n.id) + '] ' + sanitize(n.title) +
+      ((n.tags && n.tags.length) ? '  #' + n.tags.map((t) => sanitize(t)).join(' #') : '') +
       (n.supersededBy ? '（已被取代）' : '')
     ).join('\n');
     const persona = buildPersonaText();
@@ -323,13 +440,17 @@ function buildSectionText() {
 }
 
 // 正文缓存：搜索与查重不再每条笔记每次读盘。
-// 失效点：写入（覆盖同 id）、删除（墓碑）、索引重建（外部文件变动）。
-const bodyCache = new Map();
+// 失效点：文件 mtime/size 变化（外部编辑也能感知）、写入、删除、索引重建。
+const bodyCache = new Map(); // id -> { body, mtimeMs, size }
 async function readNoteBody(id) {
-  if (bodyCache.has(id)) return bodyCache.get(id);
+  const file = join(notesDir(), id + '.md');
+  let st = null;
+  try { st = await stat(file); } catch { bodyCache.delete(id); return ''; }
+  const hit = bodyCache.get(id);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.body;
   let body = '';
-  try { body = parseNoteFile(await readFile(join(notesDir(), id + '.md'), 'utf8')).body; } catch { body = ''; }
-  bodyCache.set(id, body);
+  try { body = parseNoteFile(await readFile(file, 'utf8')).body; } catch { body = ''; }
+  bodyCache.set(id, { body, mtimeMs: st.mtimeMs, size: st.size });
   return body;
 }
 
@@ -398,14 +519,16 @@ async function writeNote(args) {
       const fileText = noteFileText(meta, content);
       meta.size = fileText.length;
       await atomicWrite(join(notesDir(), id + '.md'), fileText);
-      bodyCache.set(id, content);
+      bodyCache.delete(id); // 新文件，下一次读取重新解析
       let notes = [meta, ...existing].sort(noteSort);
       let superseded = false;
       if (target) {
         superseded = await markSuperseded(target, id);
+        bodyCache.delete(target.id);
         notes = notes.map((n) => (n.id === target.id ? { ...n, supersededBy: id, updated: now } : n));
       }
-      await atomicWrite(indexPath(), JSON.stringify({ version: 1, notes }, null, 2));
+      await persistIndex(notes);
+      sectionCache = null;
       return '已保存归档记忆 [' + id + '] ' + title + (tags.length ? ' #' + tags.join(' #') : '') + '。已进入索引，所有会话可见。' +
         (superseded ? '\n旧条目 [' + target.id + '] ' + target.title + ' 已标记为「已被 ' + id + ' 取代」。' : '') +
         (sensitive ? '\n注意：内容疑似包含凭据，已标记为敏感——不会进入系统提示，检索时只显示标题。' : '');
@@ -514,6 +637,7 @@ async function listNotes(args) {
       '- [' + n.id + '] ' + n.title + ((n.tags && n.tags.length) ? '  #' + n.tags.join(' #') : '') +
       (n.supersededBy ? '（已被 [' + n.supersededBy + '] 取代）' : '') +
       (n.sensitive ? '（敏感）' : '') +
+      (n.missing ? '（文件缺失）' : '') +
       '（' + (n.created || '').slice(0, 10) + '）'
     );
     return '归档记忆共 ' + notes.length + ' 条（显示前 ' + Math.min(limit, notes.length) + ' 条，新→旧）：\n' + lines.join('\n');
@@ -532,10 +656,11 @@ async function deleteNote(ref) {
       const note = matches[0];
       const next = notes.filter((n) => n.id !== note.id);
       bodyCache.delete(note.id);
-      await atomicWrite(indexPath(), JSON.stringify({ version: 1, notes: next }, null, 2));
-      try {
-        await atomicWrite(join(notesDir(), note.id + '.md'), '---\ndeleted: true\nid: ' + note.id + '\n---\n\n（此记忆已删除）\n');
-      } catch { /* 索引已移除，墓碑写失败不影响结果 */ }
+      // 先落墓碑再改索引：即使进程死在中间，重启对账也不会把该条「复活」。
+      // 墓碑写失败就直接中止，避免出现「索引没了、正文还在」的半删除状态。
+      await atomicWrite(join(notesDir(), note.id + '.md'), '---\ndeleted: true\nid: ' + note.id + '\n---\n\n（此记忆已删除）\n');
+      await persistIndex(next);
+      sectionCache = null;
       return '已删除记忆 [' + note.id + '] ' + note.title + '。';
     });
   } catch (e) { return errText(e); }
@@ -648,6 +773,8 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     await mkdir(notesDir(), { recursive: true });
     if (readFileSyncOrNull(corePath()) === null) await atomicWrite(corePath(), TEMPLATE);
     if (readFileSyncOrNull(indexPath()) === null) await atomicWrite(indexPath(), JSON.stringify({ version: 1, notes: [] }, null, 2));
+    // 索引与 notes/ 对账：补齐外部新增、标记文件缺失、收口墓碑。
+    try { await reconcileIndex(); } catch { /* 对账失败不阻塞启动 */ }
     try { await snapshotMemory(); } catch { /* 快照失败不影响启动 */ }
   }).catch((e) => console.error('dsh-x-memory: bootstrap failed', e));
 
@@ -802,6 +929,8 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
   ctx.systemPrompt.section({
     name: 'dsh-x-memory:recall',
     order: 60,
+    // 记忆正文可能包含 {{...}}；关掉模板插值，避免用户内容被当成提示模板执行。
+    interpolate: false,
     text: () => buildSectionText(),
   });
 
@@ -820,10 +949,23 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
           } catch { /* 响应已发出时忽略 */ }
         };
         try {
+          // 只接受同源页面调用：带 Origin 时必须与 Host 一致（跨站请求一律拒绝）。
+          const origin = req.headers.origin;
+          if (origin) {
+            let sameOrigin = false;
+            try { sameOrigin = new URL(origin).host === req.headers.host; } catch { sameOrigin = false; }
+            if (!sameOrigin) { sendJson(403, { error: '跨源请求被拒绝' }); return; }
+          }
           if (req.method === 'POST') {
+            // 浏览器跨站表单只能发 urlencoded/plain，要求 JSON 也就挡住了 CSRF 表单。
+            const ctype = String(req.headers['content-type'] || '').toLowerCase();
+            if (!ctype.startsWith('application/json')) {
+              sendJson(415, { error: 'Content-Type 必须是 application/json' });
+              return;
+            }
             const body = await readBody(req);
-            const patch = JSON.parse(body || '{}');
-            if (!patch || typeof patch !== 'object') throw new Error('请求体必须是对象');
+            const patch = safeJson(body || '{}', null);
+            if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('请求体必须是对象');
             const result = await enqueue(async () => {
               const cur = readPersona();
               const check = normalizePersonaInput(patch, cur);

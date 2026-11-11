@@ -9,7 +9,7 @@
 // 正则非法、文件坏掉都静默退回默认值，守卫本身不能把记忆写崩。
 
 import { readFileSync, statSync } from 'node:fs';
-import { memoryPath } from './util.js';
+import { memoryPath, safeJson } from './util.js';
 
 const FLOOR = ['-----BEGIN [A-Z ]*PRIVATE KEY-----'];
 
@@ -50,12 +50,15 @@ function readRulesFile() {
   let key = '';
   try { key = String(statSync(path).mtimeMs); } catch { return null; }
   if (cache.key === key && cache.rules) return cache.rules;
-  let parsed = null;
-  try { parsed = JSON.parse(readFileSync(path, 'utf8')); } catch { return null; }
+  const parsed = safeJson(readFileSync(path, 'utf8'), null);
   if (!parsed || typeof parsed !== 'object') return null;
   const rules = {
     reject: compile(parsed.reject),
     sensitive: compile(parsed.sensitive),
+    // 记住数据文件里每一类是否真的给了规则：空数组（或写字时误留的 []）应回落默认值，
+    // 而不是变成「用户把这一类清空了」。
+    hasReject: Array.isArray(parsed.reject) && parsed.reject.some((x) => typeof x === 'string' && x),
+    hasSensitive: Array.isArray(parsed.sensitive) && parsed.sensitive.some((x) => typeof x === 'string' && x),
     source: path,
   };
   // 兜底：私钥块永远拦，数据文件不能把它关掉。
@@ -66,8 +69,17 @@ function readRulesFile() {
 
 export function loadGuardRules() {
   const custom = readRulesFile();
-  if (custom && (custom.reject.length || custom.sensitive.length)) return custom;
-  return { reject: compile(DEFAULTS.reject), sensitive: compile(DEFAULTS.sensitive), source: 'builtin' };
+  if (!custom) {
+    return { reject: compile(DEFAULTS.reject), sensitive: compile(DEFAULTS.sensitive), source: 'builtin' };
+  }
+  // 逐类判定：GUARD.json 只写了 reject 时，sensitive 仍用内置默认，反之同理。
+  // 两类都为空/非法时整份回落默认值。
+  const reject = custom.hasReject ? custom.reject : compile(DEFAULTS.reject);
+  const sensitive = custom.hasSensitive ? custom.sensitive : compile(DEFAULTS.sensitive);
+  if (!custom.hasReject && !custom.hasSensitive) {
+    return { reject: compile(DEFAULTS.reject), sensitive: compile(DEFAULTS.sensitive), source: 'builtin' };
+  }
+  return { reject, sensitive, source: custom.source };
 }
 
 /** 命中返回 { kind: 'reject'|'sensitive', rule }，未命中返回 { kind: null }。 */
@@ -82,16 +94,6 @@ export function checkGuard(text) {
 
 export function isSensitive(text) {
   return checkGuard(text).kind === 'sensitive';
-}
-
-/** 把疑似凭据的片段替换掉，只保留行结构；用于不该整条丢弃的场景。 */
-export function maskSecrets(text) {
-  const rules = loadGuardRules();
-  let out = String(text ?? '');
-  for (const re of rules.sensitive) {
-    try { out = out.replace(new RegExp(re.source, 'gi'), '[已隐藏]'); } catch { /* 跳过 */ }
-  }
-  return out;
 }
 
 /** 供测试清缓存。 */

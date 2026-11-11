@@ -179,6 +179,8 @@ export function apply(ctx, input = {}) {
   const store = new Store(config.database, { maxNodes: config.memory.maxNodes })
   // The compaction backend is a separate plugin; one env var is the whole handshake it needs
   // to weight compression by the knowledge graph instead of by word counts alone.
+  // 环境变量是进程级副作用：先存原值，停用/失败时还原，别把别的库配置留在环境里。
+  const previousSoulDatabase = process.env.DSH_SOUL_DATABASE
   if (config.memory.enabled) process.env.DSH_SOUL_DATABASE = config.database
 
   // ---- core memory layer (ported from dsh-core-memory) -------------------
@@ -780,7 +782,10 @@ export function apply(ctx, input = {}) {
           if (verb === 'graph') {
             const query = args.join(' ').trim()
             if (!query) return { kind: 'error', text: '用法：/mem graph <节点 id 或关键词>' }
-            const node = store.nodeRow(query) ?? store.searchNodes(scope, termSet(query), 1)[0] ?? null
+            const direct = store.nodeRow(query)
+            // nodeRow 只按 id 查、不带 scope：跨项目同名 id 会串库，必须校验归属。
+            const node = (direct && direct.scope === scope ? direct : null)
+              ?? store.searchNodes(scope, termSet(query), 1)[0] ?? null
             if (!node) return { kind: 'success', text: '没有匹配的节点。' }
             return { kind: 'success', text: JSON.stringify({
               node: view(node),
@@ -837,18 +842,27 @@ export function apply(ctx, input = {}) {
       if (maintenanceTimer) { clearTimeout(maintenanceTimer); maintenanceTimer = null }
       maintenanceDue.clear()
       commandLifetime.abort(fail('plugin_stopped'))
-      for (const dispose of disposers.reverse()) if (typeof dispose === 'function') dispose()
-      await evolve?.stop()
-      await Promise.allSettled([...commandJobs])
-      await runner?.stop()
-      await components.stop?.()
-      store.close()
+      try {
+        for (const dispose of disposers.reverse()) if (typeof dispose === 'function') dispose()
+        await evolve?.stop()
+        await Promise.allSettled([...commandJobs])
+        await runner?.stop()
+        await components.stop?.()
+      } finally {
+        // 无论中途哪一步抛错，环境变量与 sqlite 句柄都必须收口。
+        if (previousSoulDatabase === undefined) delete process.env.DSH_SOUL_DATABASE
+        else process.env.DSH_SOUL_DATABASE = previousSoulDatabase
+        store.close()
+      }
     }
     return Object.assign(stop, { store, evolve, stop, config, recorder, recent, components })
   } catch (error) {
     for (const dispose of disposers.reverse()) if (typeof dispose === 'function') dispose()
-    runner?.stop()
-    components?.stop?.()
+    // apply 是同步函数，这里不能 await；fire-and-forget 并吞掉异常，保住原始错误。
+    Promise.resolve(runner?.stop()).catch(() => {})
+    Promise.resolve(components?.stop?.()).catch(() => {})
+    if (previousSoulDatabase === undefined) delete process.env.DSH_SOUL_DATABASE
+    else process.env.DSH_SOUL_DATABASE = previousSoulDatabase
     store.close()
     throw error
   }

@@ -72,6 +72,24 @@ async function appendRow(row) {
   await atomicWrite(lessonsPath(), kept.map((r) => JSON.stringify(r)).join('\n') + '\n');
 }
 
+function rowsToText(rows) {
+  return rows.map((r) => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : '');
+}
+
+/**
+ * 整份重写：读和写都在同一条队列任务里完成。
+ * 若在队列外先读，并发 appendRow 可能在这两步之间插入，导致刚记的坑被旧快照覆盖。
+ */
+async function rewriteRows(mutate) {
+  return enqueue(async () => {
+    const rows = await readRows();
+    const next = await mutate(rows);
+    if (next === null) return { ok: false, error: '没有找到匹配的记录。' };
+    await atomicWrite(lessonsPath(), rowsToText(next));
+    return { ok: true, removed: rows.length - next.length };
+  });
+}
+
 /**
  * 合并同类记录：同一指纹累加次数，保留最近的恢复做法。
  * @returns {Array<{fp:string,tool:string,error:string,ok:string,count:number,at:number}>}
@@ -121,18 +139,17 @@ export async function listLessons() {
 }
 
 export async function forgetLesson(fingerprint) {
-  const rows = await readRows();
-  const kept = rows.filter((row) => row.fp !== fingerprint && !row.fp.includes(fingerprint));
-  if (kept.length === rows.length) return { ok: false, error: '没有找到匹配的记录。' };
-  await atomicWrite(lessonsPath(), kept.map((r) => JSON.stringify(r)).join('\n') + (kept.length ? '\n' : ''));
-  return { ok: true, removed: rows.length - kept.length };
+  const needle = String(fingerprint ?? '').trim();
+  if (!needle) return { ok: false, error: '要删除的指纹不能为空。' };
+  return rewriteRows((rows) => {
+    const kept = rows.filter((row) => row.fp !== needle && !row.fp.includes(needle));
+    return kept.length === rows.length ? null : kept;
+  });
 }
 
 export async function clearLessons() {
-  const rows = await readRows();
-  if (!rows.length) return { ok: true, removed: 0 };
-  await atomicWrite(lessonsPath(), '');
-  return { ok: true, removed: rows.length };
+  return rewriteRows((rows) => (rows.length ? [] : null)).then((res) =>
+    res.ok ? res : { ok: true, removed: 0 });
 }
 
 /**
@@ -151,33 +168,38 @@ function looksLikeError(text) {
   return ERROR_LOOK.test(String(text ?? '').slice(0, 400));
 }
 
-/** 工具结果是否算失败：只认结构化信号，不拿文件内容当证据。 */
+/** 从文本里取退出码：支持 `[exit code: N]` 和 `EXIT_CODE N` / `EXIT_CODE=N`。取不到返回 null。 */
+export function exitCodeOf(text) {
+  const s = String(text ?? '');
+  const m = /\[exit code:\s*(-?\d+)\]/i.exec(s) || /\bEXIT_CODE\b\s*[:=]?\s*(-?\d+)/i.exec(s);
+  return m ? Number(m[1]) : null;
+}
+
+/** 工具结果是否算失败：优先结构化信号（isError / 退出码），文本只做无信号时兜底。 */
 function failureOf(message, meta, text, call = {}) {
-  if (message?.isError === true) return text || '工具返回错误';
+  if (message?.isError === true) return { text: text || '工具返回错误', structured: true };
   // 只有 shell 类工具才可能因正文里的退出码标记而失败；
   // read/grep 等工具的正文是用户文件内容，里面出现标记字符串不代表命令失败。
   if (!SHELL_TOOL.test(call.name || '')) return null;
   const args = call.args || '';
   const shell = meta?.opsShell ?? meta?.shell;
-  const code = Number(shell?.exitCode);
-  if (shell && Number.isFinite(code) && code !== 0) {
+  const shellCode = Number(shell?.exitCode);
+  const code = shell && Number.isFinite(shellCode) ? shellCode : exitCodeOf(text);
+  if (code !== null) {
+    if (code === 0) return null; // 退出码 0 明确成功，不能记成坑
     if (code === 1 && BENIGN_EXIT_ONE.test(args)) return null;
-    return text;
+    return { text, structured: true };
   }
-  const exit = /\[exit code:\s*(-?\d+)\]/i.exec(text);
-  if (exit && Number(exit[1]) !== 0) {
-    if (Number(exit[1]) === 1 && BENIGN_EXIT_ONE.test(args)) return null;
-    return text;
-  }
-  if (/\[EXIT_CODE\b/i.test(text)) return text;
+  // 只看到标记、取不到数字：交给调用侧用文本兜底判断，避免直接漏记。
+  if (/\bEXIT_CODE\b/i.test(text)) return { text, structured: false };
   return null;
 }
 
-/** 去掉 harness 包装行，让错误指纹稳定。 */
+/** 去掉 harness 包装行，让错误指纹稳定；退出码行保留（它是判定依据，也能稳定指纹）。 */
 function cleanErrorText(text) {
   const kept = String(text ?? "")
     .split(/\r?\n/)
-    .filter((line) => !/^\s*\[(cwd:|stdout|stderr|EXIT_CODE|exit code:)/i.test(line));
+    .filter((line) => !/^\s*\[(cwd:|stdout|stderr)/i.test(line));
   return kept.join("\n").trim() || String(text ?? "").trim();
 }
 
@@ -202,12 +224,22 @@ export function registerLessons(ctx, options = {}) {
   if (options.enabled === false) return null;
   const budget = Number.isFinite(options.budget) ? Math.max(200, Math.min(4000, options.budget)) : DEFAULT_BUDGET;
   const sessions = new Map();
+  const MAX_SESSIONS = 64;
 
   const stateOf = (sid) => {
     let state = sessions.get(sid);
-    if (!state) {
-      state = { calls: new Map(), pending: new Map() };
+    if (state) {
+      // 命中即移到队尾，淘汰时丢最久没活动的会话。
+      sessions.delete(sid);
       sessions.set(sid, state);
+      return state;
+    }
+    state = { calls: new Map(), pending: new Map() };
+    sessions.set(sid, state);
+    while (sessions.size > MAX_SESSIONS) {
+      const oldest = sessions.keys().next().value;
+      if (oldest === undefined) break;
+      sessions.delete(oldest);
     }
     return state;
   };
@@ -223,6 +255,8 @@ export function registerLessons(ctx, options = {}) {
   const section = ctx.systemPrompt.section({
     name: 'dsh-x-memory:lessons',
     order: 62,
+    // 记录正文来自工具报错，可能含 {{...}}；按纯文本注入，不做模板插值。
+    interpolate: false,
     text: () => cached,
   });
 
@@ -236,6 +270,7 @@ export function registerLessons(ctx, options = {}) {
       properties: {
         action: { type: 'string', enum: ['list', 'forget', 'clear'] },
         text: { type: 'string', description: 'forget 时的错误文本片段或指纹' },
+        limit: { type: 'number', description: 'list 时最多显示多少类（默认 50，上限 200）' },
       },
       required: ['action'],
     },
@@ -254,12 +289,15 @@ export function registerLessons(ctx, options = {}) {
       const rows = await readRows();
       const merged = mergeRows(rows);
       if (!merged.length) return `还没有记录。文件：${lessonsPath()}`;
-      const lines = merged.map((row) => {
+      const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(Math.floor(args.limit), 200) : 50;
+      const shown = merged.slice(0, limit);
+      const lines = shown.map((row) => {
         const times = row.count > 1 ? ` ×${row.count}` : '';
         const ok = row.ok ? `；生效做法：${row.ok}` : '';
         return `- [${row.tool}]${times} ${row.error}${ok}\n  fp: ${row.fp}`;
       });
-      return `共 ${merged.length} 类，${rows.length} 条原始记录（${lessonsPath()}）：\n${lines.join('\n')}`;
+      const more = merged.length > shown.length ? `\n…（还有 ${merged.length - shown.length} 类未显示，可加 limit 参数）` : '';
+      return `共 ${merged.length} 类，${rows.length} 条原始记录（${lessonsPath()}）：\n${lines.join('\n')}${more}`;
     },
   });
 
@@ -285,11 +323,10 @@ export function registerLessons(ctx, options = {}) {
       state.calls.delete(callId);
       const failure = failureOf(data.message, data.meta, stringContent(data.message?.content), call);
       if (failure !== null) {
-        const text = redact(cleanErrorText(failure));
+        const text = redact(cleanErrorText(failure.text));
         if (!text) return;
-        // 非 isError 的失败（靠退出码/标记判出来的）还要求正文像错误，
-        // 否则普通命令输出也会被记成"坑"。
-        if (data.message?.isError !== true && !looksLikeError(text)) return;
+        // 只有在拿不到结构化信号时，才用正文关键词兜底，避免普通输出被记成"坑"。
+        if (!failure.structured && !looksLikeError(text)) return;
         const first = text.split(/\r?\n/).find((line) => line.trim()) ?? text;
         state.pending.set(call.name, { fp: errorFingerprint(call.name, text), error: first.slice(0, 200), args: call.args || '', at: Date.now() });
         return;
