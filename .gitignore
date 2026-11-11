@@ -1,0 +1,15 @@
+node_modules/
+*.log
+.env
+.env.*
+
+# 本地快照与备份
+.snapshots/
+*.bak
+*.bak-*
+.tmp-*
+*.tmp-*
+
+# 系统垃圾
+.DS_Store
+Thumbs.db

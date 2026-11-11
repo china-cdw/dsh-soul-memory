@@ -1,0 +1,268 @@
+# dsh-x-memory
+
+> DSH 的分层记忆插件：把「该一直记得的」「以前发生过的」「踩过的坑」「你的编码规矩」分开放、按需注入，而不是一股脑塞进上下文。
+
+五层记忆 + 一个只读桥。只装这一个插件，就能同时得到：常驻核心记忆、可检索的归档笔记、会话过程图谱、自动踩坑记录、项目编码规范，以及从 billion-context 会话摘要里找回旧过程的能力。
+
+- Node.js ≥ 24，DSH ≥ 0.2.1-rc.2
+- 许可证 MIT，基于 [dsh-soul](https://github.com/icyaaaww/dsh-soul) 2.0.1 与 dsh-core-memory 1.0.1（均为 MIT）构建，详见文末「致谢」
+
+---
+
+## 它解决什么
+
+| 问题 | 这一层怎么解决 |
+| --- | --- |
+| 新会话从零开始，之前说过的偏好全忘了 | 核心记忆 `MEMORY.md` 每个会话自动注入 |
+| 只记得结论，找不到当时的约束和决策 | 会话图谱记录约束/决策/产物，`soul_recall` 按需回捞 |
+| 同一个错反复犯 | 工具报错后自动记一条「错 + 当时怎么改对的」，下个会话提醒 |
+| 每次都要重新交代代码规范 | 自动读全局 `CODING.md` 和项目里的 `AGENTS.md` 等规则文件 |
+| 长会话被压缩后，旧过程细节消失 | 桥接 billion-context 的会话压缩摘要，只读检索 |
+
+---
+
+## 五层记忆
+
+| 层 | 存什么 | 位置 | 注入 | 预算 | 工具 |
+| --- | --- | --- | --- | --- | --- |
+| 核心记忆 | 长期稳定的事实、偏好、环境 | `$DSH_HOME/memory/MEMORY.md` | 每轮，`order 60` | 3000 字 | `memory_core` |
+| 归档笔记 | 需要时才查的经历、结论 | `$DSH_HOME/memory/notes/*.md` | 只注入最近 12 条标题 | — | `memory_write` / `memory_read` / `memory_list` / `memory_search` / `memory_delete` |
+| 会话图谱 | 约束、决策、产物、历史原文 | `$DSH_HOME/dsh-soul/<profile>/evolve.sqlite` | 投影 600 字节，`order 940` | 600 字节 | `soul_recall` / `soul_expand` |
+| 踩坑记录 | 工具报错 → 后来怎么改对 | `$DSH_HOME/memory/LESSONS.jsonl` | 每轮，`order 62` | 600 字 | `lessons` |
+| 编码规范 | 全局规矩 + 项目规则文件 | `$DSH_HOME/memory/CODING.md` + 项目目录 | 每轮，`order 61` | 2000 字 | `coding_rules` |
+
+每层独立预算、独立开关，互不挤占（图谱投影单独 600 字节）。
+
+### 编码规范会自动读哪些文件
+
+当前项目目录下，按顺序查找：
+
+```
+CODING.md
+AGENTS.md
+CLAUDE.md
+.cursorrules
+.github/copilot-instructions.md
+.dsh/rules.md
+.cursor/rules/*.mdc, *.md
+```
+
+全局 `CODING.md` 优先，项目文件按上面的顺序追加；超出 2000 字预算时截断并注明。
+
+---
+
+## 这一版新加的四件事
+
+### 1. 取代标记
+
+同一条记忆被修正时，不要静默叠加两条：
+
+```text
+memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", supersedes: "20261110-153000")
+```
+
+旧笔记保留但标记「已被 [新 id] 取代」，检索、列表、注入里都会显示。不想要旧内容直接 `memory_delete`。
+
+### 2. 写入守卫（GUARD.json）
+
+`$DSH_HOME/memory/GUARD.json` 可自定义三层规则：
+
+- `reject`：私钥块、常见 token 形状（`sk-`、`ghp_`、`AKIA`、`glpat-` 等）——直接拒收，不落盘；
+- `sensitive`：疑似密码/凭据赋值形状——允许保存但标 `sensitive: true`，系统提示不列它，检索时正文显示「已隐藏」，需要时用 `memory_read` 显式读取；
+- 私钥块规则是硬底线，写在代码里，`GUARD.json` 关不掉。
+
+核心记忆（会注入每个会话）对两类都直接拒写。
+
+### 3. 每日快照
+
+每天第一次加载时把记忆库整体复制到 `$DSH_HOME/memory/.snapshots/<时间戳>/`，保留最近 7 份。改坏了可以整份拷回去；`memory_brief` 里能看到「快照：N 份」。
+
+### 4. billion-context 桥接（只读）
+
+如果你装了 [billion-context](https://github.com/ranxianglei/billion-context)，`memory_search` 会在归档笔记、会话图谱之后，追加一段【历史会话摘要】——从 billion-context 落盘的会话压缩块里做关键词检索。
+
+- 只读它写好的 `sessions/*.json`，不改、不压缩它；
+- 坏文件、超过 8MB、目录不存在都静默跳过，不影响主检索；
+- 默认最多读最近 4 个会话、每个 5 块，`maxChars` 控制输出长度；
+- 不想要就把 `bridge.enabled` 设为 `false`。
+
+---
+
+## 安装
+
+本地目录安装（推荐先这样试）：
+
+```bash
+dsh plugin --profile desktop add /path/to/dsh-x-memory
+```
+
+或者手动装进 profile（`<DSH_HOME>` 一般就是你本机的 DSH 数据目录）：
+
+```bash
+pnpm add "dsh-x-memory@file:/path/to/dsh-x-memory" --dir "<DSH_HOME>/profiles/desktop"
+```
+
+然后在 profile 的 `dsh.profile.bundles` 里启用 `dsh-x-memory`。装好后重启 DSH，系统提示里应出现：
+
+```
+# 跨会话记忆（dsh-x-memory）
+# 编码规范（dsh-x-memory）
+# 踩过的坑（dsh-x-memory 自动记录）   ← 有记录时才出现
+```
+
+用 `memory_brief` 一次看全：核心记忆大小、归档条数、风格、快照、图谱规模、billion-context 状态。
+
+> 只改插件源码、不重装时：把 bundle 关掉再打开（`plugin_manager set_bundle enabled=false` → `enabled=true`）会重新加载磁盘上的模块，不必重启整个 App。
+
+---
+
+## 工具
+
+| 工具 | 用途 | 主要参数 |
+| --- | --- | --- |
+| `memory_write` | 写一条归档笔记 | `title`、`content`、`tags?`、`force?`、`supersedes?` |
+| `memory_read` | 按 id 读全文 | `id`（支持唯一前缀） |
+| `memory_list` | 列归档（可按标签过滤） | `limit?`、`tag?` |
+| `memory_search` | 三路检索：归档 + 图谱 + billion-context | `query` |
+| `memory_delete` | 删除（写墓碑，不复活） | `id` |
+| `memory_core` | 改核心记忆分节 | `action`（append/replace/remove）、`section`、`text?` |
+| `memory_brief` | 记忆库体检 | — |
+| `persona` | 回复风格 | `action`（get/set/custom/disable）、`preset?`、`text?` |
+| `coding_rules` | 编码规范 | `action`（show/list/add/forget）、`text?` |
+| `lessons` | 踩坑记录 | `action`（list/forget/clear）、`text?` |
+| `soul_recall` | 从会话图谱/历史原文回捞 | `query`、`k?` |
+| `soul_expand` | 按 seq 区间展开原文 | `from`、`to` |
+
+写入规则：`memory_write` 会做近重复检查（相似度 ≥0.55 拒写，加 `force: true` 可强写）。
+
+踩坑是自动记录的：同一会话里某工具报错、之后同工具成功，就记一条「错误 + 生效做法」；同类错误合并计数。只认结构化失败信号（`isError`、退出码），不扫正文；读文件类工具和记忆/编码工具自身不记。
+
+---
+
+## 配置
+
+`cordis.patch.yml` 默认值：
+
+```yaml
+config:
+  enabled: false            # 上游的「演化」功能，默认关
+  profile: desktop
+  memory:
+    enabled: true           # 核心记忆 + 归档 + 图谱
+    projectionBytes: 600    # 图谱每轮投影字节数
+    maintenance: true       # 每 20 轮去重与边衰减
+  coding:
+    enabled: true
+    budget: 2000            # 编码规范注入预算（400–8000）
+  lessons:
+    enabled: true
+    budget: 600             # 踩坑注入预算（200–4000）
+  bridge:
+    enabled: true
+    sessionsDir: ''         # 留空 = 自动找 billion-context 默认目录
+    maxSessions: 4
+    maxChars: 1200          # 桥接段输出上限（200–4000）
+```
+
+`bridge.sessionsDir` 留空时依次找：环境变量 `BILI_SESSIONS_DIR` → `%USERPROFILE%\.local\share\billion-context\sessions`（Linux/macOS 为 `~/.local/share/...`）。
+
+---
+
+## 数据目录
+
+```
+$DSH_HOME/memory/
+├── MEMORY.md            # 核心记忆（每轮注入，建议 <3KB）
+├── PERSONA.md           # 回复风格
+├── CODING.md            # 全局编码规范
+├── GUARD.json           # 可选，自定义守卫规则
+├── LESSONS.jsonl        # 踩坑记录（最多 400 条）
+├── index.json           # 归档索引，坏了会从 notes/ 重建
+├── notes/               # 归档笔记，一条一个 .md
+└── .snapshots/          # 每日快照，保留 7 份
+```
+
+图谱库在 `$DSH_HOME/dsh-soul/<profile>/evolve.sqlite`（沿用 dsh-soul 的位置，装过 soul 的话旧数据直接可用）。
+
+---
+
+## 安全
+
+- 私钥块、常见 token 形状：写入即拒收；
+- 凭据赋值形状：可保存但标记敏感，不进系统提示、检索时隐藏正文；
+- 踩坑记录写入前过一遍脱敏，含 `password` / `token` / `secret` / `bearer` 等字样的行直接丢弃；
+- 发布前自检：
+
+```bash
+npm run preflight
+```
+
+扫描私钥块、凭据形状、绝对家目录路径、高熵串；命中就失败退出，只打印 `相对路径:行号  类别`，不回显命中内容。
+
+确认是误报时，在仓库根目录建 `.preflight-ignore.json`：
+
+```json
+["docs/example.md:12", "README.md:96 ABS_WIN"]
+```
+
+支持「相对路径」「相对路径:行号」「相对路径:行号 类别」三种粒度。
+
+---
+
+## 与 billion-context 的关系
+
+两者不是同类，也不抢活：
+
+- **billion-context** 管「一次会话装不下」——压缩已消耗的对话，模型需要时可解压；
+- **dsh-x-memory** 管「跨会话记不住」——把该长期保留的东西放在系统提示和本地库里。
+
+桥接只做一件事：把它的会话压缩摘要**只读**并入 `memory_search`。它继续管它的压缩，记忆层不介入、不改写、不依赖它的内部格式（格式不认识就跳过）。
+
+如果你的环境里它和记忆插件同时开着，前缀缓存不受影响：记忆走系统提示，压缩只动消息历史。
+
+---
+
+## 上游与同步
+
+本插件是 dsh-soul 2.0.1 的 fork，`src/` 下大部分文件是上游逐字节镜像；我们自己写的文件、`index.js` 需要重放的接线点、同步步骤都写在 [UPSTREAM.md](./UPSTREAM.md)。
+
+```bash
+node scripts/sync-upstream.mjs --check              # 检查镜像是否被本地改过
+node scripts/sync-upstream.mjs --from <dsh-soul 目录>  # 同步上游新版本
+```
+
+`package.json` 的 `dshMemory` 字段记录了上游版本与移植来源；`upstream-manifest.json` 存每个镜像文件的 sha256。
+
+---
+
+## 限制
+
+- 检索是关键词 + 中文二元组匹配，不是语义检索；跨会话语义回忆目前靠图谱和 billion-context 摘要；
+- billion-context 桥只覆盖已被压缩的会话块（默认最近 4 个会话、每个 5 块），且摘要是二次转写；
+- 编码规范按当前会话工作目录找项目文件，子目录里的 `AGENTS.md` 不会逐层向上合并；
+- 上游「演化」（自改 harness）默认关闭，本插件也不建议开启。
+
+---
+
+## 开发与自检
+
+```bash
+node --check index.js
+node scripts/sync-upstream.mjs --check
+npm run preflight
+```
+
+开发期另有一套自检脚本（核心 99 项、编码 15 项、踩坑 12 项、重放 11 项、桥接 25 项断言），覆盖写入/检索/取代/守卫/快照/桥接的边界情况；目前保存在开发目录，尚未随包发布。
+
+---
+
+## 致谢与许可
+
+MIT License。
+
+- 底座来自 [icyaaaww/dsh-soul](https://github.com/icyaaaww/dsh-soul) 2.0.1（MIT）：会话图谱、投影、压缩后端；
+- 核心记忆层移植自 dsh-core-memory 1.0.1（MIT）：`MEMORY.md`、归档笔记、persona；
+- 设计上借鉴了两个开源项目（未复制代码）：
+  - [NattoCB/dsh-plugin-memory](https://github.com/NattoCB/dsh-plugin-memory)：分层、索引与详情分离、截断预算；
+  - [dearbld/dsh-living-memory](https://github.com/dearbld/dsh-living-memory)：冲突取代标记、守卫规则数据化、发布前扫描、快照轮转；
+- billion-context 是独立插件（MIT），本插件只读取它的会话存档，不包含它的代码。

@@ -1,0 +1,88 @@
+{
+  "name": "dsh-x-memory",
+  "version": "0.3.0",
+  "description": "DSH 分层记忆：核心记忆常驻 + 归档笔记 + 踩坑记录 + 编码规范 + 会话图谱 + billion-context 摘要桥接",
+  "license": "MIT",
+  "author": "china-cdw",
+  "homepage": "https://github.com/china-cdw/dsh-x-memory#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/china-cdw/dsh-x-memory.git"
+  },
+  "bugs": {
+    "url": "https://github.com/china-cdw/dsh-x-memory/issues"
+  },
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "preflight": "node scripts/preflight.mjs",
+    "prepublishOnly": "node scripts/preflight.mjs"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./compaction": "./compaction.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "engines": {
+    "node": ">=24",
+    "dsh": ">=0.2.1-rc.2 <0.3.0-0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "index.js",
+    "compaction.js",
+    "src/**/*.js",
+    "harness/default/*.md",
+    "locale/*.json",
+    "cordis.patch.yml",
+    "UPSTREAM.md",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "memory"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-compaction-basic": ">=0.2.1-rc.2 <0.3.0-0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-compaction-basic": {
+      "optional": true
+    }
+  },
+  "dshMemory": {
+    "upstream": {
+      "name": "dsh-soul",
+      "version": "2.0.1",
+      "license": "MIT"
+    },
+    "ported": [
+      {
+        "name": "dsh-core-memory",
+        "version": "1.0.1",
+        "license": "MIT"
+      }
+    ],
+    "ours": [
+      "index.js",
+      "cordis.patch.yml",
+      "src/core-memory.js",
+      "src/persona.js",
+      "src/coding.js",
+      "src/lessons.js",
+      "src/memory/util.js",
+      "src/memory/guard.js",
+      "src/memory/bili.js"
+    ],
+    "sync": "node scripts/sync-upstream.mjs --check | --from <dsh-soul 目录>",
+    "preflight": "node scripts/preflight.mjs"
+  }
+}

@@ -1,0 +1,25 @@
+- insert:
+    - id: dsh-x-memory
+      name: dsh-x-memory
+      inject: [tools, systemPrompt, commands]
+      config:
+        # 演化（自改 harness）默认关闭；记忆层默认开启。
+        enabled: false
+        profile: desktop
+        provider: ''
+        model: ''
+        memory:
+          enabled: true
+          projectionBytes: 600
+          maintenance: true
+        coding:
+          enabled: true
+          budget: 2000
+        lessons:
+          enabled: true
+          budget: 600
+        bridge:
+          enabled: true
+          sessionsDir: ''
+          maxSessions: 4
+          maxChars: 1200

@@ -1,0 +1,94 @@
+// dsh-x-memory — 自建四层共用的底层工具
+//
+// 为什么要单独一个目录：src/ 下其余 27 个文件是 dsh-soul 2.0.1 的逐字节镜像，
+// 升级上游时会整体覆盖 src/*.js。本插件自己写的模块（core-memory / persona /
+// coding / lessons）和它们的公共底座都放在 src/memory/ 下，sync-upstream 只覆盖
+// 其余文件，不会误删这里。
+//
+// 这里只放四层真正重复的东西：路径、原子写、写串行化、敏感信息过滤；不引入新依赖。
+
+import { copyFile, cp, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+
+/** 敏感行黑名单：命中整行丢弃，不落盘、不注入。四层共用同一口径。 */
+export const SECRET_PATTERN = /(password|passwd|secret|token|api[-_ ]?key|bearer|authorization)/i;
+
+/** DSH home：与宿主保持一致，允许用环境变量覆盖（测试与多 profile 场景）。 */
+export function memoryHome() {
+  return process.env.DSH_HOME || join(homedir(), '.dsh');
+}
+
+/** <dshHome>/memory/ 下的路径。 */
+export function memoryPath(...parts) {
+  return join(memoryHome(), 'memory', ...parts);
+}
+
+/** 写临时文件再 rename，避免读到半截内容。 */
+export async function atomicWrite(path, content) {
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(tmp, content, 'utf8');
+  await rename(tmp, path);
+}
+
+/** 串行化写入：同进程多个 agent 并发写同一份文件时按提交顺序落盘。 */
+export function createQueue() {
+  let tail = Promise.resolve();
+  return function enqueue(job) {
+    const run = tail.then(job, job);
+    tail = run.then(() => undefined, () => undefined);
+    return run;
+  };
+}
+
+/** 过滤敏感行并截断；用于错误文本、命令、笔记片段。 */
+export function redactSecrets(text, limit = 600) {
+  return String(text ?? '')
+    .split('\n')
+    .filter((line) => !SECRET_PATTERN.test(line))
+    .join('\n')
+    .slice(0, limit);
+}
+
+/** 统一的失败文案。 */
+export function errText(e) {
+  return '操作失败：' + (e && e.message ? e.message : String(e));
+}
+
+const SNAPSHOT_FILES = ['MEMORY.md', 'PERSONA.md', 'CODING.md', 'LESSONS.jsonl', 'index.json'];
+
+/**
+ * 每日快照：把记忆文件拷到 <memory>/.snapshots/<时间戳>/，保留最近 keep 份。
+ * 同一天只做一次；任何一步失败都只跳过，不影响正常读写。
+ */
+export async function snapshotMemory({ keep = 7 } = {}) {
+  const dir = memoryPath('.snapshots');
+  const today = new Date().toISOString().slice(0, 10);
+  let names = [];
+  try { names = await readdir(dir); } catch { names = []; }
+  if (names.some((n) => n.startsWith(today))) return { skipped: true, dir, count: names.length };
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const dest = join(dir, stamp);
+  let copied = 0;
+  for (const name of SNAPSHOT_FILES) {
+    try { await copyFile(memoryPath(name), join(dest, name)); copied++; } catch { /* 文件不存在就跳过 */ }
+  }
+  try {
+    await cp(memoryPath('notes'), join(dest, 'notes'), { recursive: true });
+    copied++;
+  } catch { /* 没有 notes 目录就跳过 */ }
+  const all = (await readdir(dir).catch(() => [])).filter((n) => !n.startsWith('.')).sort();
+  for (const old of all.slice(0, Math.max(0, all.length - keep))) {
+    await rm(join(dir, old), { recursive: true, force: true }).catch(() => {});
+  }
+  return { skipped: false, dir: dest, copied };
+}
+
+/** 最近一次快照信息，读不到就返回 null。 */
+export async function latestSnapshot() {
+  const dir = memoryPath('.snapshots');
+  const names = (await readdir(dir).catch(() => [])).filter((n) => !n.startsWith('.')).sort();
+  if (!names.length) return null;
+  return { name: names[names.length - 1], count: names.length };
+}
