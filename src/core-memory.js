@@ -12,7 +12,7 @@
 //   2. memory_search 的相关度加入时间衰减项（越新越靠前，但不压过关键词命中）；
 //   3. memory_brief 一次返回核心记忆、归档、风格与会话图谱的体检数据；
 //      memory_search 在关键词无命中或命中不足时，可回落到会话图谱检索（由 index.js 注入）。
-import { readFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { readFile, mkdir, readdir, rm, stat, writeFile, utimes } from 'node:fs/promises';
 import { readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -239,33 +239,50 @@ function readFileLoose(path) {
 }
 
 /** 写索引：跨进程用 index.json.lock 串行化，锁超时视为崩溃残留并清理。 */
-const INDEX_LOCK_STALE_MS = 10000;
-const INDEX_LOCK_WAIT_MS = 2000;
+const INDEX_LOCK_STALE_MS = 30000;
+// 等待必须大于过期阈值：锁持有者只是慢（大库查重），不是死了。
+const INDEX_LOCK_WAIT_MS = 35000;
+let indexLockDepth = 0;
 
 async function withIndexLock(job) {
   const lock = indexPath() + '.lock';
   await mkdir(dirname(lock), { recursive: true });
+  const token = process.pid + '-' + Date.now() + '-' + Math.random().toString(16).slice(2);
   const started = Date.now();
   for (;;) {
     try {
       // wx：已存在就失败，天然互斥，不需要额外判断。
-      await writeFile(lock, String(process.pid), { flag: 'wx' });
+      await writeFile(lock, token, { flag: 'wx' });
       break;
     } catch (e) {
       if (e && e.code !== 'EEXIST') throw e;
       // 超时判断放在所有分支之前：stat 本身持续失败（EPERM/EBUSY）时也必须退出，不能空转。
-      if (Date.now() - started > INDEX_LOCK_WAIT_MS) throw new Error('索引写入被占用（index.json.lock 超过 ' + (INDEX_LOCK_WAIT_MS / 1000) + ' 秒未释放）');
+      const waitMs = Number(process.env.DSH_X_MEMORY_LOCK_WAIT_MS) || INDEX_LOCK_WAIT_MS;
+      if (Date.now() - started > waitMs) throw new Error('索引写入被占用（index.json.lock 超过 ' + (waitMs / 1000) + ' 秒未释放）');
       try {
         const st = await stat(lock);
-        if (Date.now() - st.mtimeMs > INDEX_LOCK_STALE_MS) await rm(lock, { force: true });
+        const staleMs = Number(process.env.DSH_X_MEMORY_LOCK_STALE_MS) || INDEX_LOCK_STALE_MS;
+        if (Date.now() - st.mtimeMs > staleMs) await rm(lock, { force: true });
       } catch { /* 锁刚好被持有者删掉，睡一下再试 */ }
       await new Promise((r) => setTimeout(r, 25));
     }
   }
+  // 心跳：慢查询/大库重建超过 STALE 时，避免被其他进程当成死锁清掉。
+  const beat = setInterval(() => {
+    const now = new Date();
+    utimes(lock, now, now).catch(() => {});
+  }, Math.max(500, Math.floor(INDEX_LOCK_STALE_MS / 3)));
+  beat.unref?.();
   try {
+    indexLockDepth += 1;
     return await job();
   } finally {
-    await rm(lock, { force: true }).catch(() => {});
+    indexLockDepth -= 1;
+    clearInterval(beat);
+    try {
+      const held = await readFile(lock, 'utf8');
+      if (held === token) await rm(lock, { force: true });
+    } catch { /* 锁已不在 */ }
   }
 }
 
@@ -331,7 +348,8 @@ async function loadIndex() {
       return parsed.notes.filter((n) => n && typeof n.id === 'string').sort(noteSort);
     }
   }
-  return rebuildIndex();
+  // 锁内重建不能再写索引：persistIndex 会再次抢同一把锁，白等一个 WAIT。
+  return rebuildIndex({ persist: indexLockDepth === 0 });
 }
 
 /**
@@ -344,7 +362,13 @@ async function reconcileIndex() {
   const byId = new Map(notes.map((n) => [n.id, n]));
   const dir = notesDir();
   let files = [];
-  try { files = await readdir(dir); } catch { files = []; }
+  try {
+    files = await readdir(dir);
+  } catch {
+    // 目录读不出来（占用/权限/离线）时不能把「没读到」当成「全没了」，
+    // 否则会把全部记忆标 missing 并落盘，注入与检索里整段消失。
+    return notes;
+  }
   const fileIds = new Set();
   let changed = false;
   for (const name of files) {
@@ -567,7 +591,7 @@ async function writeNote(args) {
       .filter(Boolean)
     : [];
   const force = args.force === true;
-  const supersedes = typeof args.supersedes === 'string' ? args.supersedes.trim().replace(/\.md$/, '') : '';
+  const supersedes = typeof args.supersedes === 'string' ? normalizeRef(args.supersedes) : '';
   const guard = checkGuard(title + '\n' + content);
   if (guard.kind === 'reject') {
     return failMessage('E_GUARD', '拒绝保存：内容命中守卫规则（私钥或凭据形状），未落盘。请删掉敏感片段后重试。');
@@ -608,7 +632,7 @@ async function writeNote(args) {
       if (target) {
         superseded = await markSuperseded(target, id);
         bodyCache.delete(target.id);
-        notes = notes.map((n) => (n.id === target.id ? { ...n, supersededBy: id, updated: now } : n));
+        if (superseded) notes = notes.map((n) => (n.id === target.id ? { ...n, supersededBy: id, updated: now } : n));
       }
       sectionCache = null;
       return { notes, value: '已保存归档记忆 [' + id + '] ' + title + (tags.length ? ' #' + tags.join(' #') : '') + '。已进入索引，所有会话可见。' +
@@ -681,11 +705,16 @@ async function searchNotes(args, graphSearch, agent, bridge) {
   } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
 
+/** 统一 id 归一化：去掉方括号（memory_list 打印的就是 [id]）与 .md 后缀。 */
+function normalizeRef(ref) {
+  return String(ref || '').trim().replace(/^\[|\]$/g, '').replace(/\.md$/, '').trim();
+}
+
 async function readNote(ref) {
   if (!ref) return failMessage('E_ARG', '读取失败：id 不能为空。可用 memory_list 获取 id。');
   try {
     const notes = await loadIndex();
-    const clean = ref.replace(/\.md$/, '');
+    const clean = normalizeRef(ref);
     let matches = notes.filter((n) => n.id === clean);
     if (matches.length === 0) matches = notes.filter((n) => n.id.indexOf(clean) === 0);
     if (matches.length === 0) return failMessage('E_NOT_FOUND', '未找到记忆「' + ref + '」。可用 memory_list 浏览全部 ' + notes.length + ' 条归档记忆。');
@@ -730,7 +759,7 @@ async function deleteNote(ref) {
   if (!ref) return failMessage('E_ARG', '删除失败：id 不能为空。');
   try {
     return await enqueue(() => withLockedIndex(async (notes) => {
-      const clean = ref.replace(/\.md$/, '');
+      const clean = normalizeRef(ref);
       const matches = notes.filter((n) => n.id === clean || n.id.indexOf(clean) === 0);
       if (matches.length === 0) return { value: failMessage('E_NOT_FOUND', '删除失败：未找到「' + ref + '」。可用 memory_list 浏览全部。') };
       if (matches.length > 1) return { value: failMessage('E_AMBIGUOUS', 'id 有歧义，请精确指定：\n' + matches.map((n) => '- [' + n.id + '] ' + n.title).join('\n')) };
@@ -782,7 +811,7 @@ async function editCore(args) {
         if (target) target.body = (target.body.replace(/\s+$/, '') ? target.body.replace(/\s+$/, '') + '\n' : '') + bodyText;
         else parsed.sections.push({ title: section, body: bodyText });
       } else {
-        if (!target) return '替换失败：找不到分节「' + section + '」。现有分节：' + titles;
+        if (!target) return failMessage('E_NOT_FOUND', '替换失败：找不到分节「' + section + '」。现有分节：' + titles);
         target.body = bodyText;
       }
       const next = renderCore(parsed);
@@ -990,7 +1019,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
           }
           const patch = { enabled: true, preset: action === 'custom' ? 'custom' : (typeof args.preset === 'string' ? args.preset.trim() : '') };
           if (action === 'set' && !patch.preset) {
-            return '设置失败：action=set 需要提供 preset。可用：' + PRESETS.map((p) => p.id).join(' / ');
+            return failMessage('E_ARG', '设置失败：action=set 需要提供 preset。可用：' + PRESETS.map((p) => p.id).join(' / '));
           }
           if (action === 'custom') patch.custom = typeof args.text === 'string' ? args.text : '';
           return await enqueue(async () => {

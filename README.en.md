@@ -149,9 +149,11 @@ The style settings page calls the local route `/dsh-x-memory/persona` over same-
 
 - `GET` returns `{ persona, presets, maxCustom }`;
 - every request (GET included) must carry the custom header `X-DSH-X-Memory: 1`: cross-site forms and links cannot forge it, and the browser sends a CORS preflight first, which blocks unapproved cross-origin reads;
-- `POST` requires `Content-Type: application/json` and a body of at most 16KB; it answers 200 or 400/403/413/415;
+- `POST` requires `Content-Type: application/json` and a body of at most 16KB; only `GET`/`POST` are accepted (other methods return 405 with `Allow: GET, POST`); an empty `{}` returns 204 and writes nothing; otherwise it answers 200 or 400/403/413/415;
 - only loopback hosts (`localhost`, `127.0.0.1`, `[::1]`) are accepted, and any Origin must match the Host — this blocks DNS rebinding and cross-site prompt injection;
 - responses carry `Cache-Control: no-store`; style is personal data and is never cached.
+
+When a tool fails, the returned text ends with a machine-readable `[err:CODE]` suffix (for example `[err:E_NOT_FOUND]` or `[err:E_GUARD]`). The host still reports these results as successful (`isError` stays false), so callers must inspect the suffix to branch on failures.
 
 ---
 
@@ -162,7 +164,7 @@ Defaults in `cordis.patch.yml`:
 ```yaml
 config:
   enabled: false            # upstream "evolution" feature, off by default
-  profile: desktop
+  # profile defaults to the install path; set DSH_PROFILE or an explicit database to override
   memory:
     enabled: true           # core memory + archived notes + graph
     projectionBytes: 600    # graph projection per turn, in bytes
@@ -237,6 +239,12 @@ The bridge does exactly one thing: it folds billion-context's compressed session
 Running both does not hurt prefix caching: memory travels in the system prompt, compression only touches message history.
 
 ---
+
+## Upgrading
+
+1. Update the source in the plugin directory (`git pull` or install a new version);
+2. After changing the source, sync the installed copy: run `plugin_manager set_bundle dsh-x-memory=false`, then `node <workspace>/sync-install.mjs`, then `set_bundle ... =true` to hot-reload;
+3. Your data is untouched: `$DSH_HOME/memory` and the graph database stay as they are, and the previous day's snapshot in `.snapshots/` is available for rollback.
 
 ## Upstream and syncing
 

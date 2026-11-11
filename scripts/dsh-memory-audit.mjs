@@ -8,8 +8,12 @@ import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { assert, callTool, makeCtx, makeHome, suite, waitFor } from './_testkit.mjs';
 import { registerCoreMemory } from '../src/core-memory.js';
-import { snapshotGraph } from '../src/memory/util.js';
+import { snapshotGraph, snapshotMemory } from '../src/memory/util.js';
 import { readPersona } from '../src/persona.js';
+
+// 锁测试要快：默认等待 35s，这里压到 300ms（withIndexLock 每次调用时读取）。
+process.env.DSH_X_MEMORY_LOCK_WAIT_MS = '300';
+process.env.DSH_X_MEMORY_LOCK_STALE_MS = '500';
 
 const home = await makeHome('dsh-mem-core-');
 const memoryDir = join(home.dir, 'memory');
@@ -424,6 +428,29 @@ await t.test('snapshotGraph 用 VACUUM INTO 把图谱库写进当天快照', asy
   assert.equal(written.length, 1);
   assert.match(written[0], /\.snapshots[\\/][^\\/]+[\\/]evolve\.sqlite$/);
   assert.equal(await readFile(written[0], 'utf8'), 'sqlite-bytes');
+});
+
+await t.test('memory_read 认 [id] 方括号与 .md 后缀（list 打印的格式可直接回读）', async () => {
+  const saved = await callTool(tools1, 'memory_write', { title: '方括号读取', content: 'bracket ref body', force: true });
+  const id = /\[([^\]]+)\]/.exec(saved)[1];
+  assert.match(await callTool(tools1, 'memory_read', { id: '[' + id + ']' }), /方括号读取/);
+  assert.match(await callTool(tools1, 'memory_read', { id: id + '.md' }), /方括号读取/);
+});
+
+await t.test('快照以 .complete 标记为准：图谱先建当天目录不会让文件快照被跳过', async () => {
+  const snaps = join(memoryDir, '.snapshots');
+  const today = new Date().toISOString().slice(0, 10);
+  for (const name of await readdir(snaps)) {
+    await rm(join(snaps, name, '.complete'), { force: true }).catch(() => {});
+  }
+  const graphFirst = join(snaps, today + 'T00-00-00');
+  await mkdir(graphFirst, { recursive: true });
+  await writeFile(join(graphFirst, 'evolve.sqlite'), 'x');
+  const r1 = await snapshotMemory();
+  assert.equal(r1.skipped, false, '当天目录已存在但无完成标记时不应跳过');
+  await stat(join(r1.dir, '.complete'));
+  const r2 = await snapshotMemory();
+  assert.equal(r2.skipped, true, '有完成标记后当天应跳过');
 });
 
 const result = t.finish();

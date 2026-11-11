@@ -149,9 +149,11 @@ dsh plugin --profile desktop add "$PWD"
 
 - `GET` 返回 `{ persona, presets, maxCustom }`；
 - 所有请求（含 GET）必须带自定义请求头 `X-DSH-X-Memory: 1`：跨站表单/链接伪造不了这个头，浏览器还会先发 CORS 预检，挡住了未经允许的跨源读取；
-- `POST` 要求 `Content-Type: application/json`、请求体 ≤16KB，返回 200 或 400/403/413/415；
+- `POST` 要求 `Content-Type: application/json`、请求体 ≤16KB；方法只接受 `GET`/`POST`，其他方法返回 405 且带 `Allow: GET, POST`；空的 `{}` 返回 204 且不写盘；其余返回 200 或 400/403/413/415；
 - 只接受本机回环 Host（`localhost` / `127.0.0.1` / `[::1]`），且带 Origin 时必须与 Host 一致——防止 DNS rebinding 与跨站提示注入；
 - 响应带 `Cache-Control: no-store`，风格属于个人数据，不缓存。
+
+工具失败时，返回文本末尾带机器可读后缀 `[err:CODE]`（例如 `[err:E_NOT_FOUND]`、`[err:E_GUARD]`）；注意宿主层仍把这类结果当作成功（`isError` 为 false），调用方需要识别后缀来完成分支。
 
 ---
 
@@ -162,7 +164,7 @@ dsh plugin --profile desktop add "$PWD"
 ```yaml
 config:
   enabled: false            # 上游的「演化」功能，默认关
-  profile: desktop
+  # profile 默认按安装路径推断；也可设环境变量 DSH_PROFILE 或显式 database
   memory:
     enabled: true           # 核心记忆 + 归档 + 图谱
     projectionBytes: 600    # 图谱每轮投影字节数
@@ -237,6 +239,12 @@ npm run preflight
 两者同时开着时前缀缓存不受影响：记忆走系统提示，压缩只动消息历史。
 
 ---
+
+## 升级
+
+1. 在插件目录更新源码（`git pull` 或安装新版本）；
+2. 改完源码后同步安装副本：先 `plugin_manager set_bundle dsh-x-memory=false`，再跑 `node <workspace>/sync-install.mjs`，最后 `set_bundle ... =true` 热重载；
+3. 数据不会动：`$DSH_HOME/memory` 与图谱库保持原样，升级前一天的快照在 `.snapshots/` 里可回退。
 
 ## 上游与同步
 

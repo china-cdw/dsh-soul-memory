@@ -43,7 +43,7 @@ export function codingPath() {
 }
 
 // ---------- 读文件 ----------
-function readCapped(path, cap = FILE_CHAR_CAP) {
+function readCapped(path, cap = FILE_CHAR_CAP, { strict = false } = {}) {
   try {
     const st = statSync(path);
     if (!st.isFile() || st.size === 0) return null;
@@ -54,7 +54,11 @@ function readCapped(path, cap = FILE_CHAR_CAP) {
     // cap=Infinity 表示「写回用的完整读取」：截断只用于注入与展示，绝不能拿截断文本回写。
     if (Number.isFinite(cap) && text.length > cap) text = sliceSafe(text, cap) + '\n…（文件过长，已截断）';
     return text;
-  } catch {
+  } catch (e) {
+    // 只有「文件不存在」才代表没有内容；占用/权限等读错误必须让调用方知道，
+    // 否则写回路径会把规则文件当成空文件、用模板覆盖掉全部规则。
+    if (e && e.code === 'ENOENT') return null;
+    if (strict) throw e;
     return null;
   }
 }
@@ -171,7 +175,13 @@ export async function addRule(text) {
   return enqueue(() => withFileLock(codingPath(), async () => {
     const path = codingPath();
     // 写回必须基于完整文件：readCapped 的默认 cap 只用于注入，不能用来改文件。
-    const existing = readCapped(path, Infinity) ?? TEMPLATE;
+    // strict：读失败（非 ENOENT）必须放弃写入，否则会用模板覆盖掉整份规则。
+    let existing;
+    try {
+      existing = readCapped(path, Infinity, { strict: true }) ?? TEMPLATE;
+    } catch (e) {
+      return { ok: false, error: '读取编码规范失败，为避免覆盖已放弃写入：' + (e && e.message ? e.message : e) };
+    }
     const lines = existing.split('\n');
     if (lines.some((line) => ruleKey(line.replace(/^\s*-\s*/, '')) === ruleKey(rule))) {
       return { ok: false, error: '已有相同规则，未重复写入。' };
@@ -194,7 +204,12 @@ export async function forgetRule(text) {
   if (!rule) return { ok: false, error: '要删除的规则内容不能为空。' };
   return enqueue(() => withFileLock(codingPath(), async () => {
     const path = codingPath();
-    const existing = readCapped(path, Infinity);
+    let existing;
+    try {
+      existing = readCapped(path, Infinity, { strict: true });
+    } catch (e) {
+      return { ok: false, error: '读取编码规范失败，为避免破坏文件已放弃写入：' + (e && e.message ? e.message : e) };
+    }
     if (!existing) return { ok: false, error: '全局编码规范还是空的。' };
     const lines = existing.split('\n');
     const kept = lines.filter((line) => {

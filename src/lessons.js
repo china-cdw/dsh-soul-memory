@@ -72,8 +72,10 @@ async function appendRow(row) {
         try { return JSON.parse(line); } catch { return null; }
       })
       .filter(Boolean);
-  } catch {
-    /* 文件不存在是正常起点 */
+  } catch (e) {
+    // 只有「文件不存在」才是正常起点。其他读错误（占用/权限）必须放弃本次追加：
+    // 把读失败当成空数组再整份写回，等于清空全部历史。
+    if (!e || e.code !== 'ENOENT') throw e;
   }
   rows.push(row);
   const kept = rows.slice(-MAX_ROWS);
@@ -330,7 +332,7 @@ export function registerLessons(ctx, options = {}) {
     },
   });
 
-  const UNCAPTURED = new Set(['lessons', 'coding_rules', 'memory_write', 'memory_core', 'memory_search', 'memory_read', 'memory_list', 'memory_delete', 'memory_brief', 'persona', 'edit', 'write', 'ops_edit_file', 'ops_write_file', 'ops_replace']);
+  const UNCAPTURED = new Set(['lessons', 'coding_rules', 'memory_write', 'memory_core', 'memory_search', 'memory_read', 'memory_list', 'memory_delete', 'memory_brief', 'persona', 'soul_recall', 'soul_expand', 'evolve_status', 'evolve_diagnose', 'evolve_request', 'evolve_tree', 'edit', 'write', 'ops_edit_file', 'ops_write_file', 'ops_replace']);
   // 一条失败只在「同一个回合、同一类命令」内等待恢复，跨回合不算因果关系。
   const PENDING_TTL_MS = 10 * 60 * 1000;
   const MAX_PENDING = 8;
@@ -339,6 +341,20 @@ export function registerLessons(ctx, options = {}) {
     let list = state.pending.get(name);
     if (!Array.isArray(list)) { list = []; state.pending.set(name, list); }
     return list;
+  }
+
+  /** 非 shell 工具没有命令行：用参数里同一语义键（文件/查询）判断是否同一次操作。 */
+  function relatedStructured(a, b) {
+    if (!a || !b) return false;
+    try {
+      const x = JSON.parse(a);
+      const y = JSON.parse(b);
+      if (!x || !y) return false;
+      for (const k of ['path', 'file', 'query', 'pattern', 'url']) {
+        if (typeof x[k] === 'string' && x[k] === y[k]) return true;
+      }
+      return false;
+    } catch { return false; }
   }
 
   /** 同一类命令：完全相同，或互为前缀，或首词相同（npm test / npm test -- --x）。 */
@@ -409,9 +425,10 @@ export function registerLessons(ctx, options = {}) {
         // 结构化错误（isError）来自宿主，信号可靠；非 shell 工具没有"命令"可比，
         // 只要还是同一个工具、同一个目录，就允许把后续成功当作恢复。
         const related = relatedCommand(p.args, call.args) ||
-          (p.structured && !SHELL_TOOL.test(call.name));
+          (p.structured && !SHELL_TOOL.test(call.name) && relatedStructured(p.args, call.args));
         if (!related) continue;
-        if (p.args && call.args && p.args === call.args && p.args.length > 2 && p.args !== '{}') continue;
+        // 同一命令重跑成功不算纠正；非 shell 工具没有"命令"，参数相同正是"原操作重试成功"。
+        if (SHELL_TOOL.test(call.name) && p.args && call.args && p.args === call.args && p.args.length > 2 && p.args !== '{}') continue;
         picked = i;
         break;
       }

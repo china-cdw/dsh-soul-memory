@@ -124,11 +124,21 @@ await t.test('isError 结构化失败即使正文没关键词也记录', async (
   await reset();
   fire('tool/call', { callId: 'c5', name: 'read', arguments: { path: 'a.txt' } });
   fire('tool/result', { message: { toolCallId: 'c5', isError: true, content: 'boom' } });
-  fire('tool/call', { callId: 'c5b', name: 'read', arguments: { path: 'b.txt' } });
+  fire('tool/call', { callId: 'c5b', name: 'read', arguments: { path: 'a.txt' } });
   fire('tool/result', { message: { toolCallId: 'c5b', content: 'ok' } });
   const rows = await waitFor(() => listLessons().then((r) => (r.length ? r : false)), { label: '记录 isError' });
   assert.equal(rows.length, 1);
   assert.equal(rows[0].tool, 'read');
+});
+
+await t.test('非 shell 工具无关路径成功不算纠正', async () => {
+  await reset();
+  fire('tool/call', { callId: 'c5c', name: 'read', arguments: { path: 'a.txt' } });
+  fire('tool/result', { message: { toolCallId: 'c5c', isError: true, content: 'boom' } });
+  fire('tool/call', { callId: 'c5d', name: 'read', arguments: { path: 'other.txt' } });
+  fire('tool/result', { message: { toolCallId: 'c5d', content: 'ok' } });
+  await sleep(250);
+  assert.equal((await listLessons()).length, 0);
 });
 
 await t.test('非 shell 工具正文里的 error 字样不算失败', async () => {

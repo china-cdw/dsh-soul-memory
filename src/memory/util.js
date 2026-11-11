@@ -8,7 +8,7 @@
 // 这里只放五层真正重复的东西：路径、原子写、写串行化、敏感信息过滤；不引入新依赖。
 
 import { randomUUID } from 'node:crypto';
-import { copyFile, cp, mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, readdir, rename, rm, stat, writeFile, open, utimes, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -37,13 +37,14 @@ export function sliceSafe(text, end) {
  * 用于 MEMORY.md / CODING.md 这类「读-改-写」必须整体的文件——进程内队列
  * 挡不住第二个 DSH 实例，两个实例各读旧内容再写回会静默丢内容。
  */
-export async function withFileLock(file, job, { waitMs = 2000, staleMs = 10000 } = {}) {
+export async function withFileLock(file, job, { waitMs = 15000, staleMs = 10000 } = {}) {
   const lock = file + '.lock';
   await mkdir(dirname(lock), { recursive: true });
+  const token = process.pid + '-' + Date.now() + '-' + Math.random().toString(16).slice(2);
   const started = Date.now();
   for (;;) {
     try {
-      await writeFile(lock, String(process.pid), { flag: 'wx' });
+      await writeFile(lock, token, { flag: 'wx' });
       break;
     } catch (e) {
       if (!e || e.code !== 'EEXIST') throw e;
@@ -55,10 +56,21 @@ export async function withFileLock(file, job, { waitMs = 2000, staleMs = 10000 }
       await new Promise((r) => setTimeout(r, 25));
     }
   }
+  // 心跳：读-改-写可能远超 staleMs（大文件查重），不刷新 mtime 会被别人当成过期锁删掉。
+  const beat = setInterval(() => {
+    const now = new Date();
+    utimes(lock, now, now).catch(() => {});
+  }, Math.max(500, Math.floor(staleMs / 3)));
+  beat.unref?.();
   try {
     return await job();
   } finally {
-    await rm(lock, { force: true }).catch(() => {});
+    clearInterval(beat);
+    // 只删自己持有的锁：token 不一致说明锁被清理后又被别人抢到，删掉会误伤。
+    try {
+      const held = await readFile(lock, 'utf8');
+      if (held === token) await rm(lock, { force: true });
+    } catch { /* 锁已不在，无事可做 */ }
   }
 }
 
@@ -89,6 +101,11 @@ export async function atomicWrite(path, content) {
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   try {
     await writeFile(tmp, content, 'utf8');
+    // fsync：断电/崩溃后 rename 成功但内容为空的情况，靠这一步避免。
+    try {
+      const fh = await open(tmp, 'r+');
+      try { await fh.sync(); } finally { await fh.close(); }
+    } catch { /* fsync 失败不阻断写入，但至少尝试过 */ }
     await rename(tmp, path);
   } catch (e) {
     await rm(tmp, { force: true }).catch(() => {});
@@ -140,9 +157,14 @@ export async function snapshotMemory({ keep = 7 } = {}) {
   const today = new Date().toISOString().slice(0, 10);
   let names = [];
   try { names = await readdir(dir); } catch { names = []; }
-  if (names.some((n) => n.startsWith(today))) return { skipped: true, dir, count: names.length };
+  // 只在「今天已完成」时跳过：目录存在不代表拷完了——图谱快照（snapshotGraph）会先建当天目录，
+  // 旧实现按目录名前缀判断，会把文件记忆的备份整个跳过去。
+  const todayDirs = names.filter((n) => n.startsWith(today)).sort();
+  for (const name of todayDirs) {
+    try { await stat(join(dir, name, '.complete')); return { skipped: true, dir: join(dir, name), count: names.length }; } catch { /* 未完成，继续补 */ }
+  }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const dest = join(dir, stamp);
+  const dest = todayDirs.length ? join(dir, todayDirs[todayDirs.length - 1]) : join(dir, stamp);
   await mkdir(dest, { recursive: true });
   let copied = 0;
   for (const name of SNAPSHOT_FILES) {
@@ -156,6 +178,8 @@ export async function snapshotMemory({ keep = 7 } = {}) {
     await rm(dest, { recursive: true, force: true }).catch(() => {});
     return { skipped: false, dir: dest, copied: 0, error: '没有可快照的记忆文件（记忆目录为空或不可读）' };
   }
+  // 完成标记：只有它存在才表示这一天的文件记忆真的备完了。
+  await writeFile(join(dest, '.complete'), new Date().toISOString(), 'utf8').catch(() => {});
   await rotateSnapshots(dir, keep);
   return { skipped: false, dir: dest, copied };
 }
