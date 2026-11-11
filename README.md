@@ -1,11 +1,14 @@
 # dsh-x-memory
 
+简体中文 | [English](README.en.md)
+
 > DSH 的分层记忆插件：把「该一直记得的」「以前发生过的」「踩过的坑」「你的编码规矩」分开放、按需注入，而不是一股脑塞进上下文。
 
-五层记忆 + 一个只读桥。只装这一个插件，就能同时得到：常驻核心记忆、可检索的归档笔记、会话过程图谱、自动踩坑记录、项目编码规范，以及从 billion-context 会话摘要里找回旧过程的能力。
+只装这一个插件，就能同时得到：常驻核心记忆、可检索的归档笔记、会话过程图谱、自动踩坑记录、项目编码规范，以及从 billion-context 会话摘要里找回旧过程的能力。每一层都有独立预算和独立开关，互不挤占。
 
-- Node.js ≥ 24，DSH ≥ 0.2.1-rc.2
-- 许可证 MIT，基于 [dsh-soul](https://github.com/icyaaaww/dsh-soul) 2.0.1 与 dsh-core-memory 1.0.1（均为 MIT）构建，详见文末「致谢」
+- 运行要求：Node.js ≥ 24，DSH ≥ 0.2.1-rc.2
+- 许可证：MIT
+- 来源：以 [dsh-soul](https://github.com/icyaaaww/dsh-soul) 2.0.1 为底座，移植 dsh-core-memory 1.0.1 的核心记忆层（两者均 MIT），详见文末「致谢」
 
 ---
 
@@ -19,7 +22,13 @@
 | 每次都要重新交代代码规范 | 自动读全局 `CODING.md` 和项目里的 `AGENTS.md` 等规则文件 |
 | 长会话被压缩后，旧过程细节消失 | 桥接 billion-context 的会话压缩摘要，只读检索 |
 
----
+## 为什么合成一个插件
+
+三个记忆插件各管一摊时，模型要同时判断「这条该写哪」；拆开装还会重复注入、预算互相挤占。合成一个之后：
+
+- **一次写入按内容分流**：长期事实进核心记忆，经历进归档笔记，过程进图谱，错误进踩坑记录，规矩进编码规范；
+- **一次检索查三处**：`memory_search` 同时查归档、图谱和 billion-context 摘要，结果带来源和 id，需要时再下钻；
+- **一套开关注入**：四层共用同一份数据目录、同一套脱敏与守卫规则。
 
 ## 五层记忆
 
@@ -31,11 +40,9 @@
 | 踩坑记录 | 工具报错 → 后来怎么改对 | `$DSH_HOME/memory/LESSONS.jsonl` | 每轮，`order 62` | 600 字 | `lessons` |
 | 编码规范 | 全局规矩 + 项目规则文件 | `$DSH_HOME/memory/CODING.md` + 项目目录 | 每轮，`order 61` | 2000 字 | `coding_rules` |
 
-每层独立预算、独立开关，互不挤占（图谱投影单独 600 字节）。
-
 ### 编码规范会自动读哪些文件
 
-当前项目目录下，按顺序查找：
+在当前会话的工作目录下，按顺序查找：
 
 ```
 CODING.md
@@ -51,7 +58,7 @@ CLAUDE.md
 
 ---
 
-## 这一版新加的四件事
+## 这一版新增的四个机制
 
 ### 1. 取代标记
 
@@ -65,7 +72,7 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 
 ### 2. 写入守卫（GUARD.json）
 
-`$DSH_HOME/memory/GUARD.json` 可自定义三层规则：
+`$DSH_HOME/memory/GUARD.json` 可自定义规则：
 
 - `reject`：私钥块、常见 token 形状（`sk-`、`ghp_`、`AKIA`、`glpat-` 等）——直接拒收，不落盘；
 - `sensitive`：疑似密码/凭据赋值形状——允许保存但标 `sensitive: true`，系统提示不列它，检索时正文显示「已隐藏」，需要时用 `memory_read` 显式读取；
@@ -79,7 +86,7 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 
 ### 4. billion-context 桥接（只读）
 
-如果你装了 [billion-context](https://github.com/ranxianglei/billion-context)，`memory_search` 会在归档笔记、会话图谱之后，追加一段【历史会话摘要】——从 billion-context 落盘的会话压缩块里做关键词检索。
+如果装了 [billion-context](https://github.com/ranxianglei/billion-context)，`memory_search` 会在归档笔记、会话图谱之后，追加一段【历史会话摘要】——从它落盘的会话压缩块里做关键词检索。
 
 - 只读它写好的 `sessions/*.json`，不改、不压缩它；
 - 坏文件、超过 8MB、目录不存在都静默跳过，不影响主检索；
@@ -88,21 +95,18 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 
 ---
 
-## 安装
-
-本地目录安装（推荐先这样试）：
+## 快速开始
 
 ```bash
-dsh plugin --profile desktop add /path/to/dsh-x-memory
+# 1. 克隆到本地
+git clone https://github.com/china-cdw/dsh-x-memory
+cd dsh-x-memory
+
+# 2. 装进 DSH 的 profile
+dsh plugin --profile desktop add "$PWD"
 ```
 
-或者手动装进 profile（`<DSH_HOME>` 一般就是你本机的 DSH 数据目录）：
-
-```bash
-pnpm add "dsh-x-memory@file:/path/to/dsh-x-memory" --dir "<DSH_HOME>/profiles/desktop"
-```
-
-然后在 profile 的 `dsh.profile.bundles` 里启用 `dsh-x-memory`。装好后重启 DSH，系统提示里应出现：
+装完后重启 DSH（或把 bundle 关掉再打开，会热重载），系统提示里应出现：
 
 ```
 # 跨会话记忆（dsh-x-memory）
@@ -110,9 +114,9 @@ pnpm add "dsh-x-memory@file:/path/to/dsh-x-memory" --dir "<DSH_HOME>/profiles/de
 # 踩过的坑（dsh-x-memory 自动记录）   ← 有记录时才出现
 ```
 
-用 `memory_brief` 一次看全：核心记忆大小、归档条数、风格、快照、图谱规模、billion-context 状态。
+验证：在会话里调用 `memory_brief`，应看到核心记忆大小、归档条数、风格、快照、图谱规模、billion-context 状态。想立刻写第一条记忆，用 `memory_core` 的 `append`。
 
-> 只改插件源码、不重装时：把 bundle 关掉再打开（`plugin_manager set_bundle enabled=false` → `enabled=true`）会重新加载磁盘上的模块，不必重启整个 App。
+> 只改插件源码、不重装时：`plugin_manager set_bundle enabled=false` → `enabled=true` 会重新加载磁盘模块，不必重启整个 App。
 
 ---
 
@@ -164,7 +168,7 @@ config:
     maxChars: 1200          # 桥接段输出上限（200–4000）
 ```
 
-`bridge.sessionsDir` 留空时依次找：环境变量 `BILI_SESSIONS_DIR` → `%USERPROFILE%\.local\share\billion-context\sessions`（Linux/macOS 为 `~/.local/share/...`）。
+`bridge.sessionsDir` 留空时依次找：环境变量 `BILI_SESSIONS_DIR` → `%USERPROFILE%\.local\share\billion-context\sessions`（Linux/macOS 为 `~/.local/share/billion-context/sessions`）。
 
 ---
 
@@ -218,7 +222,7 @@ npm run preflight
 
 桥接只做一件事：把它的会话压缩摘要**只读**并入 `memory_search`。它继续管它的压缩，记忆层不介入、不改写、不依赖它的内部格式（格式不认识就跳过）。
 
-如果你的环境里它和记忆插件同时开着，前缀缓存不受影响：记忆走系统提示，压缩只动消息历史。
+两者同时开着时前缀缓存不受影响：记忆走系统提示，压缩只动消息历史。
 
 ---
 
@@ -227,7 +231,7 @@ npm run preflight
 本插件是 dsh-soul 2.0.1 的 fork，`src/` 下大部分文件是上游逐字节镜像；我们自己写的文件、`index.js` 需要重放的接线点、同步步骤都写在 [UPSTREAM.md](./UPSTREAM.md)。
 
 ```bash
-node scripts/sync-upstream.mjs --check              # 检查镜像是否被本地改过
+node scripts/sync-upstream.mjs --check                 # 检查镜像是否被本地改过
 node scripts/sync-upstream.mjs --from <dsh-soul 目录>  # 同步上游新版本
 ```
 

@@ -41,6 +41,7 @@
     "locale/*.json",
     "cordis.patch.yml",
     "UPSTREAM.md",
+    "README.en.md",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"
