@@ -89,7 +89,7 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 如果装了 [billion-context](https://github.com/ranxianglei/billion-context)，`memory_search` 会在归档笔记、会话图谱之后，追加一段【历史会话摘要】——从它落盘的会话压缩块里做关键词检索。
 
 - 只读它写好的 `sessions/*.json`，不改、不压缩它；
-- 坏文件、超过 8MB、目录不存在都静默跳过，不影响主检索；
+- 坏文件、超过 32MB、目录不存在都静默跳过，不影响主检索；
 - 默认最多读最近 4 个会话、每个 5 块，`maxChars` 控制输出长度；
 - 不想要就把 `bridge.enabled` 设为 `false`。
 

@@ -89,7 +89,7 @@ On the first load each day the whole memory directory is copied to `$DSH_HOME/me
 If [billion-context](https://github.com/ranxianglei/billion-context) is installed, `memory_search` appends a "historical session summaries" section after archived notes and the session graph, keyword-searching the compressed session blocks it wrote to disk.
 
 - Reads its `sessions/*.json` only; never modifies or recompresses anything;
-- Corrupt files, files over 8MB and missing directories are skipped silently — the main search is never affected;
+- Corrupt files, files over 32MB and missing directories are skipped silently — the main search is never affected;
 - Reads at most the 4 most recent sessions × 5 blocks by default; `maxChars` limits the output length;
 - Turn it off with `bridge.enabled = false`.
 

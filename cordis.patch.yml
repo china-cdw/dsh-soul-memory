@@ -5,7 +5,6 @@
       config:
         # 演化（自改 harness）默认关闭；记忆层默认开启。
         enabled: false
-        profile: desktop
         provider: ''
         model: ''
         memory:

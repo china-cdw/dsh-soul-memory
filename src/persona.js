@@ -299,11 +299,14 @@ export function normalizePersonaInput(patch, current) {
   if (!PRESET_BY_ID.has(next.preset)) {
     return { ok: false, error: '未知的风格预设：' + next.preset + '。可用：' + PRESETS.map((p) => p.id).join(' / ') };
   }
-  if (next.preset === 'custom') {
-    if (!next.custom.trim()) return { ok: false, error: '自定义风格正文不能为空。' };
-    if (next.custom.length > MAX_CUSTOM_TEXT) {
-      return { ok: false, error: '自定义风格正文过长（' + next.custom.length + ' 字符，上限 ' + MAX_CUSTOM_TEXT + '）。' };
-    }
+  // 长度与当前预设无关：切到非 custom 时 custom 正文仍会被持久化、之后可能再次生效。
+  // 旧逻辑只在 preset==='custom' 时校验，超长正文会被 writePersona/readPersona 静默截断。
+  if (typeof patch.custom === 'string' && patch.custom.length > MAX_CUSTOM_TEXT) {
+    return { ok: false, error: '自定义风格正文过长（' + patch.custom.length + ' 字符，上限 ' + MAX_CUSTOM_TEXT + '）。' };
+  }
+  if (next.custom.length > MAX_CUSTOM_TEXT) next.custom = next.custom.slice(0, MAX_CUSTOM_TEXT);
+  if (next.preset === 'custom' && !next.custom.trim()) {
+    return { ok: false, error: '自定义风格正文不能为空。' };
   }
   return { ok: true, value: next };
 }

@@ -176,7 +176,9 @@ export function apply(ctx, input = {}) {
   const config = settings(input)
   if (!config.enabled && !config.memory.enabled) return
 
-  const store = new Store(config.database, { maxNodes: config.memory.maxNodes })
+  // 图谱库构造可能失败（库版本高于插件、文件损坏、权限不足）。失败时只应丢掉图谱层，
+  // 不能让整个插件不加载——否则连 MEMORY.md 的常驻注入都会消失。
+  let store = null
   // The compaction backend is a separate plugin; one env var is the whole handshake it needs
   // to weight compression by the knowledge graph instead of by word counts alone.
   // 环境变量是进程级副作用：先存原值，停用/失败时还原，别把别的库配置留在环境里。
@@ -198,7 +200,7 @@ export function apply(ctx, input = {}) {
     lessons: config.lessons,
     bridge: config.bridge,
     graphSearch: async (agent, query) => {
-      if (!config.memory.enabled) return []
+      if (!config.memory.enabled || !store) return []
       const scope = scopeForAgent(agent)
       if (!scope) return []
       // 带上 id 与「已被取代」标记：memory_search 的图谱结果要能说明来源、也能提示结论过期。
@@ -207,7 +209,7 @@ export function apply(ctx, input = {}) {
       }))
     },
     graphStats: async agent => {
-      if (!config.memory.enabled) return null
+      if (!config.memory.enabled || !store) return null
       const scope = scopeForAgent(agent)
       if (!scope) return null
       const graph = store.graphStats(scope)
@@ -216,6 +218,13 @@ export function apply(ctx, input = {}) {
       return { nodes, edges: graph.edges, bytes: stats?.bytes ?? null }
     },
   })
+
+  try {
+    store = new Store(config.database, { maxNodes: config.memory.maxNodes })
+  } catch (e) {
+    console.error('dsh-x-memory: 图谱库打开失败，已降级为纯文件记忆（MEMORY.md / notes / 编码规范 / 踩坑记录仍可用）：' + (e?.message ?? e))
+    return
+  }
 
   const recorder = new Recorder()
   const disposers = []

@@ -16,7 +16,7 @@ import { readFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { atomicWrite, createQueue, latestSnapshot, memoryPath, safeJson, sliceSafe, snapshotMemory } from './memory/util.js';
+import { atomicWrite, createQueue, latestSnapshot, memoryPath, safeJson, sliceSafe, snapshotMemory, withFileLock } from './memory/util.js';
 import { checkGuard, isSensitive } from './memory/guard.js';
 import {
   buildPersonaText,
@@ -76,6 +76,13 @@ function parseNoteFile(text) {
   return out;
 }
 
+// 只把这些标题当成真正的分节。分节正文里手写的二级标题（如 `## 端口`）不再切出新节——
+// 以前任意 `## ` 都切，replace/remove 只改到前半段，后半段变成孤立分节，结构就坏了。
+const CORE_SECTION_NAMES = new Set(['用户', '环境', '项目', '偏好', '背景', '约定', '决策', '待办', '其他']);
+function isCoreSectionTitle(title) {
+  return CORE_SECTION_NAMES.has(String(title ?? '').trim());
+}
+
 function parseCoreSections(text) {
   const lines = String(text).split('\n');
   const header = [];
@@ -84,9 +91,9 @@ function parseCoreSections(text) {
   let body = [];
   for (const line of lines) {
     const m = /^##\s+(.+?)\s*$/.exec(line);
-    if (m) {
+    if (m && isCoreSectionTitle(m[1])) {
       if (current !== null) sections.push({ title: current, body: body.join('\n') });
-      current = m[1];
+      current = m[1].trim();
       body = [];
     } else if (current !== null) {
       body.push(line);
@@ -215,7 +222,19 @@ function makeSnippet(bodyText, query) {
 function sanitize(text) { return String(text).split('{{').join('{ {') }
 
 // ---------- fs 辅助 ----------
+// 读取失败 ≠ 文件不存在：非 ENOENT 的错误必须往上抛。
+// 以前一律返回 null，bootstrap 见状就写模板，读权限/占用类错误会把用户的常驻记忆整体覆盖。
 function readFileSyncOrNull(path) {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
+/** 展示/体检用：任何读取错误都返回 null，不让一次读失败把整个工具打挂。 */
+function readFileLoose(path) {
   try { return readFileSync(path, 'utf8'); } catch { return null; }
 }
 
@@ -428,7 +447,7 @@ function buildSectionText() {
 function renderSectionText() {
   try {
     let core = '';
-    const coreRaw = readFileSyncOrNull(corePath());
+    const coreRaw = readFileLoose(corePath());
     if (coreRaw !== null) core = coreRaw.trim();
     let coreNote = '';
     if (core.length > CORE_BUDGET) {
@@ -436,7 +455,7 @@ function renderSectionText() {
       coreNote = '\n（核心记忆过长已截断——请尽快用 memory_core 精简）';
     }
     let notes = [];
-    const indexRaw = readFileSyncOrNull(indexPath());
+    const indexRaw = readFileLoose(indexPath());
     if (indexRaw) {
       const parsed = safeJson(indexRaw, null);
       if (parsed && Array.isArray(parsed.notes)) notes = parsed.notes.filter((n) => n && typeof n.id === 'string').sort(noteSort);
@@ -711,10 +730,19 @@ async function editCore(args) {
   if (guard.kind) {
     return '拒绝写入核心记忆：内容命中守卫规则（私钥/凭据形状），核心记忆会注入每个会话，不能保存这类内容。';
   }
+  if (!isCoreSectionTitle(section)) {
+    return '编辑失败：分节名必须是 ' + [...CORE_SECTION_NAMES].join(' / ') + ' 之一（收到「' + section + '」）。';
+  }
+  // 用户正文里的二级标题降级成三级：否则写回去会被当成新分节，下次编辑只改到前半段。
+  const bodyText = text.replace(/^##\s+/gm, '### ');
   try {
-    return await enqueue(async () => {
+    // 进程内队列挡不住第二个 DSH 实例：MEMORY.md 的读-改-写必须拿跨进程锁。
+    return await enqueue(() => withFileLock(corePath(), async () => {
       let raw = null;
-      try { raw = await readFile(corePath(), 'utf8'); } catch { /* 不存在 → 用模板 */ }
+      try { raw = await readFile(corePath(), 'utf8'); } catch (e) {
+        // 读失败 ≠ 没有记忆：只有 ENOENT 才从模板起步，其它错误直接报错，绝不覆盖原文件。
+        if (!e || e.code !== 'ENOENT') throw e;
+      }
       const parsed = parseCoreSections(raw !== null ? raw : TEMPLATE);
       const target = parsed.sections.find((s) => s.title.toLowerCase() === section.toLowerCase());
       const titles = parsed.sections.map((s) => s.title).join('、') || '（无）';
@@ -722,24 +750,24 @@ async function editCore(args) {
         if (!target) return '删除失败：找不到分节「' + section + '」。现有分节：' + titles;
         parsed.sections = parsed.sections.filter((s) => s !== target);
       } else if (action === 'append') {
-        if (target) target.body = (target.body.replace(/\s+$/, '') ? target.body.replace(/\s+$/, '') + '\n' : '') + text;
-        else parsed.sections.push({ title: section, body: text });
+        if (target) target.body = (target.body.replace(/\s+$/, '') ? target.body.replace(/\s+$/, '') + '\n' : '') + bodyText;
+        else parsed.sections.push({ title: section, body: bodyText });
       } else {
         if (!target) return '替换失败：找不到分节「' + section + '」。现有分节：' + titles;
-        target.body = text;
+        target.body = bodyText;
       }
       const next = renderCore(parsed);
       await atomicWrite(corePath(), next);
       const verb = action === 'append' ? '追加' : (action === 'replace' ? '替换' : '删除');
       const warn = next.length > CORE_BUDGET ? '（警告：核心记忆已超 ' + CORE_BUDGET + ' 字，注入时会被截断，建议尽快精简）' : '';
       return '已' + verb + '核心记忆分节「' + section + '」。当前核心记忆 ' + next.length + ' 字符。' + warn;
-    });
+    }));
   } catch (e) { return errText(e); }
 }
 
 async function brief(graphStats, agent, bridge) {
   try {
-    const core = readFileSyncOrNull(corePath());
+    const core = readFileLoose(corePath());
     const notes = await loadIndex();
     const persona = readPersona();
     const lines = [];

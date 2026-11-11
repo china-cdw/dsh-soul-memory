@@ -197,6 +197,8 @@ function failureOf(message, meta, text, call = {}) {
   if (code !== null) {
     if (code === 0) return null; // 退出码 0 明确成功，不能记成坑
     if (code === 1 && BENIGN_EXIT_ONE.test(args)) return null;
+    // 只剩 `===` / `---` 这类分隔符的"报错"不构成教训，记下来只会污染注入。
+    if (String(text ?? '').replace(/\s+/g, '').length < 4) return null;
     return { text, structured: true };
   }
   // 只看到标记、取不到数字：交给调用侧用文本兜底判断，避免直接漏记。

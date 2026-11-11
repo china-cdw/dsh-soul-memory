@@ -175,6 +175,30 @@ await t.test('核心记忆超预算时告警，注入时截断', async () => {
   assert.match(section, /核心记忆过长已截断/);
 });
 
+await t.test('分节正文里的 ## 标题不切结构，且写入时降级为 ###', async () => {
+  const out = await callTool(tools1, 'memory_core', {
+    action: 'append', section: '环境', text: '端口说明\n## 端口\n2300',
+  });
+  assert.match(out, /已追加核心记忆分节「环境」/);
+  const raw = await readFile(join(memoryDir, 'MEMORY.md'), 'utf8');
+  assert.match(raw, /### 端口/);
+  assert.ok(!/^## 端口/m.test(raw), '正文里的 ## 被当成了分节');
+  const env = (raw.split('## 环境')[1] || '').split('\n## ')[0];
+  assert.match(env, /2300/, '环境分节后半段丢失');
+  // 再替换一次，确认结构没被切坏
+  const replaced = await callTool(tools1, 'memory_core', { action: 'replace', section: '环境', text: '环境已重写' });
+  assert.match(replaced, /已替换核心记忆分节「环境」/);
+  const after = await readFile(join(memoryDir, 'MEMORY.md'), 'utf8');
+  assert.match(after, /## 环境\n环境已重写/);
+  assert.ok(!/2300/.test(after), '旧环境正文未清掉');
+});
+
+await t.test('非法分节名被拒绝', async () => {
+  const out = await callTool(tools1, 'memory_core', { action: 'append', section: '随便什么', text: 'x' });
+  assert.match(out, /分节名必须是/);
+});
+
+
 await t.test('启动对账：notes/ 有、索引无 → 补录', async () => {
   await writeFile(join(notesDir, '20200101-000000-orphan.md'),
     '---\nid: 20200101-000000-orphan\ntitle: 外部新增笔记\ntags: 手工\ncreated: 2020-01-01T00:00:00.000Z\nupdated: 2020-01-01T00:00:00.000Z\n---\n\n外部正文。\n');

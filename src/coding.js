@@ -11,7 +11,7 @@
 // rules 层——但这里不做检索/嵌入，只做"小而常驻"，避免和 MEMORY.md 抢预算。
 import { readFileSync, statSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { atomicWrite, createQueue, memoryHome, sliceSafe } from './memory/util.js';
+import { atomicWrite, createQueue, memoryHome, sliceSafe, withFileLock } from './memory/util.js';
 
 const DEFAULT_BUDGET = 2000;
 const FILE_CHAR_CAP = 6000;
@@ -168,7 +168,7 @@ export async function addRule(text) {
   const rule = normalizeRule(text);
   if (!rule) return { ok: false, error: '规则内容不能为空。' };
   if (rule.length > MAX_RULE_TEXT) return { ok: false, error: `规则太长（${rule.length} 字），上限 ${MAX_RULE_TEXT} 字。` };
-  return enqueue(async () => {
+  return enqueue(() => withFileLock(codingPath(), async () => {
     const path = codingPath();
     // 写回必须基于完整文件：readCapped 的默认 cap 只用于注入，不能用来改文件。
     const existing = readCapped(path, Infinity) ?? TEMPLATE;
@@ -186,13 +186,13 @@ export async function addRule(text) {
     }
     await atomicWrite(path, lines.join('\n').replace(/\n{3,}/g, '\n\n'));
     return { ok: true, rule };
-  });
+  }));
 }
 
 export async function forgetRule(text) {
   const rule = normalizeRule(text);
   if (!rule) return { ok: false, error: '要删除的规则内容不能为空。' };
-  return enqueue(async () => {
+  return enqueue(() => withFileLock(codingPath(), async () => {
     const path = codingPath();
     const existing = readCapped(path, Infinity);
     if (!existing) return { ok: false, error: '全局编码规范还是空的。' };
@@ -206,7 +206,7 @@ export async function forgetRule(text) {
     if (!removed) return { ok: false, error: '没有找到完全匹配的规则；先 action=list 看一眼。' };
     await atomicWrite(path, kept.join('\n'));
     return { ok: true, removed };
-  });
+  }));
 }
 
 // ---------- 注册 ----------

@@ -32,6 +32,36 @@ export function sliceSafe(text, end) {
   return s.slice(0, cut);
 }
 
+/**
+ * 跨进程文件锁：`<file>.lock` 用 wx 独占创建，超时/过期自清理。
+ * 用于 MEMORY.md / CODING.md 这类「读-改-写」必须整体的文件——进程内队列
+ * 挡不住第二个 DSH 实例，两个实例各读旧内容再写回会静默丢内容。
+ */
+export async function withFileLock(file, job, { waitMs = 2000, staleMs = 10000 } = {}) {
+  const lock = file + '.lock';
+  await mkdir(dirname(lock), { recursive: true });
+  const started = Date.now();
+  for (;;) {
+    try {
+      await writeFile(lock, String(process.pid), { flag: 'wx' });
+      break;
+    } catch (e) {
+      if (!e || e.code !== 'EEXIST') throw e;
+      if (Date.now() - started > waitMs) throw new Error('文件写入被占用（' + lock + ' 超过 ' + waitMs + 'ms 未释放）');
+      try {
+        const st = await stat(lock);
+        if (Date.now() - st.mtimeMs > staleMs) await rm(lock, { force: true });
+      } catch { /* 锁刚被持有者删掉，睡一下再试 */ }
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+  try {
+    return await job();
+  } finally {
+    await rm(lock, { force: true }).catch(() => {});
+  }
+}
+
 /** 截断并补省略号：展示用，保证总长不超过 max。 */
 export function bounded(text, max) {
   const s = String(text ?? '');
