@@ -148,8 +148,10 @@ Mistake notes are captured automatically: within one session, if a tool errors a
 The style settings page calls the local route `/dsh-x-memory/persona` over same-origin `fetch` (registered only when the host provides `webServer`):
 
 - `GET` returns `{ persona, presets, maxCustom }`;
+- every request (GET included) must carry the custom header `X-DSH-X-Memory: 1`: cross-site forms and links cannot forge it, and the browser sends a CORS preflight first, which blocks unapproved cross-origin reads;
 - `POST` requires `Content-Type: application/json` and a body of at most 16KB; it answers 200 or 400/403/413/415;
-- only loopback hosts (`localhost`, `127.0.0.1`, `[::1]`) are accepted, and any Origin must match the Host — this blocks DNS rebinding and cross-site prompt injection.
+- only loopback hosts (`localhost`, `127.0.0.1`, `[::1]`) are accepted, and any Origin must match the Host — this blocks DNS rebinding and cross-site prompt injection;
+- responses carry `Cache-Control: no-store`; style is personal data and is never cached.
 
 ---
 

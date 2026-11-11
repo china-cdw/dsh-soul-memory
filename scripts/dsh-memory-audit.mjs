@@ -283,32 +283,41 @@ await t.test('persona 路由：拒绝跨源与错误 Content-Type，同源 JSON 
   const host = '127.0.0.1:2300';
 
   let res = fakeRes();
-  await route.handler(fakeReq({ method: 'GET', headers: { host } }), res);
+  await route.handler(fakeReq({ method: 'GET', headers: { host, 'x-dsh-x-memory': '1' } }), res);
   assert.equal(res.statusCode, 200);
   assert.ok(JSON.parse(res.body).presets.length > 0);
 
   res = fakeRes();
   await route.handler(fakeReq({
-    method: 'POST', headers: { host, origin: 'http://evil.example', 'content-type': 'application/json' }, body: '{}',
+    method: 'POST', headers: { host, origin: 'http://evil.example', 'content-type': 'application/json', 'x-dsh-x-memory': '1' }, body: '{}',
   }), res);
   assert.equal(res.statusCode, 403);
 
   res = fakeRes();
   await route.handler(fakeReq({
-    method: 'POST', headers: { host, origin: 'http://' + host, 'content-type': 'text/plain' }, body: '{}',
+    method: 'POST', headers: { host, origin: 'http://' + host, 'content-type': 'text/plain', 'x-dsh-x-memory': '1' }, body: '{}',
   }), res);
   assert.equal(res.statusCode, 415);
 
   res = fakeRes();
   await route.handler(fakeReq({
     method: 'POST',
-    headers: { host, origin: 'http://' + host, 'content-type': 'application/json' },
+    headers: { host, origin: 'http://' + host, 'content-type': 'application/json', 'x-dsh-x-memory': '1' },
     body: JSON.stringify({ enabled: true, preset: 'custom', custom: '说话简短，先给结论。' }),
   }), res);
   assert.equal(res.statusCode, 200);
   const state = readPersona();
   assert.equal(state.preset, 'custom');
   assert.match(state.custom, /先给结论/);
+});
+
+await t.test('persona 路由：缺少 X-DSH-X-Memory 头时拒绝', async () => {
+  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const res = fakeRes();
+  await route.handler(fakeReq({
+    method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json' }, body: '{}',
+  }), res);
+  assert.equal(res.statusCode, 403);
 });
 
 await t.test('persona 文件无 front-matter 时视为 custom 并注入', async () => {
@@ -326,6 +335,22 @@ await t.test('persona 路由拒绝非本机 Host（DNS rebinding）', async () =
   const res = fakeRes();
   await route.handler(fakeReq({ method: 'GET', headers: { host: 'evil.example' } }), res);
   assert.equal(res.statusCode, 403);
+});
+
+await t.test('memory_read 截断不会把代码围栏切成半个', async () => {
+  const fence = '```';
+  const long = fence + '\n' + 'x'.repeat(7900) + '\n' + fence + '\n' + 'y'.repeat(300);
+  const saved = await callTool(tools1, 'memory_write', { title: '围栏截断', content: long, force: true });
+  const id = /\[([^\]]+)\]/.exec(saved)[1];
+  const out = await callTool(tools1, 'memory_read', { id });
+  assert.match(out, /内容过长已截断/);
+  assert.equal((out.match(/^```/gm) || []).length % 2, 0, '截断后围栏不平衡');
+});
+
+await t.test('失败结果带机器可读 [err:CODE] 后缀', async () => {
+  assert.match(await callTool(tools1, 'memory_read', {}), /\[err:E_ARG\]/);
+  assert.match(await callTool(tools1, 'memory_write', { title: '', content: 'x' }), /\[err:E_ARG\]/);
+  assert.match(await callTool(tools1, 'memory_read', { id: 'not-a-real-id-xyz' }), /\[err:E_NOT_FOUND\]/);
 });
 
 await t.test('取代旧记忆时保留未知 front-matter 字段', async () => {

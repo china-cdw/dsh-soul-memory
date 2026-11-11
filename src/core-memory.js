@@ -398,6 +398,21 @@ const enqueue = createQueue();
 
 function errText(e) { return '操作失败：' + (e && e.message ? e.message : String(e)); }
 
+/** 失败结果统一带机器可读后缀，便于调用方按 code 分支而不是匹配中文。 */
+function failMessage(code, message) { return message + '\n[err:' + code + ']'; }
+
+/** 按长度截断，但不把 ``` 代码围栏切成半个（奇数个围栏起点时回退到最后一个起点）。 */
+function truncateWithFences(text, max) {
+  if (text.length <= max) return text;
+  let cut = sliceSafe(text, max);
+  const fences = (cut.match(/^```/gm) || []).length;
+  if (fences % 2 === 1) {
+    const last = cut.lastIndexOf('\n```');
+    if (last > 0) cut = cut.slice(0, last);
+  }
+  return cut;
+}
+
 /** 读取并限制请求体大小（防误用），返回 UTF-8 文本。 */
 /**
  * 读取请求体。超限时不 destroy 连接（那会让客户端只看到连接重置），
@@ -534,7 +549,7 @@ async function markSuperseded(target, newId) {
 async function writeNote(args) {
   const title = typeof args.title === 'string' ? args.title.replace(/\s+/g, ' ').trim() : '';
   const content = typeof args.content === 'string' ? args.content : '';
-  if (!title || !content.trim()) return '保存失败：title 和 content 均不能为空。';
+  if (!title || !content.trim()) return failMessage('E_ARG', '保存失败：title 和 content 均不能为空。');
   // 标签用逗号分隔落盘：标签内部若含逗号会让 index 与文件解析结果不一致，写入时统一抹平。
   const tags = Array.isArray(args.tags)
     ? args.tags.filter((t) => typeof t === 'string' && t.trim())
@@ -545,7 +560,7 @@ async function writeNote(args) {
   const supersedes = typeof args.supersedes === 'string' ? args.supersedes.trim().replace(/\.md$/, '') : '';
   const guard = checkGuard(title + '\n' + content);
   if (guard.kind === 'reject') {
-    return '拒绝保存：内容命中守卫规则（私钥或凭据形状），未落盘。请删掉敏感片段后重试。';
+    return failMessage('E_GUARD', '拒绝保存：内容命中守卫规则（私钥或凭据形状），未落盘。请删掉敏感片段后重试。');
   }
   const sensitive = guard.kind === 'sensitive';
   try {
@@ -553,7 +568,7 @@ async function writeNote(args) {
       let target = null;
       if (supersedes) {
         const hits = existing.filter((n) => n.id === supersedes || n.id.indexOf(supersedes) === 0);
-        if (hits.length === 0) return { value: '保存失败：没有找到要取代的记忆「' + supersedes + '」。可先用 memory_list 查看 id。' };
+        if (hits.length === 0) return { value: failMessage('E_NOT_FOUND', '保存失败：没有找到要取代的记忆「' + supersedes + '」。可先用 memory_list 查看 id。') };
         if (hits.length > 1) return { value: 'id 有歧义，请精确指定：\n' + hits.map((n) => '- [' + n.id + '] ' + n.title).join('\n') };
         target = hits[0];
       }
@@ -657,20 +672,20 @@ async function searchNotes(args, graphSearch, agent, bridge) {
 }
 
 async function readNote(ref) {
-  if (!ref) return '读取失败：id 不能为空。可用 memory_list 获取 id。';
+  if (!ref) return failMessage('E_ARG', '读取失败：id 不能为空。可用 memory_list 获取 id。');
   try {
     const notes = await loadIndex();
     const clean = ref.replace(/\.md$/, '');
     let matches = notes.filter((n) => n.id === clean);
     if (matches.length === 0) matches = notes.filter((n) => n.id.indexOf(clean) === 0);
-    if (matches.length === 0) return '未找到记忆「' + ref + '」。可用 memory_list 浏览全部 ' + notes.length + ' 条归档记忆。';
+    if (matches.length === 0) return failMessage('E_NOT_FOUND', '未找到记忆「' + ref + '」。可用 memory_list 浏览全部 ' + notes.length + ' 条归档记忆。');
     if (matches.length > 1) return 'id 有歧义，候选：\n' + matches.map((n) => '- [' + n.id + '] ' + n.title).join('\n');
     const note = matches[0];
     let text = '';
     try {
       text = await readFile(join(notesDir(), note.id + '.md'), 'utf8');
     } catch (e) {
-      return '记忆 [' + note.id + '] 在索引中存在但文件读取失败：' + errText(e);
+      return failMessage('E_READ', '记忆 [' + note.id + '] 在索引中存在但文件读取失败：' + errText(e));
     }
     const parsed = parseNoteFile(text);
     let out = '[' + note.id + '] ' + note.title +
@@ -678,7 +693,7 @@ async function readNote(ref) {
       (note.sensitive ? '（敏感内容）' : '') +
       '\n创建：' + note.created + ((note.tags && note.tags.length) ? '\n标签：' + note.tags.join(', ') : '') + '\n\n' +
       (note.sensitive ? '（此条被守卫标记为疑似凭据，正文默认隐藏；下面是显式读取内容）\n\n' : '') + parsed.body;
-    if (out.length > 8000) out = sliceSafe(out, 8000) + '\n…（内容过长已截断）';
+    if (out.length > 8000) out = truncateWithFences(out, 8000) + '\n…（内容过长已截断）';
     return out;
   } catch (e) { return errText(e); }
 }
@@ -702,7 +717,7 @@ async function listNotes(args) {
 }
 
 async function deleteNote(ref) {
-  if (!ref) return '删除失败：id 不能为空。';
+  if (!ref) return failMessage('E_ARG', '删除失败：id 不能为空。');
   try {
     return await enqueue(() => withLockedIndex(async (notes) => {
       const clean = ref.replace(/\.md$/, '');
@@ -1011,6 +1026,8 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             const body = JSON.stringify(payload);
             res.statusCode = code;
             res.setHeader('content-type', 'application/json; charset=utf-8');
+            // 风格设置属于个人数据，禁止任何缓存。
+            res.setHeader('cache-control', 'no-store');
             res.end(body);
           } catch { /* 响应已发出时忽略 */ }
         };
@@ -1031,6 +1048,11 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             let sameOrigin = false;
             try { sameOrigin = new URL(origin).host === req.headers.host; } catch { sameOrigin = false; }
             if (!sameOrigin) { sendJson(403, { error: '跨源请求被拒绝' }); return; }
+          }
+          // 同源页面必须带自定义请求头：跨站表单/链接无法伪造，且会触发 CORS 预检，挡住跨源读取。
+          if (String(req.headers['x-dsh-x-memory'] || '') !== '1') {
+            sendJson(403, { error: '缺少 X-DSH-X-Memory: 1 请求头' });
+            return;
           }
           if (req.method === 'POST') {
             // 浏览器跨站表单只能发 urlencoded/plain，要求 JSON 也就挡住了 CSRF 表单。

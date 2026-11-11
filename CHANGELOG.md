@@ -1,5 +1,13 @@
 # 变更日志
 
+## 0.3.7
+
+- 截断感知代码围栏：`memory_read` 超长截断不再留下半个 ``` 围栏（奇数个围栏时回退到最后一个围栏起点）。
+- 失败结果带机器可读后缀：`[err:E_ARG]` / `[err:E_NOT_FOUND]` / `[err:E_READ]` / `[err:E_GUARD]`，调用方可按 code 分支，不必匹配中文。
+- persona 设置接口要求自定义请求头 `X-DSH-X-Memory: 1`（GET 也一样）：跨站页面无法伪造，且触发 CORS 预检，堵住未经允许的跨源读取。
+- persona 响应加 `Cache-Control: no-store`，个人风格不落缓存。
+- 自检新增 3 项：缺少请求头 403、围栏不被切半、失败结果带 err 后缀；共 86 断言。
+
 ## 0.3.6
 
 - 修掉 4 处会在 emoji / 代理对上切半的裸 slice：memory_read 的 8000 字截断、踩坑指纹归一化、persona 读取旧超长文件、persona 写入校验。

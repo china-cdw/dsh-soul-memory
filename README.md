@@ -148,8 +148,10 @@ dsh plugin --profile desktop add "$PWD"
 风格设置页通过同源 `fetch` 调用本机路由 `/dsh-x-memory/persona`（只在宿主提供 `webServer` 时注册）：
 
 - `GET` 返回 `{ persona, presets, maxCustom }`；
+- 所有请求（含 GET）必须带自定义请求头 `X-DSH-X-Memory: 1`：跨站表单/链接伪造不了这个头，浏览器还会先发 CORS 预检，挡住了未经允许的跨源读取；
 - `POST` 要求 `Content-Type: application/json`、请求体 ≤16KB，返回 200 或 400/403/413/415；
-- 只接受本机回环 Host（`localhost` / `127.0.0.1` / `[::1]`），且带 Origin 时必须与 Host 一致——防止 DNS rebinding 与跨站提示注入。
+- 只接受本机回环 Host（`localhost` / `127.0.0.1` / `[::1]`），且带 Origin 时必须与 Host 一致——防止 DNS rebinding 与跨站提示注入；
+- 响应带 `Cache-Control: no-store`，风格属于个人数据，不缓存。
 
 ---
 
