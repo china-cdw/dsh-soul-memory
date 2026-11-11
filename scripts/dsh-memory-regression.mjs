@@ -9,6 +9,7 @@ import {
   latestSnapshot,
   memoryPath,
   safeJson,
+  sliceSafe,
   snapshotMemory,
 } from '../src/memory/util.js';
 import { _resetGuardCache, checkGuard, guardRulesPath } from '../src/memory/guard.js';
@@ -92,6 +93,16 @@ await t.test('P1-7 exitCodeOf 认 0 为成功信号', async () => {
   assert.equal(exitCodeOf('[exit code: 2]'), 2);
   assert.equal(exitCodeOf('EXIT_CODE: -1'), -1);
   assert.equal(exitCodeOf('no code here'), null);
+});
+
+await t.test('P1-12 sliceSafe 不切断代理对', async () => {
+  const emoji = String.fromCodePoint(0x1f600); // 😀（代理对，length 2）
+  assert.equal(emoji.length, 2);
+  assert.equal(sliceSafe('A' + emoji + 'B', 2), 'A');
+  assert.equal(sliceSafe(emoji, 1), '');
+  const whole = 'A' + emoji + 'B';
+  assert.equal(sliceSafe(whole, whole.length), whole);
+  assert.equal(sliceSafe('plain', 3), 'pla');
 });
 
 await t.test('P2 package.json 发布包含 scripts/ 且 test 串起全部自检', async () => {
