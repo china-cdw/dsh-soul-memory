@@ -1,5 +1,11 @@
 # 变更日志
 
+## 0.3.8
+
+- 截断改用围栏状态机：识别 ``` 与 ~~~、缩进 ≤3、四反引号；截断处若有未闭合围栏则补一个同字符同长度的关闭围栏，不再删正文（避免标题前缀被误判后丢掉 8KB）。
+- 失败结果补齐机器可读错误码：E_ARG / E_NOT_FOUND / E_AMBIGUOUS / E_DUPLICATE / E_GUARD / E_INTERNAL。
+- persona 设置页：非 GET/POST 返回 405 + Allow；空 patch 返回 204 且不写盘；所有响应 Cache-Control: no-store。
+
 ## 0.3.7
 
 - 截断感知代码围栏：`memory_read` 超长截断不再留下半个 ``` 围栏（奇数个围栏时回退到最后一个围栏起点）。

@@ -401,16 +401,26 @@ function errText(e) { return '操作失败：' + (e && e.message ? e.message : S
 /** 失败结果统一带机器可读后缀，便于调用方按 code 分支而不是匹配中文。 */
 function failMessage(code, message) { return message + '\n[err:' + code + ']'; }
 
-/** 按长度截断，但不把 ``` 代码围栏切成半个（奇数个围栏起点时回退到最后一个起点）。 */
+/** 按长度截断；若截断点落在未闭合的代码围栏内，补一个关闭围栏，而不是删内容。 */
 function truncateWithFences(text, max) {
   if (text.length <= max) return text;
   let cut = sliceSafe(text, max);
-  const fences = (cut.match(/^```/gm) || []).length;
-  if (fences % 2 === 1) {
-    const last = cut.lastIndexOf('\n```');
-    if (last > 0) cut = cut.slice(0, last);
-  }
+  const marker = openFenceMarker(cut);
+  if (marker) cut += (cut.endsWith('\n') ? '' : '\n') + marker + '\n';
   return cut;
+}
+
+/** 返回尚未闭合的围栏标记；支持 ``` 与 ~~~、缩进 ≤3、关闭需长度 ≥ 开启。 */
+function openFenceMarker(text) {
+  let open = null;
+  for (const line of text.split('\n')) {
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!m) continue;
+    const run = m[1];
+    if (!open) { open = { ch: run[0], len: run.length }; continue; }
+    if (run[0] === open.ch && run.length >= open.len && m[2].trim() === '') open = null;
+  }
+  return open ? open.ch.repeat(open.len) : null;
 }
 
 /** 读取并限制请求体大小（防误用），返回 UTF-8 文本。 */
@@ -569,7 +579,7 @@ async function writeNote(args) {
       if (supersedes) {
         const hits = existing.filter((n) => n.id === supersedes || n.id.indexOf(supersedes) === 0);
         if (hits.length === 0) return { value: failMessage('E_NOT_FOUND', '保存失败：没有找到要取代的记忆「' + supersedes + '」。可先用 memory_list 查看 id。') };
-        if (hits.length > 1) return { value: 'id 有歧义，请精确指定：\n' + hits.map((n) => '- [' + n.id + '] ' + n.title).join('\n') };
+        if (hits.length > 1) return { value: failMessage('E_AMBIGUOUS', 'id 有歧义，请精确指定：\n' + hits.map((n) => '- [' + n.id + '] ' + n.title).join('\n')) };
         target = hits[0];
       }
       if (!force && !target) {
@@ -583,7 +593,7 @@ async function writeNote(args) {
           near.sort((a, b) => b.sim - a.sim);
           return { value: '疑似重复，未写入。已有记忆：\n' + near.slice(0, 5).map((h) =>
             '- [' + h.note.id + '] ' + h.note.title + '（相似度 ' + h.sim.toFixed(2) + '）'
-          ).join('\n') + '\n\n如果确实要新增，带 force=true 重新调用；如果这是对某条记忆的更新或修正，带 supersedes=<旧 id> 重新调用，旧条目会被标记为「已被取代」而不是删除。' };
+          ).join('\n') + '\n\n如果确实要新增，带 force=true 重新调用；如果这是对某条记忆的更新或修正，带 supersedes=<旧 id> 重新调用，旧条目会被标记为「已被取代」而不是删除。\n[err:E_DUPLICATE]' };
         }
       }
       const id = makeId(title, existing);
@@ -605,12 +615,12 @@ async function writeNote(args) {
         (superseded ? '\n旧条目 [' + target.id + '] ' + target.title + ' 已标记为「已被 ' + id + ' 取代」。' : '') +
         (sensitive ? '\n注意：内容疑似包含凭据，已标记为敏感——不会进入系统提示，检索时只显示标题。' : '') };
     }));
-  } catch (e) { return errText(e); }
+  } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
 
 async function searchNotes(args, graphSearch, agent, bridge) {
   const query = typeof args.query === 'string' ? args.query.trim() : '';
-  if (!query) return '搜索失败：query 不能为空。';
+  if (!query) return failMessage('E_ARG', '搜索失败：query 不能为空。');
   const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(Math.floor(args.limit), 30) : 8;
   try {
     const notes = await loadIndex();
@@ -668,7 +678,7 @@ async function searchNotes(args, graphSearch, agent, bridge) {
 
     if (!sections.length) return '没有匹配「' + query + '」的记忆。可尝试其他关键词，或用 memory_list 浏览全部。';
     return sections.join('\n\n');
-  } catch (e) { return errText(e); }
+  } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
 
 async function readNote(ref) {
@@ -679,7 +689,7 @@ async function readNote(ref) {
     let matches = notes.filter((n) => n.id === clean);
     if (matches.length === 0) matches = notes.filter((n) => n.id.indexOf(clean) === 0);
     if (matches.length === 0) return failMessage('E_NOT_FOUND', '未找到记忆「' + ref + '」。可用 memory_list 浏览全部 ' + notes.length + ' 条归档记忆。');
-    if (matches.length > 1) return 'id 有歧义，候选：\n' + matches.map((n) => '- [' + n.id + '] ' + n.title).join('\n');
+    if (matches.length > 1) return failMessage('E_AMBIGUOUS', 'id 有歧义，候选：\n' + matches.map((n) => '- [' + n.id + '] ' + n.title).join('\n'));
     const note = matches[0];
     let text = '';
     try {
@@ -695,7 +705,7 @@ async function readNote(ref) {
       (note.sensitive ? '（此条被守卫标记为疑似凭据，正文默认隐藏；下面是显式读取内容）\n\n' : '') + parsed.body;
     if (out.length > 8000) out = truncateWithFences(out, 8000) + '\n…（内容过长已截断）';
     return out;
-  } catch (e) { return errText(e); }
+  } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
 
 async function listNotes(args) {
@@ -713,7 +723,7 @@ async function listNotes(args) {
       '（' + (n.created || '').slice(0, 10) + '）'
     );
     return '归档记忆共 ' + notes.length + ' 条（显示前 ' + Math.min(limit, notes.length) + ' 条，新→旧）：\n' + lines.join('\n');
-  } catch (e) { return errText(e); }
+  } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
 
 async function deleteNote(ref) {
@@ -722,8 +732,8 @@ async function deleteNote(ref) {
     return await enqueue(() => withLockedIndex(async (notes) => {
       const clean = ref.replace(/\.md$/, '');
       const matches = notes.filter((n) => n.id === clean || n.id.indexOf(clean) === 0);
-      if (matches.length === 0) return { value: '删除失败：未找到「' + ref + '」。可用 memory_list 浏览全部。' };
-      if (matches.length > 1) return { value: 'id 有歧义，请精确指定：\n' + matches.map((n) => '- [' + n.id + '] ' + n.title).join('\n') };
+      if (matches.length === 0) return { value: failMessage('E_NOT_FOUND', '删除失败：未找到「' + ref + '」。可用 memory_list 浏览全部。') };
+      if (matches.length > 1) return { value: failMessage('E_AMBIGUOUS', 'id 有歧义，请精确指定：\n' + matches.map((n) => '- [' + n.id + '] ' + n.title).join('\n')) };
       const note = matches[0];
       const next = notes.filter((n) => n.id !== note.id);
       bodyCache.delete(note.id);
@@ -733,24 +743,24 @@ async function deleteNote(ref) {
       sectionCache = null;
       return { notes: next, value: '已删除记忆 [' + note.id + '] ' + note.title + '。' };
     }));
-  } catch (e) { return errText(e); }
+  } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
 
 async function editCore(args) {
   const action = args.action;
   if (action !== 'append' && action !== 'replace' && action !== 'remove') {
-    return '编辑失败：action 必须是 append / replace / remove。';
+    return failMessage('E_ARG', '编辑失败：action 必须是 append / replace / remove。');
   }
   const section = typeof args.section === 'string' ? args.section.trim() : '';
   const text = typeof args.text === 'string' ? args.text : '';
-  if (!section) return '编辑失败：section 不能为空。';
-  if ((action === 'append' || action === 'replace') && !text.trim()) return '编辑失败：append/replace 需要提供 text。';
+  if (!section) return failMessage('E_ARG', '编辑失败：section 不能为空。');
+  if ((action === 'append' || action === 'replace') && !text.trim()) return failMessage('E_ARG', '编辑失败：append/replace 需要提供 text。');
   const guard = checkGuard(section + '\n' + text);
   if (guard.kind) {
-    return '拒绝写入核心记忆：内容命中守卫规则（私钥/凭据形状），核心记忆会注入每个会话，不能保存这类内容。';
+    return failMessage('E_GUARD', '拒绝写入核心记忆：内容命中守卫规则（私钥/凭据形状），核心记忆会注入每个会话，不能保存这类内容。');
   }
   if (!isCoreSectionTitle(section)) {
-    return '编辑失败：分节名必须是 ' + [...CORE_SECTION_NAMES].join(' / ') + ' 之一（收到「' + section + '」）。';
+    return failMessage('E_ARG', '编辑失败：分节名必须是 ' + [...CORE_SECTION_NAMES].join(' / ') + ' 之一（收到「' + section + '」）。');
   }
   // 用户正文里的二级标题降级成三级：否则写回去会被当成新分节，下次编辑只改到前半段。
   const bodyText = text.replace(/^##\s+/gm, '### ');
@@ -766,7 +776,7 @@ async function editCore(args) {
       const target = parsed.sections.find((s) => s.title.toLowerCase() === section.toLowerCase());
       const titles = parsed.sections.map((s) => s.title).join('、') || '（无）';
       if (action === 'remove') {
-        if (!target) return '删除失败：找不到分节「' + section + '」。现有分节：' + titles;
+        if (!target) return failMessage('E_NOT_FOUND', '删除失败：找不到分节「' + section + '」。现有分节：' + titles);
         parsed.sections = parsed.sections.filter((s) => s !== target);
       } else if (action === 'append') {
         if (target) target.body = (target.body.replace(/\s+$/, '') ? target.body.replace(/\s+$/, '') + '\n' : '') + bodyText;
@@ -781,7 +791,7 @@ async function editCore(args) {
       const warn = next.length > CORE_BUDGET ? '（警告：核心记忆已超 ' + CORE_BUDGET + ' 字，注入时会被截断，建议尽快精简）' : '';
       return '已' + verb + '核心记忆分节「' + section + '」。当前核心记忆 ' + next.length + ' 字符。' + warn;
     }));
-  } catch (e) { return errText(e); }
+  } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
 
 async function brief(graphStats, agent, bridge) {
@@ -834,7 +844,7 @@ async function brief(graphStats, agent, bridge) {
     lines.push('');
     lines.push('用法：memory_search 查归档；soul_recall 查会话过程；memory_core 改常驻；persona 改风格。');
     return lines.join('\n');
-  } catch (e) { return errText(e); }
+  } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
 
 const outputText = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] };
@@ -992,7 +1002,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             const preset = PRESETS.find((p) => p.id === check.value.preset);
             return '已切换回复风格为「' + (preset ? preset.name : check.value.preset) + '」。已在后续模型组装中生效。';
           });
-        } catch (e) { return errText(e); }
+        } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
       },
     },
   ];
@@ -1054,6 +1064,11 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             sendJson(403, { error: '缺少 X-DSH-X-Memory: 1 请求头' });
             return;
           }
+          if (req.method !== 'GET' && req.method !== 'POST') {
+            res.setHeader('Allow', 'GET, POST');
+            sendJson(405, { error: '仅支持 GET / POST' });
+            return;
+          }
           if (req.method === 'POST') {
             // 浏览器跨站表单只能发 urlencoded/plain，要求 JSON 也就挡住了 CSRF 表单。
             const ctype = String(req.headers['content-type'] || '').toLowerCase();
@@ -1065,6 +1080,12 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             if (bodyRes.tooLarge) { sendJson(413, { error: '请求体过大（上限 16KB）' }); return; }
             const patch = safeJson(bodyRes.body || '{}', null);
             if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('请求体必须是对象');
+            if (Object.keys(patch).length === 0) {
+              res.setHeader('cache-control', 'no-store');
+              res.statusCode = 204;
+              res.end();
+              return;
+            }
             const result = await enqueue(async () => {
               const cur = readPersona();
               const check = normalizePersonaInput(patch, cur);

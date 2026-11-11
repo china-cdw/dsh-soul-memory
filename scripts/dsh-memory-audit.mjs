@@ -353,6 +353,46 @@ await t.test('失败结果带机器可读 [err:CODE] 后缀', async () => {
   assert.match(await callTool(tools1, 'memory_read', { id: 'not-a-real-id-xyz' }), /\[err:E_NOT_FOUND\]/);
 });
 
+await t.test('persona 路由：非 GET/POST 返回 405 并带 Allow', async () => {
+  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const res = fakeRes();
+  await route.handler(fakeReq({ method: 'PUT', headers: { host: '127.0.0.1:2300', 'x-dsh-x-memory': '1', 'content-type': 'application/json' }, body: '{}' }), res);
+  assert.equal(res.statusCode, 405);
+  assert.match(String(res.headers.allow || ''), /GET/);
+});
+
+await t.test('persona 路由：空 patch 返回 204 且不落盘', async () => {
+  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const res = fakeRes();
+  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-x-memory': '1' }, body: '{}' }), res);
+  assert.equal(res.statusCode, 204);
+});
+
+await t.test('persona 路由：GET 响应禁缓存', async () => {
+  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const res = fakeRes();
+  await route.handler(fakeReq({ method: 'GET', headers: { host: '127.0.0.1:2300', 'x-dsh-x-memory': '1' } }), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(String(res.headers['cache-control'] || '').toLowerCase(), 'no-store');
+});
+
+await t.test('四反引号围栏内截断补关闭围栏而不是删内容', async () => {
+  const fence = '`'.repeat(4);
+  const long = fence + '\n' + 'q'.repeat(7900) + '\n' + fence + '\n' + 'z'.repeat(300);
+  const saved = await callTool(tools1, 'memory_write', { title: '四反引号围栏', content: long, force: true });
+  const id = /\[([^\]]+)\]/.exec(saved)[1];
+  const out = await callTool(tools1, 'memory_read', { id });
+  assert.match(out, /内容过长已截断/);
+  assert.ok(out.includes('q'.repeat(100)), '截断把正文整段删了');
+  assert.equal((out.match(/^`{4}/gm) || []).length % 2, 0, '四反引号围栏不平衡');
+});
+
+await t.test('重复写入带 E_DUPLICATE 错误码', async () => {
+  await callTool(tools1, 'memory_write', { title: '重复码测试', content: '唯一串 zzz-dup-code-038 重复内容。', force: true });
+  const second = await callTool(tools1, 'memory_write', { title: '重复码测试', content: '唯一串 zzz-dup-code-038 重复内容。' });
+  assert.match(second, /\[err:E_DUPLICATE\]/);
+});
+
 await t.test('取代旧记忆时保留未知 front-matter 字段', async () => {
   const saved = await callTool(tools1, 'memory_write', { title: '取代保留字段', content: '旧结论 A。', force: true });
   const oldId = /\[([^\]]+)\]/.exec(saved)[1];
