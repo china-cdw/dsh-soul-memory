@@ -31,12 +31,11 @@ export function errorFingerprint(tool, text) {
     .split('\n')
     .map((line) => line.trim())
     .find((line) => line.length > 0) ?? '';
-  const normalized = first
+  const normalized = sliceSafe(first
     .replace(/[A-Za-z]:\\[^\s:]+/g, '<path>')
     .replace(/\/[^\s:'"]+/g, '<path>')
     .replace(/\b\d{3,}\b/g, '<n>')
-    .replace(/\s+/g, ' ')
-    .slice(0, 200);
+    .replace(/\s+/g, ' '), 200);
   return `${tool}:${normalized}`;
 }
 

@@ -1,5 +1,11 @@
 # 变更日志
 
+## 0.3.6
+
+- 修掉 4 处会在 emoji / 代理对上切半的裸 slice：memory_read 的 8000 字截断、踩坑指纹归一化、persona 读取旧超长文件、persona 写入校验。
+- 截断统一走 `sliceSafe`，不再产生半个字符或 U+FFFD。
+- 六套自检仍全绿（82 断言），preflight 通过。
+
 ## 0.3.5
 
 - 快照补上图谱库：启动时用 VACUUM INTO 把 evolve.sqlite 复制进当天快照目录（7 天轮转），图谱不再零备份。

@@ -678,7 +678,7 @@ async function readNote(ref) {
       (note.sensitive ? '（敏感内容）' : '') +
       '\n创建：' + note.created + ((note.tags && note.tags.length) ? '\n标签：' + note.tags.join(', ') : '') + '\n\n' +
       (note.sensitive ? '（此条被守卫标记为疑似凭据，正文默认隐藏；下面是显式读取内容）\n\n' : '') + parsed.body;
-    if (out.length > 8000) out = out.slice(0, 8000) + '\n…（内容过长已截断）';
+    if (out.length > 8000) out = sliceSafe(out, 8000) + '\n…（内容过长已截断）';
     return out;
   } catch (e) { return errText(e); }
 }

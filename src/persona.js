@@ -9,7 +9,7 @@
 // 注入点由 index.js 的 buildSectionText() 调用 buildPersonaText()，
 // 与核心记忆同处一个 systemPrompt.section（order 60），每次模型组装同步读取。
 import { readFileSync } from 'node:fs';
-import { memoryPath } from './memory/util.js';
+import { memoryPath, sliceSafe } from './memory/util.js';
 
 export const personaPath = () => memoryPath('PERSONA.md');
 
@@ -262,7 +262,7 @@ export function readPersona() {
     const parsed = parsePersonaFile(raw);
     if (!PRESET_BY_ID.has(parsed.preset)) parsed.preset = 'default';
     if (typeof parsed.custom === 'string' && parsed.custom.length > MAX_CUSTOM_TEXT) {
-      parsed.custom = parsed.custom.slice(0, MAX_CUSTOM_TEXT);
+      parsed.custom = sliceSafe(parsed.custom, MAX_CUSTOM_TEXT);
     }
     return parsed;
   } catch {
@@ -304,7 +304,7 @@ export function normalizePersonaInput(patch, current) {
   if (typeof patch.custom === 'string' && patch.custom.length > MAX_CUSTOM_TEXT) {
     return { ok: false, error: '自定义风格正文过长（' + patch.custom.length + ' 字符，上限 ' + MAX_CUSTOM_TEXT + '）。' };
   }
-  if (next.custom.length > MAX_CUSTOM_TEXT) next.custom = next.custom.slice(0, MAX_CUSTOM_TEXT);
+  if (next.custom.length > MAX_CUSTOM_TEXT) next.custom = sliceSafe(next.custom, MAX_CUSTOM_TEXT);
   if (next.preset === 'custom' && !next.custom.trim()) {
     return { ok: false, error: '自定义风格正文不能为空。' };
   }
