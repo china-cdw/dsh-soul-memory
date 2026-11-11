@@ -11,14 +11,19 @@
 // 设计取舍：
 //   - 不读 index.db（schema 属内部实现，且可能被写锁占用）；只读 JSON 副本。
 //   - 按 mtime+size 缓存解析结果：同一会话没变就不重复解析 4MB 的 JSON。
-//   - 单个文件超过 8MB 直接跳过，避免一次搜索拖慢一轮对话。
+//   - 单个文件超过 32MB 直接跳过（并计入 biliStatus().oversized），避免一次搜索拖慢一轮对话。
 import { readdirSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { safeJson } from './util.js';
+import { safeJson, sliceSafe } from './util.js';
 
-const MAX_FILE_BYTES = 8 * 1024 * 1024;
+/**
+ * 单文件上限。billion-context 的会话 JSON 会随压缩块增多而变大，
+ * 本机实测已到 5.9MB（约 8MB 上限的 71%），提到 32MB 以免长大后被静默跳过。
+ * 超过上限的文件不进检索，但 biliStatus 会报出数量，避免“整份会话凭空消失”。
+ */
+const MAX_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_DEPTH = 3;
 /** 单次注入的摘要上限（保守，避免把上下文又撑大）。 */
 const DEFAULT_MAX_CHARS = 1200;
@@ -137,7 +142,22 @@ export async function readBiliBlocks(opts = {}) {
 }
 
 /** 体检一行用：会话数、块数、摘要总字符、最近时间。 */
+/** 统计超过单文件上限的会话数：让“跳过”变成可见的提示，而不是静默消失。 */
+async function countOversized(dir) {
+  const files = [];
+  collectJsonFiles(dir, files, 0);
+  let count = 0;
+  for (const file of files) {
+    try {
+      const st = await stat(file);
+      if (st.size > MAX_FILE_BYTES) count += 1;
+    } catch { /* 文件消失就跳过 */ }
+  }
+  return count;
+}
+
 export async function biliStatus(opts = {}) {
+  const dir = biliSessionsDir(opts.sessionsDir);
   const sessions = await readBiliBlocks(opts);
   let blocks = 0;
   let chars = 0;
@@ -150,11 +170,12 @@ export async function biliStatus(opts = {}) {
     }
   }
   return {
-    dir: biliSessionsDir(opts.sessionsDir),
+    dir,
     found: blocks > 0,
     sessions: sessions.length,
     blocks,
     chars,
+    oversized: dir ? await countOversized(dir) : 0,
     latest: latest ? new Date(latest) : null,
   };
 }

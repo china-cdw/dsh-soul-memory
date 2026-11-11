@@ -16,7 +16,7 @@ import { readFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { atomicWrite, createQueue, latestSnapshot, memoryPath, safeJson, snapshotMemory } from './memory/util.js';
+import { atomicWrite, createQueue, latestSnapshot, memoryPath, safeJson, sliceSafe, snapshotMemory } from './memory/util.js';
 import { checkGuard, isSensitive } from './memory/guard.js';
 import {
   buildPersonaText,
@@ -234,11 +234,12 @@ async function withIndexLock(job) {
       break;
     } catch (e) {
       if (e && e.code !== 'EEXIST') throw e;
+      // 超时判断放在所有分支之前：stat 本身持续失败（EPERM/EBUSY）时也必须退出，不能空转。
+      if (Date.now() - started > INDEX_LOCK_WAIT_MS) throw new Error('索引写入被占用（index.json.lock 超过 ' + (INDEX_LOCK_WAIT_MS / 1000) + ' 秒未释放）');
       try {
         const st = await stat(lock);
-        if (Date.now() - st.mtimeMs > INDEX_LOCK_STALE_MS) { await rm(lock, { force: true }); continue; }
-      } catch { continue; /* 锁刚好被持有者删掉，立即重试 */ }
-      if (Date.now() - started > INDEX_LOCK_WAIT_MS) throw new Error('索引写入被占用（index.json.lock 超过 ' + (INDEX_LOCK_WAIT_MS / 1000) + ' 秒未释放）');
+        if (Date.now() - st.mtimeMs > INDEX_LOCK_STALE_MS) await rm(lock, { force: true });
+      } catch { /* 锁刚好被持有者删掉，睡一下再试 */ }
       await new Promise((r) => setTimeout(r, 25));
     }
   }
@@ -251,6 +252,22 @@ async function withIndexLock(job) {
 
 async function persistIndex(notes) {
   await withIndexLock(() => atomicWrite(indexPath(), JSON.stringify({ version: 1, notes }, null, 2)));
+}
+
+/**
+ * 锁内读-改-写：loadIndex 必须在锁内执行。锁外读取再锁内写，两个进程会各自拿着旧索引，
+ * 后写者覆盖前者的新增，甚至把已删条目写回来。
+ * job(notes) 返回 { notes, value } 或 { value }（不改索引时省略 notes）。
+ */
+async function withLockedIndex(job) {
+  return withIndexLock(async () => {
+    const notes = await loadIndex();
+    const result = await job(notes);
+    if (result && result.notes) {
+      await atomicWrite(indexPath(), JSON.stringify({ version: 1, notes: result.notes }, null, 2));
+    }
+    return result ? result.value : undefined;
+  });
 }
 
 async function rebuildIndex({ persist = true } = {}) {
@@ -315,7 +332,12 @@ async function reconcileIndex() {
     if (!name.endsWith('.md')) continue;
     const id = name.slice(0, -3);
     let parsed = null;
-    try { parsed = parseNoteFile(await readFile(join(dir, name), 'utf8')); } catch { continue; }
+    try { parsed = parseNoteFile(await readFile(join(dir, name), 'utf8')); } catch (e) {
+      // 只有 ENOENT 才算文件真的没了，交给下面的缺失判断；
+      // 其他读错误（占用、权限、杀软锁）说明文件还在，标 missing 会让内容从检索里消失。
+      if (!e || e.code !== 'ENOENT') fileIds.add(id);
+      continue;
+    }
     if (parsed.meta.deleted === 'true') {
       // 墓碑：若索引里还留着（上次删除在写索引前中断），这里补完删除。
       if (byId.has(id)) { byId.delete(id); changed = true; }
@@ -358,17 +380,31 @@ const enqueue = createQueue();
 function errText(e) { return '操作失败：' + (e && e.message ? e.message : String(e)); }
 
 /** 读取并限制请求体大小（防误用），返回 UTF-8 文本。 */
+/**
+ * 读取请求体。超限时不 destroy 连接（那会让客户端只看到连接重置），
+ * 而是排空剩余数据后返回 { tooLarge: true }，由调用方回 413。
+ */
 function readBody(req, limit = 16384) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     let size = 0;
+    let tooLarge = false;
     const chunks = [];
+    const finish = () => resolve({ tooLarge, body: tooLarge ? '' : Buffer.concat(chunks).toString('utf8') });
     req.on('data', (chunk) => {
       size += chunk.length;
-      if (size > limit) { reject(new Error('请求体过大')); try { req.destroy(); } catch { /* 忽略 */ } return; }
-      chunks.push(chunk);
+      if (size > limit) {
+        if (!tooLarge) {
+          tooLarge = true;
+          chunks.length = 0;
+          try { req.resume(); } catch { /* 忽略 */ }
+        }
+        return;
+      }
+      if (!tooLarge) chunks.push(chunk);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
+    req.on('end', finish);
+    req.on('error', finish);
+    req.on('close', finish);
   });
 }
 
@@ -396,7 +432,7 @@ function renderSectionText() {
     if (coreRaw !== null) core = coreRaw.trim();
     let coreNote = '';
     if (core.length > CORE_BUDGET) {
-      core = core.slice(0, CORE_BUDGET);
+      core = sliceSafe(core, CORE_BUDGET);
       coreNote = '\n（核心记忆过长已截断——请尽快用 memory_core 精简）';
     }
     let notes = [];
@@ -491,13 +527,12 @@ async function writeNote(args) {
   }
   const sensitive = guard.kind === 'sensitive';
   try {
-    return await enqueue(async () => {
-      const existing = await loadIndex();
+    return await enqueue(() => withLockedIndex(async (existing) => {
       let target = null;
       if (supersedes) {
         const hits = existing.filter((n) => n.id === supersedes || n.id.indexOf(supersedes) === 0);
-        if (hits.length === 0) return '保存失败：没有找到要取代的记忆「' + supersedes + '」。可先用 memory_list 查看 id。';
-        if (hits.length > 1) return 'id 有歧义，请精确指定：\n' + hits.map((n) => '- [' + n.id + '] ' + n.title).join('\n');
+        if (hits.length === 0) return { value: '保存失败：没有找到要取代的记忆「' + supersedes + '」。可先用 memory_list 查看 id。' };
+        if (hits.length > 1) return { value: 'id 有歧义，请精确指定：\n' + hits.map((n) => '- [' + n.id + '] ' + n.title).join('\n') };
         target = hits[0];
       }
       if (!force && !target) {
@@ -508,9 +543,9 @@ async function writeNote(args) {
         }
         if (near.length) {
           near.sort((a, b) => b.sim - a.sim);
-          return '疑似重复，未写入。已有记忆：\n' + near.slice(0, 5).map((h) =>
+          return { value: '疑似重复，未写入。已有记忆：\n' + near.slice(0, 5).map((h) =>
             '- [' + h.note.id + '] ' + h.note.title + '（相似度 ' + h.sim.toFixed(2) + '）'
-          ).join('\n') + '\n\n如果确实要新增，带 force=true 重新调用；如果这是对某条记忆的更新或修正，带 supersedes=<旧 id> 重新调用，旧条目会被标记为「已被取代」而不是删除。';
+          ).join('\n') + '\n\n如果确实要新增，带 force=true 重新调用；如果这是对某条记忆的更新或修正，带 supersedes=<旧 id> 重新调用，旧条目会被标记为「已被取代」而不是删除。' };
         }
       }
       const id = makeId(title, existing);
@@ -527,12 +562,11 @@ async function writeNote(args) {
         bodyCache.delete(target.id);
         notes = notes.map((n) => (n.id === target.id ? { ...n, supersededBy: id, updated: now } : n));
       }
-      await persistIndex(notes);
       sectionCache = null;
-      return '已保存归档记忆 [' + id + '] ' + title + (tags.length ? ' #' + tags.join(' #') : '') + '。已进入索引，所有会话可见。' +
+      return { notes, value: '已保存归档记忆 [' + id + '] ' + title + (tags.length ? ' #' + tags.join(' #') : '') + '。已进入索引，所有会话可见。' +
         (superseded ? '\n旧条目 [' + target.id + '] ' + target.title + ' 已标记为「已被 ' + id + ' 取代」。' : '') +
-        (sensitive ? '\n注意：内容疑似包含凭据，已标记为敏感——不会进入系统提示，检索时只显示标题。' : '');
-    });
+        (sensitive ? '\n注意：内容疑似包含凭据，已标记为敏感——不会进入系统提示，检索时只显示标题。' : '') };
+    }));
   } catch (e) { return errText(e); }
 }
 
@@ -647,22 +681,20 @@ async function listNotes(args) {
 async function deleteNote(ref) {
   if (!ref) return '删除失败：id 不能为空。';
   try {
-    return await enqueue(async () => {
-      const notes = await loadIndex();
+    return await enqueue(() => withLockedIndex(async (notes) => {
       const clean = ref.replace(/\.md$/, '');
       const matches = notes.filter((n) => n.id === clean || n.id.indexOf(clean) === 0);
-      if (matches.length === 0) return '删除失败：未找到「' + ref + '」。可用 memory_list 浏览全部。';
-      if (matches.length > 1) return 'id 有歧义，请精确指定：\n' + matches.map((n) => '- [' + n.id + '] ' + n.title).join('\n');
+      if (matches.length === 0) return { value: '删除失败：未找到「' + ref + '」。可用 memory_list 浏览全部。' };
+      if (matches.length > 1) return { value: 'id 有歧义，请精确指定：\n' + matches.map((n) => '- [' + n.id + '] ' + n.title).join('\n') };
       const note = matches[0];
       const next = notes.filter((n) => n.id !== note.id);
       bodyCache.delete(note.id);
       // 先落墓碑再改索引：即使进程死在中间，重启对账也不会把该条「复活」。
       // 墓碑写失败就直接中止，避免出现「索引没了、正文还在」的半删除状态。
       await atomicWrite(join(notesDir(), note.id + '.md'), '---\ndeleted: true\nid: ' + note.id + '\n---\n\n（此记忆已删除）\n');
-      await persistIndex(next);
       sectionCache = null;
-      return '已删除记忆 [' + note.id + '] ' + note.title + '。';
-    });
+      return { notes: next, value: '已删除记忆 [' + note.id + '] ' + note.title + '。' };
+    }));
   } catch (e) { return errText(e); }
 }
 
@@ -767,9 +799,11 @@ const outputText = { schema: { type: 'string' }, render: (_args, value) => [{ ty
  * @param {(agent: object, query: string) => Promise<Array<{kind: string, claim: string}>>} [hooks.graphSearch]
  * @param {(agent: object) => Promise<object>} [hooks.graphStats]
  */
-export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, coding = null, lessons = null, bridge = null } = {}) {
+export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, coding = null, lessons = null, bridge = null, core = true } = {}) {
   const bridgeCfg = bridge && typeof bridge === 'object' ? bridge : null;
-  enqueue(async () => {
+  // 核心记忆层可单独关闭（memory.enabled=false）：工具、注入节、风格路由、bootstrap 一起停，
+  // 编码规范与踩坑记录层各有独立开关，不受影响。
+  if (core) enqueue(async () => {
     await mkdir(notesDir(), { recursive: true });
     if (readFileSyncOrNull(corePath()) === null) await atomicWrite(corePath(), TEMPLATE);
     if (readFileSyncOrNull(indexPath()) === null) await atomicWrite(indexPath(), JSON.stringify({ version: 1, notes: [] }, null, 2));
@@ -916,7 +950,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     },
   ];
 
-  for (const def of defs) {
+  if (core) for (const def of defs) {
     ctx.tools.register({
       name: def.name,
       description: def.description,
@@ -926,7 +960,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     });
   }
 
-  ctx.systemPrompt.section({
+  if (core) ctx.systemPrompt.section({
     name: 'dsh-x-memory:recall',
     order: 60,
     // 记忆正文可能包含 {{...}}；关掉模板插值，避免用户内容被当成提示模板执行。
@@ -935,7 +969,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
   });
 
   // 设置页读写接口：风格页经同源 fetch 调用。webServer 是可选依赖。
-  ctx.inject(['webServer'], (c) => {
+  if (core) ctx.inject(['webServer'], (c) => {
     c.effect(() => c.webServer.register({
       kind: 'exact',
       path: '/dsh-x-memory/persona',
@@ -963,8 +997,9 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
               sendJson(415, { error: 'Content-Type 必须是 application/json' });
               return;
             }
-            const body = await readBody(req);
-            const patch = safeJson(body || '{}', null);
+            const bodyRes = await readBody(req);
+            if (bodyRes.tooLarge) { sendJson(413, { error: '请求体过大（上限 16KB）' }); return; }
+            const patch = safeJson(bodyRes.body || '{}', null);
             if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('请求体必须是对象');
             const result = await enqueue(async () => {
               const cur = readPersona();

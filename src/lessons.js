@@ -2,7 +2,7 @@
 // 下次遇到同类报错时注入系统提示，避免重犯。纯本地、无模型调用。
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { atomicWrite, createQueue, memoryHome, redactSecrets } from './memory/util.js';
+import { atomicWrite, createQueue, memoryHome, redactSecrets, sliceSafe } from './memory/util.js';
 
 const DEFAULT_BUDGET = 600;
 const MAX_ROWS = 400;
@@ -128,10 +128,10 @@ export function buildLessonsText(rows, { budget = DEFAULT_BUDGET, limit = 6 } = 
     const times = row.count > 1 ? `（出现过 ${row.count} 次）` : '';
     const ok = row.ok ? `；生效做法：${row.ok}` : '';
     const line = `- [${row.tool}] ${row.error}${ok}${times}${when ? ` — ${when}` : ''}`;
-    lines.push(line.slice(0, 260));
+    lines.push(sliceSafe(line, 260));
   }
   const text = head + lines.join('\n');
-  return text.length > budget ? text.slice(0, budget) + '\n…（已截断）' : text;
+  return text.length > budget ? sliceSafe(text, budget) + '\n…（已截断）' : text;
 }
 
 export async function listLessons() {
@@ -302,13 +302,38 @@ export function registerLessons(ctx, options = {}) {
   });
 
   const UNCAPTURED = new Set(['lessons', 'coding_rules', 'memory_write', 'memory_core', 'memory_search', 'memory_read', 'memory_list', 'memory_delete', 'memory_brief', 'persona', 'edit', 'write', 'ops_edit_file', 'ops_write_file', 'ops_replace']);
+  // 一条失败只在「同一个回合、同一类命令」内等待恢复，跨回合不算因果关系。
+  const PENDING_TTL_MS = 10 * 60 * 1000;
+  const MAX_PENDING = 8;
+
+  function pendingList(state, name) {
+    let list = state.pending.get(name);
+    if (!Array.isArray(list)) { list = []; state.pending.set(name, list); }
+    return list;
+  }
+
+  /** 同一类命令：完全相同，或互为前缀，或首词相同（npm test / npm test -- --x）。 */
+  function relatedCommand(a, b) {
+    const x = String(a || '').trim();
+    const y = String(b || '').trim();
+    if (!x || !y) return true; // 拿不到命令就不拿命令当反证
+    if (x === y || x.startsWith(y) || y.startsWith(x)) return true;
+    return x.split(/\s+/)[0].toLowerCase() === y.split(/\s+/)[0].toLowerCase();
+  }
 
   ctx.on('session/event', (session, event) => {
     try {
       const sid = String(session?.id ?? session?.header?.id ?? '');
-      if (!sid || !event || (event.type !== 'tool/call' && event.type !== 'tool/result')) return;
-      const data = event.data ?? {};
+      if (!sid || !event) return;
       const state = stateOf(sid);
+      // 回合结束：没等到的恢复机会作废，避免把下一轮的成功算到上一轮的失败上。
+      if (event.type === 'turn/end' || event.type === 'session/end') {
+        state.pending.clear();
+        state.calls.clear();
+        return;
+      }
+      if (event.type !== 'tool/call' && event.type !== 'tool/result') return;
+      const data = event.data ?? {};
       if (event.type === 'tool/call') {
         const callId = data.callId ?? data.message?.toolCallId;
         const name = data.name ?? data.message?.name;
@@ -319,25 +344,54 @@ export function registerLessons(ctx, options = {}) {
       }
       const callId = String(data.message?.toolCallId ?? data.callId ?? '');
       const call = state.calls.get(callId);
-      if (!call || UNCAPTURED.has(call.name)) return;
+      if (!call) return;
       state.calls.delete(callId);
+      if (UNCAPTURED.has(call.name)) return;
       const failure = failureOf(data.message, data.meta, stringContent(data.message?.content), call);
+      const now = Date.now();
       if (failure !== null) {
         const text = redact(cleanErrorText(failure.text));
         if (!text) return;
         // 只有在拿不到结构化信号时，才用正文关键词兜底，避免普通输出被记成"坑"。
         if (!failure.structured && !looksLikeError(text)) return;
         const first = text.split(/\r?\n/).find((line) => line.trim()) ?? text;
-        state.pending.set(call.name, { fp: errorFingerprint(call.name, text), error: first.slice(0, 200), args: call.args || '', at: Date.now() });
+        const list = pendingList(state, call.name).filter((p) => now - p.at < PENDING_TTL_MS);
+        list.push({
+          fp: errorFingerprint(call.name, text),
+          error: first.slice(0, 200),
+          args: call.args || '',
+          structured: Boolean(failure.structured),
+          at: now,
+          cwd: String(session?.header?.cwd || ''),
+        });
+        while (list.length > MAX_PENDING) list.shift();
+        state.pending.set(call.name, list);
         return;
       }
-      const pending = state.pending.get(call.name);
-      if (!pending) return;
-      state.pending.delete(call.name);
-      // 同一条命令重跑成功，不构成“纠正”，不算学到做法（空参数/占位参数除外）。
-      if (pending.args && call.args && pending.args === call.args && pending.args.length > 2 && pending.args !== '{}') return;
+      const list = pendingList(state, call.name);
+      if (!list.length) return;
+      // 只取最近一次仍然有效、且命令相关的失败；同命令重跑成功不算纠正。
+      const cwd = String(session?.header?.cwd || '');
+      let picked = -1;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const p = list[i];
+        if (now - p.at >= PENDING_TTL_MS) continue;
+        if (p.cwd && cwd && p.cwd !== cwd) continue;
+        // 结构化错误（isError）来自宿主，信号可靠；非 shell 工具没有"命令"可比，
+        // 只要还是同一个工具、同一个目录，就允许把后续成功当作恢复。
+        const related = relatedCommand(p.args, call.args) ||
+          (p.structured && !SHELL_TOOL.test(call.name));
+        if (!related) continue;
+        if (p.args && call.args && p.args === call.args && p.args.length > 2 && p.args !== '{}') continue;
+        picked = i;
+        break;
+      }
+      if (picked < 0) return;
+      const pending = list[picked];
+      list.splice(picked, 1);
+      if (!list.length) state.pending.delete(call.name);
       const ok = call.args ? call.args : '';
-      enqueue(() => appendRow({ fp: pending.fp, tool: call.name, error: pending.error, ok, at: Date.now(), session: sid }))
+      enqueue(() => appendRow({ fp: pending.fp, tool: call.name, error: pending.error, ok, at: now, session: sid }))
         .then(refresh)
         .catch(() => {});
     } catch {

@@ -26,6 +26,8 @@ const fresh = async () => {
 // 先等一下，避免上一条用例队列里的写入落在清空之后，污染断言。
 const reset = async () => {
   await sleep(250);
+  // 清掉上一用例遗留的 pending/calls，否则新的成功会配到旧的失败上。
+  handlers.get('session/event')?.({ id: 's1' }, { type: 'turn/end', data: {} });
   await fresh();
 };
 
@@ -66,7 +68,7 @@ await t.test('shell 非零退出码 + 恢复 → 记录，错误里保留退出�
   // 只有失败、没有恢复：记录的是"坑 + 怎么绕过去"，此时不应落盘。
   await sleep(250);
   assert.equal((await listLessons()).length, 0);
-  fire('tool/call', { callId: 'c2b', name: 'ops_bash', arguments: { command: 'true' } });
+  fire('tool/call', { callId: 'c2b', name: 'ops_bash', arguments: { command: 'false --retry' } });
   fire('tool/result', { message: { toolCallId: 'c2b', content: '[exit code: 0]' } });
   const rows = await waitFor(() => listLessons().then((r) => (r.length ? r : false)), { label: '记录退出码失败' });
   assert.equal(rows.length, 1);
@@ -78,11 +80,21 @@ await t.test('失败后换命令成功 → 记下生效做法', async () => {
   await reset();
   fire('tool/call', { callId: 'c3', name: 'ops_bash', arguments: { command: 'bad-cmd --x' } });
   fire('tool/result', { message: { toolCallId: 'c3', content: 'command not found\n[exit code: 127]' } });
-  fire('tool/call', { callId: 'c4', name: 'ops_bash', arguments: { command: 'good-cmd --x' } });
+  fire('tool/call', { callId: 'c4', name: 'ops_bash', arguments: { command: 'bad-cmd --retry' } });
   fire('tool/result', { message: { toolCallId: 'c4', content: 'ok\n[exit code: 0]' } });
   const rows = await waitFor(() => listLessons().then((r) => (r[0]?.ok ? r : false)), { label: '记录生效做法' });
-  assert.match(rows[0].ok, /good-cmd/);
+  assert.match(rows[0].ok, /bad-cmd/);
   assert.match(rows[0].error, /command not found/);
+});
+
+await t.test('失败后无关命令成功不算纠正', async () => {
+  await reset();
+  fire('tool/call', { callId: 'c3x', name: 'ops_bash', arguments: { command: 'ls /missing-dir' } });
+  fire('tool/result', { message: { toolCallId: 'c3x', content: 'ls: cannot access\n[exit code: 2]' } });
+  fire('tool/call', { callId: 'c4x', name: 'ops_bash', arguments: { command: 'echo unrelated' } });
+  fire('tool/result', { message: { toolCallId: 'c4x', content: 'unrelated\n[exit code: 0]' } });
+  await sleep(250);
+  assert.equal((await listLessons()).length, 0);
 });
 
 await t.test('同一条命令重跑成功不算学到做法', async () => {

@@ -11,7 +11,7 @@
 // rules 层——但这里不做检索/嵌入，只做"小而常驻"，避免和 MEMORY.md 抢预算。
 import { readFileSync, statSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { atomicWrite, createQueue, memoryHome } from './memory/util.js';
+import { atomicWrite, createQueue, memoryHome, sliceSafe } from './memory/util.js';
 
 const DEFAULT_BUDGET = 2000;
 const FILE_CHAR_CAP = 6000;
@@ -52,7 +52,7 @@ function readCapped(path, cap = FILE_CHAR_CAP) {
     text = text.replace(/\r\n/g, '\n').trim();
     if (!text) return null;
     // cap=Infinity 表示「写回用的完整读取」：截断只用于注入与展示，绝不能拿截断文本回写。
-    if (Number.isFinite(cap) && text.length > cap) text = text.slice(0, cap) + '\n…（文件过长，已截断）';
+    if (Number.isFinite(cap) && text.length > cap) text = sliceSafe(text, cap) + '\n…（文件过长，已截断）';
     return text;
   } catch {
     return null;
@@ -132,7 +132,7 @@ export function collectRules(cwd, { budget = DEFAULT_BUDGET, globalText = null }
       const note = `\n…（已按 ${budget} 字预算截断）`;
       const avail = room - used - (lines.length ? 2 : 0) - header.length - 2 - note.length;
       if (avail > 80) {
-        const cut = chunk.body.slice(0, avail);
+        const cut = sliceSafe(chunk.body, avail);
         lines.push(`${header}\n\n${cut}\n…（已按 ${budget} 字预算截断）`);
         files.push({ label: chunk.label, path: chunk.path, chars: cut.length });
         truncated = true;

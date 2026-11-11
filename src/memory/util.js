@@ -12,8 +12,32 @@ import { copyFile, cp, mkdir, readdir, rename, rm, stat, writeFile } from 'node:
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-/** 敏感行黑名单：命中整行丢弃，不落盘、不注入。五层共用同一口径。 */
-export const SECRET_PATTERN = /(password|passwd|secret|token|api[-_ ]?key|bearer|authorization)/i;
+/**
+ * 凭据形状：只认 key:value / key=value（值 ≥6 字符），裸词不算。
+ * 历史版本把裸词（token/password）整行删掉，导致 "SyntaxError: Unexpected token '<'"
+ * 这类最常见的 JS 语法错误被当成敏感行丢弃、永远进不了记忆。
+ */
+export const SECRET_PATTERN = /(?:password|passwd|secret|token|api[-_ ]?key|access[-_ ]?key|bearer|authorization)\s*[:=]\s*\S{6,}/i;
+
+const SECRET_VALUE = /((?:password|passwd|secret|token|api[-_ ]?key|access[-_ ]?key|bearer|authorization)\s*[:=]\s*)([^\s'"]{6,})/gi;
+
+/** 按字符位置截断，不切断 emoji 等代理对（切一半会留下孤立 \ud83d）。 */
+export function sliceSafe(text, end) {
+  const s = String(text ?? '');
+  if (end <= 0) return '';
+  if (s.length <= end) return s;
+  let cut = end;
+  const code = s.charCodeAt(cut - 1);
+  if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
+  return s.slice(0, cut);
+}
+
+/** 截断并补省略号：展示用，保证总长不超过 max。 */
+export function bounded(text, max) {
+  const s = String(text ?? '');
+  if (s.length <= max) return s;
+  return sliceSafe(s, Math.max(0, max - 1)) + '…';
+}
 
 /** DSH home：与宿主保持一致，允许用环境变量覆盖（测试与多 profile 场景）。 */
 export function memoryHome() {
@@ -62,13 +86,9 @@ export function safeJson(raw, fallback = null) {
   }
 }
 
-/** 过滤敏感行并截断；用于错误文本、命令、笔记片段。 */
+/** 掩码凭据值并截断；用于错误文本、命令、笔记片段。不再整行丢弃。 */
 export function redactSecrets(text, limit = 600) {
-  return String(text ?? '')
-    .split('\n')
-    .filter((line) => !SECRET_PATTERN.test(line))
-    .join('\n')
-    .slice(0, limit);
+  return sliceSafe(String(text ?? '').replace(SECRET_VALUE, '$1[REDACTED]'), limit);
 }
 
 /** 统一的失败文案。 */

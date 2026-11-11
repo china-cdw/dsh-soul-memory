@@ -193,6 +193,7 @@ export function apply(ctx, input = {}) {
     return projectScope({ id: session.id, header: { cwd } })
   }
   registerCoreMemory(ctx, {
+    core: config.memory.enabled,
     coding: config.coding,
     lessons: config.lessons,
     bridge: config.bridge,
