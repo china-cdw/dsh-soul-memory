@@ -97,6 +97,19 @@ await t.test('失败后无关命令成功不算纠正', async () => {
   assert.equal((await listLessons()).length, 0);
 });
 
+await t.test('乱码输出折叠成标注，指纹按退出码归并', async () => {
+  await reset();
+  const garbled = `x${String.fromCharCode(0xfffd).repeat(4)}y`;
+  fire('tool/call', { callId: 'cg1', name: 'mcp__localexec__run', arguments: '{"command":"type nope.txt"}' });
+  fire('tool/result', { message: { toolCallId: 'cg1', content: `${garbled}\n[exit code: 1]` } });
+  fire('tool/call', { callId: 'cg2', name: 'mcp__localexec__run', arguments: '{"command":"type win.ini"}' });
+  fire('tool/result', { message: { toolCallId: 'cg2', content: 'ok' } });
+  const rows = await waitFor(() => listLessons().then((r) => (r.length ? r : false)), { label: '记录乱码失败' });
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].error, /输出编码无法识别/);
+  assert.equal(rows[0].fp, 'mcp__localexec__run:<garbled-output> exit 1');
+});
+
 await t.test('同一条命令重跑成功不算学到做法', async () => {
   await reset();
   fire('tool/call', { callId: 'c4a', name: 'ops_bash', arguments: { command: 'flaky --same' } });

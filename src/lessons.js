@@ -6,6 +6,9 @@ import { atomicWrite, createQueue, memoryHome, redactSecrets, sliceSafe } from '
 
 const DEFAULT_BUDGET = 600;
 const MAX_ROWS = 400;
+/** 宿主按 UTF-8 解码 cmd 的 GBK 输出时会留下 U+FFFD，原始字节在插件侧已不可得。 */
+const GARBLED_RE = /\uFFFD/;
+const GARBLED_LABEL = '<乱码>';
 
 export const dshHome = memoryHome;
 
@@ -17,6 +20,12 @@ const enqueue = createQueue();
 
 /** 错误指纹：去掉路径、时间、纯数字等噪声后取首行，便于跨会话归并同类错误。 */
 export function errorFingerprint(tool, text) {
+  const raw = String(text ?? '');
+  // 乱码输出无法按文本归并；按「工具 + 退出码」归并，至少同类失败能合并成一条。
+  if (GARBLED_RE.test(raw) || raw.includes('输出编码无法识别')) {
+    const code = exitCodeOf(raw);
+    return `${tool}:<garbled-output>${code !== null ? ` exit ${code}` : ''}`;
+  }
   const first = String(text ?? '')
     .replace(/\r\n/g, '\n')
     .split('\n')
@@ -157,7 +166,7 @@ export async function clearLessons() {
  * @param {object} ctx 插件上下文
  * @param {{enabled?: boolean, budget?: number}} [options]
  */
-const SHELL_TOOL = /^(ops_bash|bash|sh|shell|pwsh|powershell|cmd|exec)$/i;
+const SHELL_TOOL = /^(ops_bash|bash|sh|shell|pwsh|powershell|cmd|exec|mcp__localexec__run|mcp__windows-mcp__PowerShell)$/i;
 // exit 1 是这些命令的正常语义（有差异 / 无匹配），不算失败。
 const BENIGN_EXIT_ONE = /^(diff|grep|rg|ag|find|test|cmp|comm|git\s+diff|git\s+grep)\b/i;
 
@@ -193,6 +202,25 @@ function failureOf(message, meta, text, call = {}) {
   // 只看到标记、取不到数字：交给调用侧用文本兜底判断，避免直接漏记。
   if (/\bEXIT_CODE\b/i.test(text)) return { text, structured: false };
   return null;
+}
+
+/** 把 U+FFFD 乱码折叠成可读标注；宿主解码前的原始字节已不可得。 */
+function garbledLabel(text) {
+  const raw = String(text ?? '');
+  if (!GARBLED_RE.test(raw)) return raw;
+  const code = exitCodeOf(raw);
+  const bad = String.fromCharCode(0xfffd);
+  const nl = String.fromCharCode(10);
+  let cleaned = '';
+  for (const ch of raw) {
+    if (ch === bad) {
+      if (!cleaned.endsWith(GARBLED_LABEL)) cleaned += GARBLED_LABEL;
+    } else {
+      cleaned += ch;
+    }
+  }
+  cleaned = cleaned.split(nl).map((line) => line.trim()).filter(Boolean).join(' | ');
+  return `（命令输出编码无法识别${code !== null ? `，退出码 ${code}` : ''}）${cleaned || '无可用报错文本'}`;
 }
 
 /** 去掉 harness 包装行，让错误指纹稳定；退出码行保留（它是判定依据，也能稳定指纹）。 */
@@ -350,7 +378,7 @@ export function registerLessons(ctx, options = {}) {
       const failure = failureOf(data.message, data.meta, stringContent(data.message?.content), call);
       const now = Date.now();
       if (failure !== null) {
-        const text = redact(cleanErrorText(failure.text));
+        const text = redact(garbledLabel(cleanErrorText(failure.text)));
         if (!text) return;
         // 只有在拿不到结构化信号时，才用正文关键词兜底，避免普通输出被记成"坑"。
         if (!failure.structured && !looksLikeError(text)) return;
