@@ -221,8 +221,8 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
   const toNum = Number.isFinite(rawTo) ? Math.max(0, Math.floor(rawTo)) : fromNum
   const start = Math.max(0, Math.min(fromNum, toNum))
   const end = Math.max(0, Math.max(fromNum, toNum))
-  if (budget <= 0) return { from: start, to: Math.max(0, start - 1), bytes: 0, text: '', events: 0, truncated: false, processed: 0, note: 'limit 为 0 或负数：未处理任何事件（to 停在 start 前一位）' }
-  if (cap <= 0) return { from: start, to: Math.max(0, start - 1), bytes: 0, text: '', events: 0, truncated: false, processed: 0, note: 'maxEvents 为 0：未处理任何事件（to 停在 start 前一位）' }
+  if (budget <= 0) return { from: start, to: start - 1, bytes: 0, text: '', events: 0, truncated: false, processed: 0, note: 'limit 为 0 或负数：未处理任何事件（to 停在 start 前一位）' }
+  if (cap <= 0) return { from: start, to: start - 1, bytes: 0, text: '', events: 0, truncated: false, processed: 0, note: 'maxEvents 为 0：未处理任何事件（to 停在 start 前一位）' }
   if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0, truncated: false, note: '会话没有可读的原文接口' }
   const parts = []
   let events = 0
@@ -231,15 +231,18 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
   let hitCap = false
   let hitBytes = false
   let clipped = false
+  let resumeBase = 0
+  let pendingSkip = skipBytes
   for (let seq = start; seq <= end; seq++) {
     if (events >= cap) { hitCap = true; break }
     const event = session.eventAt(seq)
     if (!event) continue
     const text = textOfEvent(event).trim()
     if (!text) continue
-    // offset：从上次 resume.offset 处继续读首条事件，而不是把它整条重读一遍。
-    const body = (!parts.length && skipBytes > 0) ? skipBytesSafe(text, skipBytes) : text
-    if (!body) continue
+    // offset 只作用于调用方指定的那一条事件，用掉即清零；否则会连带切掉后续事件。
+    let body = text
+    if (pendingSkip > 0) { body = skipBytesSafe(text, pendingSkip); resumeBase = pendingSkip; pendingSkip = 0 }
+    if (!body) { last = seq; continue }
     const size = Buffer.byteLength(body) + (parts.length ? 1 : 0)
     // 预算按字节算：对外承诺的是“不超过 2KB”，不能再按字符截。
     if (bytes + size > budget) {
@@ -278,9 +281,9 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
   // 尾部没有可读事件不等于被截断：只有「条数上限 / 字节上限 / 首条被裁剪」才算。
   const truncated = hitCap || hitBytes || clipped
   // 首条事件被裁剪时，剩余内容必须能从断点续读；否则客户端按 to+1 续读会永久丢掉后半段。
-  const resume = clipped ? { seq: last, offset: Buffer.byteLength(parts[0] ?? '') } : null
+  const resume = clipped ? { seq: last, offset: resumeBase + Buffer.byteLength(parts[0] ?? '') } : null
   // 一条可读事件都没有时，to 直接落到 end：区间已扫完，避免客户端反复重试同一段。
-  const endSeq = last >= start ? last : (truncated ? start : end)
+  const endSeq = last >= start ? last : (events === 0 && !truncated ? end : start - 1)
   return {
     from: start,
     to: endSeq,

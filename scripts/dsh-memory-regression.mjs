@@ -172,5 +172,42 @@ await t.test('P2 resume.offset 可以续读首条被裁剪的事件', async () =
   assert.equal(next.text.length > 0, true);
 });
 
+
+await t.test('P1 resume.offset 累积前进，连续续读不再原地打转', async () => {
+  const { expandRange } = await import('../src/session-search.js');
+  const text = Array.from({ length: 5000 }, (_, i) => String.fromCharCode(97 + (i % 26))).join('');
+  const events = [{ seq: 1, data: { text } }];
+  const session = { eventAt: (seq) => events.find((e) => e.seq === seq) ?? null };
+  const first = expandRange(session, 1, 1, { limit: 100 });
+  assert.equal(first.resume.offset, 100);
+  const second = expandRange(session, 1, 1, { limit: 100, offset: first.resume.offset });
+  assert.equal(second.resume.offset, 200, JSON.stringify(second.resume));
+  assert.notEqual(second.text, first.text);
+  const third = expandRange(session, 1, 1, { limit: 100, offset: second.resume.offset });
+  assert.equal(third.resume.offset, 300, JSON.stringify(third.resume));
+});
+
+await t.test('P1 offset 越过首条事件时不会连带吞掉后续事件', async () => {
+  const { expandRange } = await import('../src/session-search.js');
+  const events = [
+    { seq: 1, data: { text: 'AAAA' } },
+    { seq: 2, data: { text: 'BBBBBBB' } },
+    { seq: 3, data: { text: 'CCCCCCC' } },
+  ];
+  const session = { eventAt: (seq) => events.find((e) => e.seq === seq) ?? null };
+  const out = expandRange(session, 1, 3, { limit: 2000, offset: 4 });
+  assert.equal(out.text.includes('BBBBBBB'), true, out.text);
+  assert.equal(out.text.includes('CCCCCCC'), true, out.text);
+});
+
+await t.test('P2 零预算返回 to = from - 1，不谎称区间读完', async () => {
+  const { expandRange } = await import('../src/session-search.js');
+  const events = [{ seq: 1, data: { text: 'hello' } }];
+  const session = { eventAt: (seq) => events.find((e) => e.seq === seq) ?? null };
+  const out = expandRange(session, 1, 3, { limit: 0 });
+  assert.equal(out.to, 0, JSON.stringify(out));
+  assert.equal(out.events, 0);
+});
+
 const result = t.finish();
 process.exit(result.fail ? 1 : 0);

@@ -275,7 +275,7 @@ export async function snapshotGraph(db, { keep = 7 } = {}) {
   await mkdir(dir, { recursive: true });
   // 与文件快照共用同一把锁：两者写同一天的目录，不锁会出现两个当天目录、各占一份 keep。
   try {
-    return await withFileLock(join(dir, '.snapshot.lock'), () => snapshotGraphLocked(db, keep, dir));
+    return await withFileLock(join(dir, '.snapshot.lock'), () => snapshotGraphLocked(db, keep, dir), { staleMs: 10 * 60 * 1000 });
   } catch (e) {
     return { skipped: true, error: e && e.message ? e.message : String(e) };
   }

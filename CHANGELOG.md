@@ -1,5 +1,14 @@
 # 变更日志
 
+## 0.3.19
+
+- 续读游标真正前进：`resume.offset` 累加 `skipBytes`，offset 只用一次，越界不再吞掉后续事件。
+- `limit`/连续续读的硬上限：单次最多 20000 字节、1000 事件；参数错误一律 `[err:E_ARG]` 文本。
+- 零预算返回 `to = from - 1`，不再把「没处理」谎报成「区间读完」。
+- `snapshotGraph` 与文件快照共用锁文件，stale 放宽到 10 分钟，避免 VACUUM 阻塞心跳被抢锁。
+- persona preset 统一 trim：工具与 HTTP 路由对 `' warm '` 行为一致。
+- README 的 `soul_expand` 补 `limit`/`maxEvents`/`offset` 与 resume 协议。
+
 ## 0.3.18
 
 - 修复 `soul_expand` 的 `limit` 没有上限：硬钳制 20KB / 1000 事件，避免一次拉回整个大事件。

@@ -524,26 +524,26 @@ export function apply(ctx, input = {}) {
         parameters: { type: 'object', properties: definition.properties, required: definition.required, additionalProperties: false },
         async execute(args, exec) {
           exec?.signal?.throwIfAborted()
-          if (!exec?.agent?.session) throw new Error('需要当前 DSH 会话')
-          for (const key of Object.keys(args ?? {})) if (!(key in definition.properties)) throw new Error('不支持的参数\n[err:E_ARG]')
+          if (!exec?.agent?.session) return '需要当前 DSH 会话\n[err:E_ARG]'
+          for (const key of Object.keys(args ?? {})) if (!(key in definition.properties)) return '不支持的参数\n[err:E_ARG]'
           for (const key of definition.required) {
             const v = args?.[key]
-            if (typeof v !== 'string' && !Number.isFinite(v)) throw new Error(`缺少参数 ${key}\n[err:E_ARG]`)
+            if (typeof v !== 'string' && !Number.isFinite(v)) return `缺少参数 ${key}\n[err:E_ARG]`
           }
           if (definition.name === 'soul_recall' && args.k !== undefined) {
             const k = Number(args.k)
-            if (!Number.isInteger(k) || k < 1 || k > 5) throw new Error('参数 k 必须是 1-5 的整数\n[err:E_ARG]')
+            if (!Number.isInteger(k) || k < 1 || k > 5) return '参数 k 必须是 1-5 的整数\n[err:E_ARG]'
           }
           if (definition.name === 'soul_expand') {
-            if (args.from === '' || args.to === '') throw new Error('参数 from/to 不能为空\n[err:E_ARG]')
+            if (args.from === '' || args.to === '') return '参数 from/to 不能为空\n[err:E_ARG]'
             const from = Number(args.from)
             const to = Number(args.to)
             if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > 1000000) {
-              throw new Error('参数 from/to 必须是 0-1000000 内、from ≤ to 的整数\n[err:E_ARG]')
+              return '参数 from/to 必须是 0-1000000 内、from ≤ to 的整数\n[err:E_ARG]'
             }
             if (args.offset !== undefined) {
               const offset = Number(args.offset)
-              if (!Number.isInteger(offset) || offset < 0) throw new Error('参数 offset 必须是非负整数\n[err:E_ARG]')
+              if (!Number.isInteger(offset) || offset < 0) return '参数 offset 必须是非负整数\n[err:E_ARG]'
             }
           }
           const { session, scope } = describe(exec.agent)

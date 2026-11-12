@@ -292,7 +292,7 @@ export function normalizePersonaInput(patch, current) {
   const base = current || readPersona();
   const next = {
     enabled: typeof patch.enabled === 'boolean' ? patch.enabled : base.enabled,
-    preset: typeof patch.preset === 'string' && patch.preset ? patch.preset : base.preset,
+    preset: typeof patch.preset === 'string' && patch.preset.trim() ? patch.preset.trim() : base.preset,
     custom: typeof patch.custom === 'string' ? patch.custom : base.custom,
   };
   if (!PRESET_BY_ID.has(next.preset)) {
