@@ -240,13 +240,14 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
   // 越界检查放到参数/接口检查之后（见下方），否则 limit=0 或没有 eventAt 会被误报成越界。
   const outOfRange = fromNum > MAX_SEQ || toNum > MAX_SEQ
   const bothOutOfRange = fromNum > MAX_SEQ && toNum > MAX_SEQ
+  if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0, truncated: false, note: '会话没有可读的原文接口' }
+  // 两端都越界是最强的结论：此时提高 limit/maxEvents 不会有任何帮助，必须先于零预算分支回答，
+  // 否则会给出「提高 limit」这种误导性建议。越界不是「还有内容没读完」，不置 truncated。
+  if (bothOutOfRange) {
+    return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: false, note: '请求区间超出会话 seq 上界（' + MAX_SEQ + '），未读取任何事件。' }
+  }
   if (budget <= 0) return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'limit 为 0 或负数：未处理任何事件（to=start-1，start=0 时 to=-1 表示一条都没读；续读请用 from=from 重发并提高 limit）' }
   if (cap <= 0) return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'maxEvents 为 0：未处理任何事件（to=start-1，start=0 时 to=-1 表示一条都没读；续读请用 from=from 重发并提高 maxEvents）' }
-  if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0, truncated: false, note: '会话没有可读的原文接口' }
-  // 越界检查必须在 limit/maxEvents/eventAt 之后：那些是更根本的参数/接口错误，不能被越界抢先解释。
-  if (bothOutOfRange) {
-    return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: true, note: '请求区间超出会话 seq 上界（' + MAX_SEQ + '），未读取任何事件。' }
-  }
   const parts = []
   let events = 0
   let last = start - 1
@@ -309,7 +310,7 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
   }
   // 尾部没有可读事件不等于被截断：只有「条数上限 / 字节上限 / 首条被裁剪」才算；
   // 请求越界是「这段不在会话里」，不是「还有内容没读完」，不污染 truncated。
-  const truncated = outOfRange || hitCap || hitBytes || clipped
+  const truncated = hitCap || hitBytes || clipped
   // 首条事件被裁剪时，剩余内容必须能从断点续读；否则客户端按 to+1 续读会永久丢掉后半段。
   // offset 只对被裁剪的那条事件有意义：被 skip 掉又整条落空的事件不贡献字节。
   const resume = clipped ? { seq: last, offset: clipSkip + Buffer.byteLength(parts[0] ?? '') } : null

@@ -15,7 +15,7 @@ import {
 import { _resetGuardCache, checkGuard, guardRulesPath } from '../src/memory/guard.js';
 import * as guard from '../src/memory/guard.js';
 import { exitCodeOf } from '../src/lessons.js';
-import { expandRange } from '../src/session-search.js';
+import { expandRange, MAX_SEQ } from '../src/session-search.js';
 
 const home = await makeHome('dsh-mem-regress-');
 const t = suite('修复项回归');
@@ -289,18 +289,29 @@ await t.test('P0 死锁回收串行：多个写者同时回收不会一起进临
 });
 
 
-await t.test('P2 请求区间两端越界：返回空区间并标 truncated', async () => {
+await t.test('P2 请求区间两端越界：返回空区间、不谎报 truncated', async () => {
   const out = expandRange({ eventAt: () => null }, 2000000, 3000000, { limit: 200 })
   assert.equal(out.events, 0)
   assert.equal(out.text, '')
-  assert.equal(out.truncated, true)
+  // 越界不是「还有内容没读完」：标 truncated 会诱导客户端按 to+1 续读，而 to+1 越过 MAX_SEQ 会被校验拒绝。
+  assert.equal(out.truncated, false)
+  assert.equal(out.to, MAX_SEQ - 1)
   assert.match(out.note, /上界/)
 })
 
-await t.test('P2 单端越界：按上界读取并在 note 说明', async () => {
+await t.test('P2 单端越界：按上界读到区间末尾、不谎报 truncated', async () => {
   const out = expandRange({ eventAt: () => null }, 999998, 2000000, { limit: 200 })
-  assert.equal(out.truncated, true)
+  assert.equal(out.events, 0)
+  assert.equal(out.to, MAX_SEQ)
+  assert.equal(out.truncated, false)
   assert.match(out.note, /上界/)
+  assert.doesNotMatch(out.note, /提高 limit/)
+})
+
+await t.test('P2 零预算 + 越界：先说越界，不误导提高 limit', async () => {
+  const out = expandRange({ eventAt: () => null }, 2000000, 3000000, { limit: 0 })
+  assert.match(out.note, /上界/)
+  assert.doesNotMatch(out.note, /提高 limit/)
 })
 
 const result = t.finish();

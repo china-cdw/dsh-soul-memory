@@ -263,8 +263,12 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
   // 先探测源里到底还有哪些文件：源全空（记忆被清空、DSH_HOME 变化）时不能动当天残目录，
   // 否则清完旧文件就 early return，dest 里只剩 .started 和 evolve.sqlite。
   const sourceNames = [];
+  // 只有 ENOENT 才能断言「源里没有」；EPERM/EBUSY/ELOOP/EIO 说明状态未知，既不能
+  // 当「源里没有」删掉 dest 里的旧副本，也不能当「源里还有」跳过失败记录。
+  const definitelyMissing = new Set();
   for (const name of SNAPSHOT_FILES) {
-    try { const st = await stat(memoryPath(name)); if (st.isFile()) sourceNames.push(name); } catch { /* 源里没有 */ }
+    try { const st = await stat(memoryPath(name)); if (st.isFile()) sourceNames.push(name); else definitelyMissing.add(name); }
+    catch (e) { if (e && e.code === 'ENOENT') definitelyMissing.add(name); }
   }
   let hasNotes = false;
   try { hasNotes = (await stat(memoryPath('notes'))).isDirectory(); } catch { hasNotes = false; }
@@ -291,15 +295,30 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
   // copyFile 只覆盖不删除，旧 PERSONA.md/GUARD.json 会被 .complete 盖章保留。
   // 源里仍存在的文件不先删：copyFile 会整份替换，反倒避免把「被占用但可覆盖」的文件误判成失败。
   if (!createdNew) {
-    for (const name of SNAPSHOT_FILES) {
-      if (sourceNames.includes(name)) continue;
+    // 只清「确认不存在」的；状态未知的文件保持不动，交给下面的逐文件拷贝/失败记录。
+    for (const name of definitelyMissing) {
       await rmWithRetry(join(dest, name), { force: true }, failed, name + ':rm');
     }
   }
   for (const name of SNAPSHOT_FILES) {
     // 源里没有这个文件是常态（例如没设过 PERSONA.md）：跳过即可，不能算备份失败。
     let st;
-    try { st = await stat(memoryPath(name)); } catch { continue; }
+    try { st = await stat(memoryPath(name)); }
+    catch (e) {
+      if (e && e.code === 'ENOENT') {
+        // 探测时还在、现在没了：dest 里可能留着上一轮副本，删掉并标记不完整，
+        // 否则 .complete 会给旧内容盖章，恢复时复活已删记忆。
+        if (sourceNames.includes(name)) {
+          const before = failed.length;
+          await rmWithRetry(join(dest, name), { force: true }, failed, name + ':stale');
+          if (failed.length === before) failed.push(name + ':stale');
+        }
+      } else {
+        // 读不到属性 ≠ 源里没有（占用/权限/ELOOP）：不能继续按「完整」写 .complete。
+        failed.push(name);
+      }
+      continue;
+    }
     if (!st.isFile()) continue;
     try {
       // Windows 上别的进程可能正持有 index.json / WAL：EBUSY 重试几次，别把当天备份判成不完整。

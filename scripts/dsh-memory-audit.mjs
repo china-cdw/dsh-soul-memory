@@ -3,7 +3,7 @@
 // 运行：node scripts/dsh-memory-audit.mjs
 // 环境：临时 DSH_HOME（不会碰真实记忆）。
 import { mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { assert, callTool, makeCtx, makeHome, suite, waitFor } from './_testkit.mjs';
@@ -665,6 +665,9 @@ await t.test('soul_expand 的 from 上界：校验函数拒绝 + expandRange 兜
   const err = validateExpandArgs(String(MAX_SEQ + 1), '1');
   assert.match(String(err), new RegExp('0-' + MAX_SEQ), '工具层必须拒绝 from 超过上界');
   assert.equal(validateExpandArgs('1', '2'), null);
+  // 接线也要有测试：index.js 若不调用 validateExpandArgs，工具层会静默夹紧而不是报错。
+  const indexSource = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+  assert.match(indexSource, /validateExpandArgs\(args\.from, args\.to\)/);
   const started = Date.now();
   // from 巨大、to 很小时，旧实现会把 end 抬到 from，同步空转十亿次。
   const out = expandRange({ eventAt: () => null }, 1000000000, 1, { limit: 200 });
