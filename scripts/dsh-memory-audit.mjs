@@ -663,7 +663,7 @@ await t.test('persona 显式空白 preset 报 E_ARG 而不是静默成功', asyn
 await t.test('soul_expand 的 from 上界：工具校验 + expandRange 兜底夹紧', async () => {
   // 审计的 ctx 只注册核心记忆工具，soul_expand 由插件层注册；这里直接守住两道闸。
   const indexSource = await readFile(new URL('../index.js', import.meta.url), 'utf8');
-  assert.match(indexSource, /from > 1000000/, '工具层必须拒绝 from 超过上界');
+  assert.match(indexSource, /from > MAX_SEQ/, '工具层必须拒绝 from 超过上界');
   const started = Date.now();
   // from 巨大、to 很小时，旧实现会把 end 抬到 from，同步空转十亿次。
   const out = expandRange({ eventAt: () => null }, 1000000000, 1, { limit: 200 });
@@ -702,6 +702,29 @@ await t.test('同日补写快照会清掉已删笔记，不把旧文件写回', 
     await other.cleanup();
   }
 });
+
+
+await t.test('P1 源记忆全空时不清空当天残目录', async () => {
+  const prevHome = process.env.DSH_HOME
+  const h = await makeHome('dsh-mem-empty-')
+  try {
+    const memDir = join(h.dir, 'memory')
+    await mkdir(memDir, { recursive: true })
+    const day = new Date().toISOString().slice(0, 10)
+    const residual = join(memDir, '.snapshots', day + 'T00-00-05')
+    await mkdir(residual, { recursive: true })
+    await writeFile(join(residual, '.started'), 'x')
+    await writeFile(join(residual, 'evolve.sqlite'), 'graph')
+    const out = await snapshotMemory({ keep: 7 })
+    assert.equal(out.copied, 0)
+    assert.match(out.error, /没有可快照/)
+    // 残目录与图谱快照必须原样保留：源全空不是「备份坏了」，不能把当天已写的图谱删掉。
+    assert.equal(await stat(join(residual, 'evolve.sqlite')).then(() => true), true)
+  } finally {
+    process.env.DSH_HOME = prevHome
+    await h.cleanup()
+  }
+})
 
 const result = t.finish();
 await home.cleanup();

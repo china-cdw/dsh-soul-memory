@@ -15,6 +15,7 @@ import {
 import { _resetGuardCache, checkGuard, guardRulesPath } from '../src/memory/guard.js';
 import * as guard from '../src/memory/guard.js';
 import { exitCodeOf } from '../src/lessons.js';
+import { expandRange } from '../src/session-search.js';
 
 const home = await makeHome('dsh-mem-regress-');
 const t = suite('修复项回归');
@@ -286,6 +287,21 @@ await t.test('P0 死锁回收串行：多个写者同时回收不会一起进临
   await Promise.all([job(), job(), job()]);
   assert.equal(max, 1, 'critical section overlap: ' + max);
 });
+
+
+await t.test('P2 请求区间两端越界：返回空区间并标 truncated', async () => {
+  const out = expandRange({ eventAt: () => null }, 2000000, 3000000, { limit: 200 })
+  assert.equal(out.events, 0)
+  assert.equal(out.text, '')
+  assert.equal(out.truncated, true)
+  assert.match(out.note, /上界/)
+})
+
+await t.test('P2 单端越界：按上界读取并在 note 说明', async () => {
+  const out = expandRange({ eventAt: () => null }, 999998, 2000000, { limit: 200 })
+  assert.equal(out.truncated, true)
+  assert.match(out.note, /上界/)
+})
 
 const result = t.finish();
 process.exit(result.fail ? 1 : 0);

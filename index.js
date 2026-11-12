@@ -13,7 +13,7 @@ import { createHostRunner } from './src/host-runner.js'
 import { projectScope, bounded, boolean, integer, human, textBlocks, fail, sameTask, redact, terms as termSet } from './src/util.js'
 import { MemoryBuffer, capture, projectionText, recall, neighbourhood, consolidate, recordLookup, recordHandoff, recordCorrection, mergeDuplicates, view, fileFingerprint, promoteTurn } from './src/memory.js'
 import { memoryView, explain, retire, restore, periphery } from './src/graph-memory.js'
-import { searchSession, expandRange } from './src/session-search.js'
+import { searchSession, expandRange, MAX_SEQ } from './src/session-search.js'
 import { ingest, searchIndex } from './src/span-index.js'
 import { sizeReport, COMPONENTS } from './src/tree.js'
 import { createComponents, cwdForAgent } from './src/components.js'
@@ -162,7 +162,7 @@ const tools = [
   {
     name: 'soul_expand',
     description: '按目录卡上的 seq 范围取回原文（默认 ≤2KB，上限 20KB）。卡片里的 [a-b] 可以直接当参数用。首次超预算被裁剪时，用返回的 resume.seq 加 offset=resume.offset 续读。不调用模型。',
-    properties: { from: int('起始 seq', { minimum: 0, maximum: 1000000 }), to: int('结束 seq', { minimum: 0, maximum: 1000000 }), limit: int('可选：最多返回字节数，默认 2000，上限 20000', { minimum: 0, maximum: 20000 }), maxEvents: int('可选：最多返回事件条数，默认 200，上限 1000', { minimum: 0, maximum: 1000 }), offset: int('可选：从该事件第 N 字节继续（上次返回的 resume.offset）', { minimum: 0 }) }, required: ['from', 'to'],
+    properties: { from: int('起始 seq', { minimum: 0, maximum: MAX_SEQ }), to: int('结束 seq', { minimum: 0, maximum: MAX_SEQ }), limit: int('可选：最多返回字节数，默认 2000，上限 20000', { minimum: 0, maximum: 20000 }), maxEvents: int('可选：最多返回事件条数，默认 200，上限 1000', { minimum: 0, maximum: 1000 }), offset: int('可选：从该事件第 N 字节继续（上次返回的 resume.offset）', { minimum: 0 }) }, required: ['from', 'to'],
   },
   {
     name: 'soul_recall',
@@ -538,8 +538,8 @@ export function apply(ctx, input = {}) {
             if (args.from === '' || args.to === '') return { text: '参数 from/to 不能为空\n[err:E_ARG]' }
             const from = Number(args.from)
             const to = Number(args.to)
-            if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from > 1000000 || to > 1000000) {
-              return { text: '参数 from/to 必须是 0-1000000 内的整数（from > to 时按区间自动归一）\n[err:E_ARG]' }
+            if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from > MAX_SEQ || to > MAX_SEQ) {
+              return { text: '参数 from/to 必须是 0-' + MAX_SEQ + ' 内的整数（from > to 时按区间自动归一）\n[err:E_ARG]' }
             }
             if (args.offset !== undefined) {
               const offset = Number(args.offset)

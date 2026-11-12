@@ -195,7 +195,7 @@ export function searchSession(session, query, options) {
 const MAX_EXPAND_BYTES = 20000
 const MAX_EXPAND_EVENTS = 1000
 // 会话 seq 的硬上界：即使调用方绕过参数校验，也不能让同步循环无限抬高。
-const MAX_SEQ = 1000000
+export const MAX_SEQ = 1000000
 
 /** 从第 n 个字节起取剩余文本；不切断多字节字符。 */
 function skipBytesSafe(text, n) {
@@ -225,6 +225,12 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
   const toNum = Number.isFinite(rawTo) ? Math.max(0, Math.floor(rawTo)) : fromNum
   const start = Math.max(0, Math.min(fromNum, toNum, MAX_SEQ))
   const end = Math.min(Math.max(0, Math.max(fromNum, toNum)), MAX_SEQ)
+  // 请求区间越界时不能悄悄换成另一段：两端都越界返回空区间，单端越界在 truncated/note 里明说。
+  const bothOutOfRange = fromNum > MAX_SEQ && toNum > MAX_SEQ
+  const outOfRange = fromNum > MAX_SEQ || toNum > MAX_SEQ
+  if (bothOutOfRange) {
+    return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: true, note: '请求区间超出会话 seq 上界（' + MAX_SEQ + '），未读取任何事件。' }
+  }
   if (budget <= 0) return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'limit 为 0 或负数：未处理任何事件（to=start-1，start=0 时 to=-1 表示一条都没读；续读请用 from=from 重发并提高 limit）' }
   if (cap <= 0) return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'maxEvents 为 0：未处理任何事件（to=start-1，start=0 时 to=-1 表示一条都没读；续读请用 from=from 重发并提高 maxEvents）' }
   if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0, truncated: false, note: '会话没有可读的原文接口' }
@@ -289,7 +295,7 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
     if (!more) hitCap = false
   }
   // 尾部没有可读事件不等于被截断：只有「条数上限 / 字节上限 / 首条被裁剪」才算。
-  const truncated = hitCap || hitBytes || clipped
+  const truncated = hitCap || hitBytes || clipped || outOfRange
   // 首条事件被裁剪时，剩余内容必须能从断点续读；否则客户端按 to+1 续读会永久丢掉后半段。
   // offset 只对被裁剪的那条事件有意义：被 skip 掉又整条落空的事件不贡献字节。
   const resume = clipped ? { seq: last, offset: clipSkip + Buffer.byteLength(parts[0] ?? '') } : null
@@ -303,6 +309,6 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
     events,
     truncated,
     ...(resume ? { resume } : {}),
-    ...(truncated ? { note: '已截断：仅返回 ' + events + ' 条事件 / ' + Buffer.byteLength(text) + ' 字节' + (events === 0 ? '（预算不足一个字符，请提高 limit（≥4）后重试）' : '') + (clipped ? '（首条事件超出预算，已裁剪；续读用 from=resume.seq 并传 offset=resume.offset）' : '') + '。' } : {}),
+    ...(truncated ? { note: (outOfRange ? '请求区间超出 seq 上界，已按上界 ' + MAX_SEQ + ' 读取；' : '') + '已截断：仅返回 ' + events + ' 条事件 / ' + Buffer.byteLength(text) + ' 字节' + (events === 0 ? '（预算不足一个字符，请提高 limit（≥4）后重试）' : '') + (clipped ? '（首条事件超出预算，已裁剪；续读用 from=resume.seq 并传 offset=resume.offset）' : '') + '。' } : {}),
   }
 }

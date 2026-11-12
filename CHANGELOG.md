@@ -1,4 +1,13 @@
-变更日志
+# 变更日志
+## 0.3.25
+
+- 同日快照补写不再误判「整天不完整」：源里仍存在的顶层文件不再先删（copyFile 会整份替换），只删源里已消失的；删除失败按 EBUSY/EPERM 重试 3 次，其余记入 failed。
+- 源记忆全空时不再清空当天残目录：保留 .started 与图谱快照，返回 { copied: 0, error }；自己刚建的空壳仍会删除。
+- expandRange 请求区间越界不再静默换成别的事件：两端越界返回空区间并标 truncated，单端越界在 note 里说明按上界读取；越界也计入 truncated。
+- MAX_SEQ 收敛为单一来源：session-search.js 导出，index.js 的 schema 与校验共用。
+- README 计数改为 58/9/15/11/14/25，共 133 项断言；CHANGELOG 恢复 H1。
+- 新增回归：源全空保留残目录、两端越界空区间、单端越界 note（共 133 项断言）。
+
 
 ## 0.3.24 — 同日快照的陈旧文件与删除失败
 - 复用当天快照目录时，除了 notes 还会先清掉 `PERSONA.md`/`GUARD.json` 等顶层文件：`copyFile` 只覆盖不删除，旧备份会被 `.complete` 盖章，恢复时旧风格/旧规则盖回当前值。

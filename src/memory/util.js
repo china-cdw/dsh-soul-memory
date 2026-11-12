@@ -211,6 +211,20 @@ async function isSqliteFile(path) {
  * 一份都没拷到（记忆目录还是空的 / 权限问题）时删掉空目录并返回 error，
  * 否则快照列表里会出现一堆空目录，体检和轮转都会被它们污染。
  */
+// 删除带重试：Windows 上别的进程可能正占用文件（EBUSY/EPERM），一次失败不等于备份不完整。
+async function rmWithRetry(target, options, failed, label) {
+  let lastErr = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { await rm(target, options); return }
+    catch (e) {
+      lastErr = e
+      if (!e || (e.code !== 'EBUSY' && e.code !== 'EPERM')) break
+      await new Promise((r) => setTimeout(r, 120))
+    }
+  }
+  if (lastErr && lastErr.code !== 'ENOENT') failed.push(label + ':' + (lastErr.code || 'ERR'))
+}
+
 export async function snapshotMemory(options = {}) {
   const dir = memoryPath('.snapshots');
   await mkdir(dir, { recursive: true });
@@ -246,12 +260,24 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
   }
   let copied = 0;
   const failed = [];
+  // 先探测源里到底还有哪些文件：源全空（记忆被清空、DSH_HOME 变化）时不能动当天残目录，
+  // 否则清完旧文件就 early return，dest 里只剩 .started 和 evolve.sqlite。
+  const sourceNames = [];
+  for (const name of SNAPSHOT_FILES) {
+    try { const st = await stat(memoryPath(name)); if (st.isFile()) sourceNames.push(name); } catch { /* 源里没有 */ }
+  }
+  let hasNotes = false;
+  try { hasNotes = (await stat(memoryPath('notes'))).isDirectory(); } catch { hasNotes = false; }
+  if (!sourceNames.length && !hasNotes) {
+    // 复用已有目录时保留残目录（里面有图谱快照，可能是上次没补完的）；只清自己刚建的空壳。
+    if (createdNew) await rm(dest, { recursive: true, force: true }).catch(() => {});
+    return { skipped: false, dir: dest, copied: 0, incomplete: [], error: '没有可快照的记忆文件（记忆目录为空或不可读）' };
+  }
   // 复用当天目录时必须先清掉旧 notes：cp 是合并复制，源里已删的笔记会留在备份里，
-  // 恢复后 reconcileIndex 会让删掉的记忆复活。
+  // 恢复后 reconcileIndex 会让删掉的记忆复活。删除失败（Windows 上文件被占用）要进 failed，
+  // 否则会盖 .complete 留下「看起来完整、其实含已删笔记」的备份。
   if (!createdNew) {
-    await rm(join(dest, 'notes'), { recursive: true, force: true }).catch((e) => {
-      if (!e || e.code !== 'ENOENT') failed.push('notes:rm:' + ((e && e.code) || 'ERR'));
-    });
+    await rmWithRetry(join(dest, 'notes'), { recursive: true, force: true }, failed, 'notes:rm');
   }
   // 先拷 notes 再拷 index.json：反过来的话，恢复时索引可能指向尚未拷到的（或已删除的）笔记。
   try {
@@ -263,11 +289,11 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
   }
   // 复用当天目录时，源里已删的顶层文件同样不能被旧备份"复活"：
   // copyFile 只覆盖不删除，旧 PERSONA.md/GUARD.json 会被 .complete 盖章保留。
+  // 源里仍存在的文件不先删：copyFile 会整份替换，反倒避免把「被占用但可覆盖」的文件误判成失败。
   if (!createdNew) {
     for (const name of SNAPSHOT_FILES) {
-      await rm(join(dest, name), { force: true }).catch((e) => {
-        if (!e || e.code !== 'ENOENT') failed.push(name + ':rm:' + ((e && e.code) || 'ERR'));
-      });
+      if (sourceNames.includes(name)) continue;
+      await rmWithRetry(join(dest, name), { force: true }, failed, name + ':rm');
     }
   }
   for (const name of SNAPSHOT_FILES) {
@@ -295,7 +321,7 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
     // 只删自己刚建的目录：复用当天已有目录时，里面可能有 snapshotGraph 写进的 evolve.sqlite，
     // 连带 rm 会把刚做好的图谱快照一起删掉。
     if (createdNew) await rm(dest, { recursive: true, force: true }).catch(() => {});
-    return { skipped: false, dir: dest, copied: 0, error: '没有可快照的记忆文件（记忆目录为空或不可读）' };
+    return { skipped: false, dir: dest, copied: 0, incomplete: failed, error: '没有可快照的记忆文件（记忆目录为空或不可读）' };
   }
   // 完成标记：只有它存在才表示这一天的文件记忆真的备完了；有文件没拷成就先不写，
   // 下次启动会重试，轮转也不会把残缺备份当成好备份。
