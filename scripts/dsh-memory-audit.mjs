@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { assert, callTool, makeCtx, makeHome, suite, waitFor } from './_testkit.mjs';
-import { registerCoreMemory, setDreamGenerator, setDreamNodeProvider, setDreamRestoreProvider, setDreamRetireProvider, setSessionSeqProvider } from '../src/core-memory.js';
+import { registerCoreMemory, setDreamGenerator, setDreamNodeProvider, setDreamRestoreProvider, setDreamRetiredListProvider, setDreamRetireProvider, setSessionSeqProvider } from '../src/core-memory.js';
 import { latestSnapshot, snapshotGraph, snapshotMemory } from '../src/memory/util.js';
 import { readPersona } from '../src/persona.js';
 import { normalize, extract } from '../src/skeleton.js';
@@ -968,6 +968,17 @@ await t.test('P0 retired/restore：最近裁决可枚举，restore 能把节点�
   setDreamNodeProvider(() => []);
   await callTool(tools1, 'memory_dreaming', { action: 'off' });
 });
+
+
+  await t.test('P0 retired 列出以库里真实状态为准', async () => {
+    setDreamRetiredListProvider(() => [])
+    const empty = await callTool(tools1, 'memory_dreaming', { action: 'retired' })
+    assert.ok(String(empty).includes('当前没有 retired 节点'), 'empty: ' + empty)
+    setDreamRetiredListProvider(() => [{ id: 'deadbeef01', kind: 'decision', text: 'x', retiredAt: 1 }])
+    const listed = await callTool(tools1, 'memory_dreaming', { action: 'retired' })
+    assert.ok(String(listed).includes('deadbeef01'), 'listed: ' + listed)
+    setDreamRetiredListProvider(null)
+  })
 
 const result = t.finish();
 await home.cleanup();

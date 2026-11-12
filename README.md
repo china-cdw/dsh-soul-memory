@@ -106,7 +106,7 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 - AI 清理（默认开）：模型只做裁决，必须返回严格 JSON；判 `noise`/`duplicate` 的节点 retire，`keep` 与编造 id 一律不动；某一批失败不影响其他批；全部失败或无 llm 时降级为「不清理」，digest 照写、冷却照常推进（`cleanup.available=false` 并在 `reason` 里说明 `llm_failed`/`no_llm`）；
 - 分批与容错：候选每 12 条一批调用；输出被 token 上限截断时，从残缺 JSON 里捞出完整裁决；某批失败不影响其他批的结果；
 - 路由兜底：`dreaming.provider/model` → 插件顶层 provider/model → 当前 agent → 宿主 `cordis.patch.yml` 的 `agent-default-model`，都没有才报错并给出配置指引；
-- AI 路由：`dreaming.provider` / `dreaming.model`，留空用全局默认模型；扫描上限 `dreaming.maxScanNodes`（默认 60，范围 10–300），单次最多 retire `dreaming.maxRetirePerRun`（默认 20，范围 1–100）；`action=retired` 列出最近 retire 的节点，`action=restore` 配 `ids` 恢复。
+- AI 路由：`dreaming.provider` / `dreaming.model`，留空用全局默认模型；扫描上限 `dreaming.maxScanNodes`（默认 60，范围 10–300），单次最多 retire `dreaming.maxRetirePerRun`（默认 20，范围 1–100）；`action=retired` 列出库里当前仍为 retired 的节点（restore 后即消失），`action=restore` 配 `ids` 恢复。
 
 ---
 
@@ -308,7 +308,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 75 项、编码层 10 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项，共 151 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 76 项、编码层 10 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项，共 152 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

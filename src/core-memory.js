@@ -63,6 +63,10 @@ let dreamRestore = null;
 export function setDreamRestoreProvider(fn) {
   dreamRestore = typeof fn === 'function' ? fn : null;
 }
+let dreamListRetired = null;
+export function setDreamRetiredListProvider(fn) {
+  dreamListRetired = typeof fn === 'function' ? fn : null;
+}
 
 const corePath = () => memoryPath('MEMORY.md');
 const notesDir = () => memoryPath('notes');
@@ -1159,6 +1163,12 @@ async function dreamingTool(args = {}, exec = null) {
       return JSON.stringify(out, null, 2)
     }
     if (action === 'retired') {
+      // 以库里真实的 state=retired 为准（restore 之后不能再列出），历史记录只作兜底。
+      if (dreamListRetired) {
+        const rows = await dreamListRetired(exec?.agent ?? null)
+        if (!Array.isArray(rows) || !rows.length) return '当前没有 retired 节点。'
+        return JSON.stringify({ retired: rows }, null, 2)
+      }
       const state = await readDreamingState()
       const details = state.lastResult?.cleanup?.details ?? []
       if (!details.length) return '最近一次整理没有 retire 任何节点。'
@@ -1177,12 +1187,13 @@ async function dreamingTool(args = {}, exec = null) {
   }
 }
 
-export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, coding = null, lessons = null, bridge = null, dreaming = null, generate = null, retireNodes = null, restoreNodes = null, core = true } = {}) {
+export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, coding = null, lessons = null, bridge = null, dreaming = null, generate = null, retireNodes = null, restoreNodes = null, listRetiredNodes = null, core = true } = {}) {
   const bridgeCfg = bridge && typeof bridge === 'object' ? bridge : null
   dreamingCfg = { ...DREAMING_DEFAULTS, ...(dreaming && typeof dreaming === 'object' ? dreaming : {}) };
   setDreamGenerator(generate);
   setDreamRetireProvider(retireNodes);
   setDreamRestoreProvider(restoreNodes);
+  setDreamRetiredListProvider(listRetiredNodes);
   // 核心记忆层可单独关闭（memory.enabled=false）：工具、注入节、风格路由、bootstrap 一起停，
   // 编码规范与踩坑记录层各有独立开关，不受影响。
   if (core) enqueue(async () => {

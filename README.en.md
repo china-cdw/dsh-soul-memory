@@ -106,7 +106,7 @@ Off by default. When enabled, a few seconds after a turn ends the plugin cluster
 - AI cleanup (on by default): the model only votes, and must return strict JSON; `noise`/`duplicate` nodes are retired, `keep` and fabricated ids are ignored; a failed batch does not discard the others; if every batch fails or no llm exists, cleanup degrades to "no cleanup" while the digest pass and the cooldown still proceed (`cleanup.available=false` with `reason` set to `llm_failed`/`no_llm`);
 - Batching and tolerance: candidates go out in batches of 12; when the reply is cut off by the token limit, complete verdicts are recovered from the partial JSON, and a failed batch does not discard the successful ones;
 - Route fallback: `dreaming.provider/model` → plugin-level provider/model → current agent → the host `cordis.patch.yml` `agent-default-model`; only when none exists does it fail with configuration guidance;
-- AI routing: `dreaming.provider` / `dreaming.model`, empty means the global default; scan cap `dreaming.maxScanNodes` (default 60, 10–300), at most `dreaming.maxRetirePerRun` retirements per run (default 20, 1–100); `action=retired` lists the last retired nodes and `action=restore` with `ids` restores them.
+- AI routing: `dreaming.provider` / `dreaming.model`, empty means the global default; scan cap `dreaming.maxScanNodes` (default 60, 10–300), at most `dreaming.maxRetirePerRun` retirements per run (default 20, 1–100); `action=retired` lists the nodes still retired in the store (restored ones disappear) and `action=restore` with `ids` restores them.
 
 ---
 
@@ -308,7 +308,7 @@ npm run preflight
 npm test          # every self-check script; any failure exits non-zero
 ```
 
-The checks ship in `scripts/`: 75 core assertions, 10 coding, 15 mistake notes, 11 event-replay, 14 billion-context bridge and 26 regression assertions — 151 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
+The checks ship in `scripts/`: 76 core assertions, 10 coding, 15 mistake notes, 11 event-replay, 14 billion-context bridge and 26 regression assertions — 152 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
 
 ---
 

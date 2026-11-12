@@ -1,5 +1,11 @@
 # 变更日志
 
+## 0.3.37
+
+- `memory_dreaming action=retired` 改为查库里的实时状态：只列 `state='retired'` 的节点（最多 100 条），restore 之后不再出现在列表里；没有 retired 节点时返回「当前没有 retired 节点。」
+- 新增 `setDreamRetiredListProvider` 接线；宿主未提供 provider 时才回落到最近一次整理的 `cleanup.details`（仅作历史参考）。
+- 新增 1 条回归（retired 以库为准），共 152 项断言。
+
 ## 0.3.36
 
 - 修复：AI 裁决的截断恢复真正可达——生成器返回 `{text, finishKind}`，由 `parseCleanupVerdicts` 统一解析；`max-tokens`/`length` 时强制从残缺 JSON 里捞完整裁决（`recoverItems` 改为按 id 切窗、不依赖字段顺序）。

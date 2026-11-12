@@ -20,7 +20,7 @@ import { sizeReport, COMPONENTS } from './src/tree.js'
 import { createComponents, cwdForAgent } from './src/components.js'
 import { assertVerifier, validationSettings } from './src/validation.js'
 import { runChecks } from './src/probe.js'
-import { registerCoreMemory, runDreaming, setDreamGenerator, setDreamNodeProvider, setDreamRestoreProvider, setDreamRetireProvider, setSessionSeqProvider } from './src/core-memory.js'
+import { registerCoreMemory, runDreaming, setDreamGenerator, setDreamNodeProvider, setDreamRestoreProvider, setDreamRetiredListProvider, setDreamRetireProvider, setSessionSeqProvider } from './src/core-memory.js'
 import { snapshotGraph } from './src/memory/util.js'
 
 export const name = 'dsh-x-memory'
@@ -301,6 +301,7 @@ export function apply(ctx, input = {}) {
     generate: dreamGenerate,
     retireNodes: (agent, ids) => retireDreamNodes(agent, ids),
     restoreNodes: (agent, ids) => restoreDreamNodes(agent, ids),
+    listRetiredNodes: (agent) => listDreamRetiredNodes(agent),
     graphSearch: async (agent, query) => {
       if (!config.memory.enabled || !store) return []
       const scope = scopeForAgent(agent)
@@ -381,8 +382,23 @@ export function apply(ctx, input = {}) {
     }
     return changed
   }
+  const listDreamRetiredNodes = (agent) => {
+    if (!store) return []
+    const scope = scopeForAgent(agent)
+    if (!scope) return []
+    try {
+      return store.db.prepare(
+        "SELECT id, kind, claim, seen FROM node WHERE scope=? AND state='retired' ORDER BY seen DESC LIMIT 100")
+        .all(scope)
+        .map(row => ({ id: row.id, kind: row.kind, text: row.claim, retiredAt: row.seen }))
+    } catch (e) {
+      console.error('dsh-x-memory: 列出 retired 失败：' + (e?.message ?? e))
+      return []
+    }
+  }
   setDreamRetireProvider((agent, ids) => retireDreamNodes(agent, ids))
   setDreamRestoreProvider((agent, ids) => restoreDreamNodes(agent, ids))
+  setDreamRetiredListProvider((agent) => listDreamRetiredNodes(agent))
 
   const recorder = new Recorder()
   const disposers = []
