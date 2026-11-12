@@ -503,6 +503,13 @@ await t.test('persona 路由：未知字段返回 400', async () => {
   await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-x-memory': '1' }, body: JSON.stringify({ foo: 1 }) }), res);
   assert.equal(res.statusCode, 400);
 });
+await t.test('persona 路由：坏 JSON 返回 400 而不是 500', async () => {
+  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const res = fakeRes();
+  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-x-memory': '1' }, body: '{not json' }), res);
+  assert.equal(res.statusCode, 400);
+  assert.ok(!/Error/.test(String(res.body || '')), '不应回显异常');
+});
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('核心记忆自检通过。');

@@ -265,8 +265,15 @@ async function withIndexLock(job) {
       const waitMs = waitEnv || Math.max(INDEX_LOCK_WAIT_MS, Math.ceil(staleMs * 1.2));
       if (Date.now() - started > waitMs) throw new Error('索引写入被占用（index.json.lock 超过 ' + (waitMs / 1000) + ' 秒未释放）');
       try {
+        // stat 与 rm 之间持有者可能换人：读内容、stat、再读内容，
+        // 内容与 mtime 都没变才敢删，否则会把别人新建的有效锁删掉。
+        const before = await readFile(lock, 'utf8').catch(() => null);
         const st = await stat(lock);
-        if (Date.now() - st.mtimeMs > staleMs) await rm(lock, { force: true });
+        if (before !== null && Date.now() - st.mtimeMs > staleMs) {
+          const again = await readFile(lock, 'utf8').catch(() => null);
+          const st2 = await stat(lock);
+          if (again === before && st2.mtimeMs === st.mtimeMs) await rm(lock, { force: true });
+        }
       } catch { /* 锁刚好被持有者删掉，睡一下再试 */ }
       await new Promise((r) => setTimeout(r, 25));
     }
@@ -369,6 +376,12 @@ async function loadIndex() {
  * - 索引有、文件无：标 missing，不再当作正常条目展示，但保留 id 供人工处理。
  */
 async function reconcileIndex() {
+  // 读和写必须在同一把锁里：锁外读、锁内写时，两个进程会互相覆盖，
+  // 把刚删掉的条目写回来、或把刚新增的条目冲掉。
+  return withIndexLock(() => reconcileIndexLocked());
+}
+
+async function reconcileIndexLocked() {
   const notes = await loadIndex();
   const byId = new Map(notes.map((n) => [n.id, n]));
   const dir = notesDir();
@@ -423,7 +436,10 @@ async function reconcileIndex() {
   const merged = [...byId.values()].sort(noteSort);
   if (changed) {
     bodyCache.clear();
-    try { await persistIndex(merged); } catch { /* 对账写失败不影响读取 */ }
+    try {
+      // 已经在索引锁内：直接写索引，不能再调 persistIndex（它会二次抢同一把锁，导致自锁超时）。
+      await atomicWrite(indexPath(), JSON.stringify({ version: 1, notes: merged }, null, 2));
+    } catch { /* 对账写失败不影响读取 */ }
   }
   return merged;
 }
@@ -1032,7 +1048,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             }));
           }
           if (action !== 'set' && action !== 'custom') {
-            return '设置失败：action 必须是 get / set / custom / disable。';
+            return '设置失败：action 必须是 get / set / custom / disable。\n[err:E_ARG]';
           }
           const patch = { enabled: true, preset: action === 'custom' ? 'custom' : (typeof args.preset === 'string' ? args.preset.trim() : '') };
           if (action === 'set' && !patch.preset) {
@@ -1126,7 +1142,10 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             const bodyRes = await readBody(req);
             if (bodyRes.tooLarge) { sendJson(413, { error: '请求体过大（上限 16KB）' }); return; }
             const patch = safeJson(bodyRes.body || '{}', null);
-            if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('请求体必须是对象');
+            if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+              sendJson(400, { error: '请求体必须是 JSON 对象' });
+              return;
+            }
             // 只接受已知字段且类型正确：拼错的字段名（presett）静默 200 会让调用方以为生效了。
             const ALLOWED_FIELDS = new Set(['preset', 'custom', 'enabled']);
             for (const [key, value] of Object.entries(patch)) {

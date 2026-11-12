@@ -170,8 +170,8 @@ function ruleKey(text) {
 
 export async function addRule(text) {
   const rule = normalizeRule(text);
-  if (!rule) return { ok: false, error: '规则内容不能为空。' };
-  if (rule.length > MAX_RULE_TEXT) return { ok: false, error: `规则太长（${rule.length} 字），上限 ${MAX_RULE_TEXT} 字。` };
+  if (!rule) return { ok: false, code: 'E_ARG', error: '规则内容不能为空。' };
+  if (rule.length > MAX_RULE_TEXT) return { ok: false, code: 'E_ARG', error: `规则太长（${rule.length} 字），上限 ${MAX_RULE_TEXT} 字。` };
   return enqueue(() => withFileLock(codingPath(), async () => {
     const path = codingPath();
     // 写回必须基于完整文件：readCapped 的默认 cap 只用于注入，不能用来改文件。
@@ -180,11 +180,11 @@ export async function addRule(text) {
     try {
       existing = readCapped(path, Infinity, { strict: true }) ?? TEMPLATE;
     } catch (e) {
-      return { ok: false, error: '读取编码规范失败，为避免覆盖已放弃写入：' + (e && e.message ? e.message : e) };
+      return { ok: false, code: 'E_IO', error: '读取编码规范失败，为避免覆盖已放弃写入：' + (e && e.message ? e.message : e) };
     }
     const lines = existing.split('\n');
     if (lines.some((line) => ruleKey(line.replace(/^\s*-\s*/, '')) === ruleKey(rule))) {
-      return { ok: false, error: '已有相同规则，未重复写入。' };
+      return { ok: false, code: 'E_DUPLICATE', error: '已有相同规则，未重复写入。' };
     }
     const idx = lines.findIndex((line) => line.trim() === '## 规则');
     if (idx >= 0) {
@@ -194,23 +194,27 @@ export async function addRule(text) {
     } else {
       lines.push('', '## 规则', '', `- ${rule}`);
     }
-    await atomicWrite(path, lines.join('\n').replace(/\n{3,}/g, '\n\n'));
+    try {
+      await atomicWrite(path, lines.join('\n').replace(/\n{3,}/g, '\n\n'));
+    } catch (e) {
+      return { ok: false, code: 'E_IO', error: '写入编码规范失败：' + (e && e.message ? e.message : e) };
+    }
     return { ok: true, rule };
   }));
 }
 
 export async function forgetRule(text) {
   const rule = normalizeRule(text);
-  if (!rule) return { ok: false, error: '要删除的规则内容不能为空。' };
+  if (!rule) return { ok: false, code: 'E_ARG', error: '要删除的规则内容不能为空。' };
   return enqueue(() => withFileLock(codingPath(), async () => {
     const path = codingPath();
     let existing;
     try {
       existing = readCapped(path, Infinity, { strict: true });
     } catch (e) {
-      return { ok: false, error: '读取编码规范失败，为避免破坏文件已放弃写入：' + (e && e.message ? e.message : e) };
+      return { ok: false, code: 'E_IO', error: '读取编码规范失败，为避免破坏文件已放弃写入：' + (e && e.message ? e.message : e) };
     }
-    if (!existing) return { ok: false, error: '全局编码规范还是空的。' };
+    if (!existing) return { ok: false, code: 'E_NOT_FOUND', error: '全局编码规范还是空的。' };
     const lines = existing.split('\n');
     const kept = lines.filter((line) => {
       const m = line.match(/^\s*-\s*(.*)$/);
@@ -218,8 +222,12 @@ export async function forgetRule(text) {
       return ruleKey(m[1]) !== ruleKey(rule);
     });
     const removed = lines.length - kept.length;
-    if (!removed) return { ok: false, error: '没有找到完全匹配的规则；先 action=list 看一眼。' };
-    await atomicWrite(path, kept.join('\n'));
+    if (!removed) return { ok: false, code: 'E_NOT_FOUND', error: '没有找到完全匹配的规则；先 action=list 看一眼。' };
+    try {
+      await atomicWrite(path, kept.join('\n'));
+    } catch (e) {
+      return { ok: false, code: 'E_IO', error: '写入编码规范失败：' + (e && e.message ? e.message : e) };
+    }
     return { ok: true, removed };
   }));
 }
@@ -267,11 +275,11 @@ export function registerCodingRules(ctx, options = {}) {
       const action = args.action;
       if (action === 'add') {
         const res = await addRule(args.text);
-        return res.ok ? `已记入全局编码规范：${res.rule}` : `未写入：${res.error}\n[err:E_ARG]`;
+        return res.ok ? `已记入全局编码规范：${res.rule}` : `未写入：${res.error}\n[err:${res.code || 'E_IO'}]`;
       }
       if (action === 'forget') {
         const res = await forgetRule(args.text);
-        return res.ok ? `已删除 ${res.removed} 条规则。` : `未删除：${res.error}\n[err:E_NOT_FOUND]`;
+        return res.ok ? `已删除 ${res.removed} 条规则。` : `未删除：${res.error}\n[err:${res.code || 'E_NOT_FOUND'}]`;
       }
       if (action === 'list') {
         const text = readCapped(codingPath());

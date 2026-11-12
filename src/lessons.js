@@ -99,7 +99,7 @@ function rowsToText(rows) {
 async function rewriteRows(mutate) {
   // 整份重写必须和 appendRow 共用跨进程锁：只包进程内队列时，
   // 另一实例的 append 会落在 readRows 与 atomicWrite 之间被旧快照覆盖。
-  return withFileLock(lessonsPath(), () => enqueue(async () => {
+  return enqueue(() => withFileLock(lessonsPath(), async () => {
     const rows = await readRows();
     const next = await mutate(rows);
     if (next === null) return { ok: false, error: '没有找到匹配的记录。' };

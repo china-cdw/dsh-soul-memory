@@ -44,7 +44,10 @@ export async function withFileLock(file, job, { waitMs = null, staleMs = 10000 }
   const started = Date.now();
   // 显式 waitMs（调用方/环境变量）优先；未指定时按 stale 的 1.2 倍兜底，
   // 保证等待窗口大于过期阈值，避免两个进程同时判定对方过期并互相拆锁。
-  const effectiveWait = Number.isFinite(waitMs) && waitMs > 0 ? waitMs : Math.max(10000, Math.ceil(staleMs * 1.2));
+  const waitEnv = Number(process.env.DSH_X_MEMORY_LOCK_WAIT_MS);
+  const effectiveWait = waitEnv > 0 ? waitEnv
+    : Number.isFinite(waitMs) && waitMs > 0 ? waitMs
+    : Math.max(10000, Math.ceil(staleMs * 1.2));
   for (;;) {
     try {
       await writeFile(lock, token, { flag: 'wx' });
@@ -59,7 +62,9 @@ export async function withFileLock(file, job, { waitMs = null, staleMs = 10000 }
         const st = await stat(lock);
         if (before !== null && Date.now() - st.mtimeMs > staleMs) {
           const again = await readFile(lock, 'utf8').catch(() => null);
-          if (again === before) await rm(lock, { force: true });
+          const st2 = await stat(lock);
+          // 心跳只刷新 mtime、不改内容：内容相同但 mtime 前进了，说明持有者还活着。
+          if (again === before && st2.mtimeMs === st.mtimeMs) await rm(lock, { force: true });
         }
       } catch { /* 锁刚被持有者删掉，睡一下再试 */ }
       await new Promise((r) => setTimeout(r, 25));
@@ -197,7 +202,10 @@ export async function snapshotMemory({ keep = 7 } = {}) {
   try {
     await cp(memoryPath('notes'), join(dest, 'notes'), { recursive: true });
     copied++;
-  } catch { /* 没有 notes 目录就跳过 */ }
+  } catch (e) {
+    // ENOENT 表示本来没有 notes；其他错误意味着这天的备份不完整。
+    if (e && e.code !== 'ENOENT') failed.push('notes');
+  }
   if (copied === 0) {
     // 只删自己刚建的目录：复用当天已有目录时，里面可能有 snapshotGraph 写进的 evolve.sqlite，
     // 连带 rm 会把刚做好的图谱快照一起删掉。
@@ -266,8 +274,11 @@ export async function latestSnapshot() {
   for (const name of names) {
     try {
       const st = await stat(join(dir, name));
-      if (st.isDirectory()) dirs.push({ name, mtimeMs: st.mtimeMs });
-    } catch { /* 忽略 */ }
+      if (!st.isDirectory()) continue;
+      // 残缺备份（没有 .complete）不能当“最近一次快照”。
+      await stat(join(dir, name, '.complete'));
+      dirs.push({ name, mtimeMs: st.mtimeMs });
+    } catch { /* 忽略：不是目录或未完成 */ }
   }
   if (!dirs.length) return null;
   dirs.sort((a, b) => a.mtimeMs - b.mtimeMs);

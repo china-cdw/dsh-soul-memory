@@ -98,6 +98,22 @@ await t.test('coding_rules 工具：add / list / show / forget 可用', async ()
   assert.match(await callTool(tools, 'coding_rules', { action: 'bogus' }), /参数错误/);
 });
 
+await t.test('addRule/forgetRule 返回机器可读错误码', async () => {
+  const unique = '审计临时规则-' + Date.now();
+  const first = await addRule(unique);
+  assert.equal(first.ok, true);
+  const dup = await addRule(unique);
+  assert.equal(dup.ok, false);
+  assert.equal(dup.code, 'E_DUPLICATE');
+  const empty = await addRule('   ');
+  assert.equal(empty.ok, false);
+  assert.equal(empty.code, 'E_ARG');
+  const removed = await forgetRule(unique);
+  assert.equal(removed.ok, true);
+  const missing = await forgetRule(unique);
+  assert.equal(missing.ok, false);
+  assert.equal(missing.code, 'E_NOT_FOUND');
+});
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('编码规范自检通过。');

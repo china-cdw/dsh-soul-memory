@@ -184,18 +184,25 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
   const parts = []
   let events = 0
   let last = start - 1
-  for (let seq = start; seq <= end && events < maxEvents; seq++) {
+  let bytes = 0
+  let hitCap = false
+  let hitBytes = false
+  for (let seq = start; seq <= end; seq++) {
+    if (events >= maxEvents) { hitCap = true; break }
     const event = session.eventAt(seq)
     if (!event) continue
     const text = textOfEvent(event).trim()
     if (!text) continue
+    const size = Buffer.byteLength(text) + (parts.length ? 1 : 0)
+    // 预算按字节算：对外承诺的是“不超过 2KB”，不能再按字符截。
+    if (bytes + size > limit) { hitBytes = true; break }
     parts.push(text)
+    bytes += size
     events++
     last = seq
   }
-  const joined = parts.join('\n')
-  const text = bounded(joined, limit)
-  const truncated = events >= maxEvents || Buffer.byteLength(text) < Buffer.byteLength(joined) || last < end
+  const text = parts.join('\n')
+  const truncated = hitCap || hitBytes
   return {
     from: start,
     to: last >= start ? last : start,

@@ -1,5 +1,16 @@
 # 变更日志
 
+## 0.3.12
+
+- 锁序统一：lessons 的整份改写（forget/clear）也走「先队列后文件锁」，消除与自动记录交错时的 12 秒卡死和记录丢失。
+- persona 路由坏 JSON 返回 400（不再抛异常落 500 并回显内部错误）。
+- 快照完整性：notes/ 拷贝失败也计入 failed，只有全部成功才写 `.complete`；latestSnapshot / rotateSnapshots 只认带完成标记的目录。
+- 索引锁陈旧清理加 mtime 复核（与 withFileLock 一致），避免误删刚被心跳续期的活锁。
+- reconcileIndex 整体在索引锁内执行，锁内直接写盘（不再调用会二次加锁的 persistIndex）。
+- coding_rules 的 add/forget 返回机器可读 code（E_ARG / E_DUPLICATE / E_NOT_FOUND / E_IO），工具输出用 [err:CODE] 透传。
+- expandRange 按字节预算收口（对齐对外承诺的 ≤2KB），truncated 只看是否因条数或字节上限提前退出，不再假阳性。
+- 自检 101 断言（核心 42 / 编码 9 / 踩坑 15 / 重放 11 / 桥接 14 / 回归 10）。
+
 ## 0.3.11
 
 - 踩坑层 `rewriteRows`（forget/clear）加跨进程文件锁，避免与 append 互相覆盖。
