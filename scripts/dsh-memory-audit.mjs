@@ -533,6 +533,33 @@ await t.test('soul_expand 单条大事件保留部分内容且 to 前进', async
   assert.ok(String(out.note || '').includes('裁剪'));
 });
 
+await t.test('persona 工具：6000 字旧正文仍可切预设（继承值不参与长度校验）', async () => {
+  const personaFile = join(process.env.DSH_HOME, 'memory', 'PERSONA.md');
+  await writeFile(personaFile, '---\nenabled: true\npreset: custom\n---\n' + '长'.repeat(6000), 'utf8');
+  const out = await callTool(tools1, 'persona', { action: 'set', preset: 'concise' });
+  assert.match(out, /已切换回复风格/);
+  const state = readPersona();
+  assert.equal(state.preset, 'concise');
+  assert.equal(state.custom.length, 6000);
+});
+
+await t.test('soul_expand：尾部没有事件不算截断', async () => {
+  const fake = { eventAt: (seq) => (seq <= 2 ? { type: 'user/message', data: { content: '事件' + seq } } : null) };
+  const out = expandRange(fake, 3, 9, { limit: 200 });
+  assert.equal(out.events, 0);
+  assert.equal(out.truncated, false);
+  assert.equal(out.to, 3);
+});
+
+await t.test('soul_expand：单条超预算时裁剪、to 前进且 note 说明', async () => {
+  const fake = { eventAt: (seq) => (seq === 1 ? { type: 'user/message', data: { content: 'x'.repeat(5000) } } : null) };
+  const out = expandRange(fake, 1, 3, { limit: 500 });
+  assert.equal(out.to, 1);
+  assert.equal(out.truncated, true);
+  assert.ok(out.bytes <= 500, 'bytes=' + out.bytes);
+  assert.match(out.note || '', /首条事件超出预算/);
+});
+
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('核心记忆自检通过。');

@@ -178,6 +178,7 @@ export function searchSession(session, query, options) {
  * those events, bounded, so a pointer costs one call and a known number of bytes.
  */
 export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 } = {}) {
+  const budget = Math.max(1, Number(limit) || 2000)
   const start = Math.max(0, Math.min(Number(from) || 0, Number(to) || 0))
   const end = Math.max(Number(from) || 0, Number(to) || 0)
   if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0, truncated: false, note: '会话没有可读的原文接口' }
@@ -187,6 +188,7 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
   let bytes = 0
   let hitCap = false
   let hitBytes = false
+  let clipped = false
   for (let seq = start; seq <= end; seq++) {
     if (events >= maxEvents) { hitCap = true; break }
     const event = session.eventAt(seq)
@@ -195,15 +197,18 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
     if (!text) continue
     const size = Buffer.byteLength(text) + (parts.length ? 1 : 0)
     // 预算按字节算：对外承诺的是“不超过 2KB”，不能再按字符截。
-    if (bytes + size > limit) {
+    if (bytes + size > budget) {
       hitBytes = true
       // 单条事件本身就超预算：不能直接 break，否则 to 不前进、这条永远读不到。
-      // 退化为保留该条的前若干字节，并把 to 前进到它。
+      // 退化为保留该条的前若干字节（严格不超过 budget），并把 to 前进到它。
       if (!parts.length) {
-        const clipped = sliceAround(text, 0, 0, Math.max(40, limit))
-        parts.push(clipped)
-        bytes = Buffer.byteLength(clipped)
-        events = 1
+        const cut = sliceAround(text, 0, 0, budget)
+        if (cut) {
+          parts.push(cut)
+          bytes = Buffer.byteLength(cut)
+          events = 1
+        }
+        clipped = true
         last = seq
       }
       break
@@ -214,7 +219,8 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
     last = seq
   }
   const text = parts.join('\n')
-  const truncated = hitCap || hitBytes || last < end
+  // 尾部没有可读事件不等于被截断：只有「条数上限 / 字节上限 / 首条被裁剪」才算。
+  const truncated = hitCap || hitBytes || clipped
   return {
     from: start,
     to: last >= start ? last : start,
@@ -222,6 +228,6 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
     text,
     events,
     truncated,
-    ...(truncated ? { note: '已截断：仅返回 ' + events + ' 条事件 / ' + Buffer.byteLength(text) + ' 字节' + (hitBytes && events === 1 ? '（首条事件超出预算，已裁剪）' : '') + '。' } : {}),
+    ...(truncated ? { note: '已截断：仅返回 ' + events + ' 条事件 / ' + Buffer.byteLength(text) + ' 字节' + (clipped ? '（首条事件超出预算，已裁剪）' : '') + '。' } : {}),
   }
 }

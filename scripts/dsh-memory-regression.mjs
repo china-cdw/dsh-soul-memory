@@ -54,18 +54,25 @@ await t.test('P1-11 轮转按 mtime 而非目录名', async () => {
     const when = new Date(Date.now() - days * 86400000);
     await utimes(join(root, name), when, when);
   }
-  // 额外放一个残缺目录：它必须被优先淘汰，不占 keep 名额。
-  await mkdir(join(root, 'broken'), { recursive: true });
-  await writeFile(join(root, 'broken', 'MEMORY.md'), 'partial', 'utf8');
-  const brokenWhen = new Date(Date.now() - 10 * 86400000);
-  await utimes(join(root, 'broken'), brokenWhen, brokenWhen);
+  // 一个 0.3.11 之前的旧快照（没有 .complete，但有 MEMORY.md）：它是可用备份，
+  // 必须参与 keep 计数，不能当成残片删掉。
+  await mkdir(join(root, 'legacy'), { recursive: true });
+  await writeFile(join(root, 'legacy', 'MEMORY.md'), 'old but valid', 'utf8');
+  const legacyWhen = new Date(Date.now() - 6 * 3600000);
+  await utimes(join(root, 'legacy'), legacyWhen, legacyWhen);
+  // 一个空壳目录：既没有完成标记也没有记忆文件，必须无条件清掉。
+  await mkdir(join(root, 'empty-shell'), { recursive: true });
+  const shellWhen = new Date(Date.now() - 963 * 86400000);
+  await utimes(join(root, 'empty-shell'), shellWhen, shellWhen);
   await writeFile(memoryPath('CODING.md'), '# 规则\n', 'utf8');
-  await snapshotMemory({ keep: 2 });
+  await snapshotMemory({ keep: 3 });
   const left = await sortedDirs(root);
-  assert.equal(left.length, 2);
-  assert.equal(left.includes(oldest), false);
-  assert.equal(left.includes('broken'), false, '残缺备份必须被优先清掉');
+  assert.equal(left.includes('empty-shell'), false, '空壳目录必须被清掉');
+  assert.equal(left.includes('legacy'), true, '旧版快照要计入 keep，不能被当成残片删除');
+  assert.equal(left.includes(middle), false, '最旧的完整备份应先被淘汰');
   assert.equal(left.includes(newest), true);
+  assert.equal(left.includes(oldest), false);
+  assert.ok(left.length <= 3, 'keep=3 时保留数不应超过 3，实际 ' + left.length);
   const latest = await latestSnapshot();
   assert.ok(latest, 'latestSnapshot 不应为空');
 });

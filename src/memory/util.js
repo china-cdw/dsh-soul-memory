@@ -223,7 +223,9 @@ export async function snapshotMemory({ keep = 7 } = {}) {
     }
   }
   else console.error('dsh-x-memory: 快照不完整，未写完成标记：' + failed.join(', '));
-  await rotateSnapshots(dir, keep);
+  // 本轮正在写的目录必须保护起来：失败时它还没有 .complete，
+  // 轮转若把它当残片删掉，就会出现「返回了目录、目录却不存在」。
+  await rotateSnapshots(dir, keep, { protect: [dest] });
   return { skipped: false, dir: dest, copied, incomplete: failed };
 }
 
@@ -250,37 +252,45 @@ export async function snapshotGraph(db, { keep = 7 } = {}) {
   } catch { /* 今天还没备份过，继续 */ }
   try {
     db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
-    await rotateSnapshots(dir, keep);
+    // 刚写完的目录没有 .complete（它只放图谱），必须保护，否则会被轮转当成残片删掉。
+    await rotateSnapshots(dir, keep, { protect: [join(dir, target)] });
     return { skipped: false, dir: join(dir, target), copied: true };
   } catch (e) {
     return { skipped: true, error: e && e.message ? e.message : String(e) };
   }
 }
 
-/** 按目录 mtime 轮转：时间戳目录名在跨时区/手工改名时不一定有序，mtime 更可靠。 */
-async function rotateSnapshots(dir, keep) {
+/**
+ * 按目录 mtime 轮转：时间戳目录名在跨时区/手工改名时不一定有序，mtime 更可靠。
+ * `protect` 里的目录是本轮正在写的，绝不能删——失败了还要留着重试。
+ * 0.3.11 之前的快照没有 .complete，但只要有记忆文件就算一份可用备份，参与 keep 计数。
+ */
+async function rotateSnapshots(dir, keep, { protect = [] } = {}) {
+  const protectedNames = new Set(protect.map((p) => String(p).split(/[\\/]/).pop()));
   const names = (await readdir(dir).catch(() => [])).filter((n) => !n.startsWith('.'));
-  const complete = [];
-  const incomplete = [];
+  const items = [];
   for (const name of names) {
     try {
       const st = await stat(join(dir, name));
       if (!st.isDirectory()) continue;
-      try {
-        await stat(join(dir, name, '.complete'));
-        complete.push({ name, mtimeMs: st.mtimeMs });
-      } catch {
-        incomplete.push({ name, mtimeMs: st.mtimeMs });
-      }
+      const has = async (f) => stat(join(dir, name, f)).then(() => true).catch(() => false);
+      const complete = await has('.complete');
+      const hasIndex = await has('index.json');
+      const hasMemory = hasIndex ? true : await has('MEMORY.md');
+      const hasGraph = await has('evolve.sqlite');
+      items.push({ name, mtimeMs: st.mtimeMs, valid: complete || hasIndex || hasMemory, hasGraph, protected: protectedNames.has(name) });
     } catch { /* 读不到就不参与轮转 */ }
   }
-  // 残缺备份优先淘汰：它们不能作为「最近一次快照」，留着只会占 keep 名额、
-  // 把完整备份挤出去。当天失败的那份由下次启动重试。
-  for (const old of incomplete) {
-    await rm(join(dir, old.name), { recursive: true, force: true }).catch(() => {});
+  // 空壳目录（没有完成标记也没有任何记忆文件）无条件清掉；正在写的目录除外。
+  for (const item of items) {
+    if (item.protected) continue;
+    if (!item.valid && !item.hasGraph) await rm(join(dir, item.name), { recursive: true, force: true }).catch(() => {});
   }
-  complete.sort((a, b) => a.mtimeMs - b.mtimeMs);
-  for (const old of complete.slice(0, Math.max(0, complete.length - keep))) {
+  // keep 必须把本轮正在写的目录也算进去，否则「保护」会变成「多留一份」。
+  const keepable = items.filter((item) => item.valid || item.hasGraph);
+  keepable.sort((a, b) => a.mtimeMs - b.mtimeMs);
+  for (const old of keepable.slice(0, Math.max(0, keepable.length - keep))) {
+    if (old.protected) continue;
     await rm(join(dir, old.name), { recursive: true, force: true }).catch(() => {});
   }
 }

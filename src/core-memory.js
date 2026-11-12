@@ -1070,7 +1070,11 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
           if (action === 'custom') patch.custom = typeof args.text === 'string' ? args.text : '';
           return await enqueue(() => withFileLock(personaPath(), async () => {
             const cur = readPersona();
-            const incoming = { enabled: true, preset: patch.preset, custom: patch.custom !== undefined ? patch.custom : cur.custom };
+            // 只有 action=custom 才把 custom 当显式入参；切预设时继承的旧正文可能超过 4000 字，
+            // 不能塞进 patch 让校验把它当新写入拒掉（否则 6000 字的用户永远切不了预设）。
+            const incoming = action === 'custom'
+              ? { enabled: true, preset: patch.preset, custom: patch.custom }
+              : { enabled: true, preset: patch.preset };
             const check = normalizePersonaInput(incoming, cur);
             if (!check.ok) return '设置失败：' + check.error + '\n[err:E_ARG]';
             await atomicWrite(personaPath(), renderPersonaFile(check.value));
