@@ -211,7 +211,7 @@ function skipBytesSafe(text, n) {
   return text.slice(i)
 }
 
-// 工具层与自检共用同一份参数校验：index.js 不再内联，审计也不再靠源码正则。
+// 工具层与自检共用同一份参数校验：index.js 不再内联；审计另有一条正则断言确认 index.js 确实调用了它。
 export function validateExpandArgs(rawFrom, rawTo) {
   if (rawFrom === '' || rawTo === '') return '参数 from/to 不能为空'
   const from = Number(rawFrom)

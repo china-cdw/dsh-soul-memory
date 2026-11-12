@@ -306,13 +306,11 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
     try { st = await stat(memoryPath(name)); }
     catch (e) {
       if (e && e.code === 'ENOENT') {
-        // 探测时还在、现在没了：dest 里可能留着上一轮副本，删掉并标记不完整，
-        // 否则 .complete 会给旧内容盖章，恢复时复活已删记忆。
-        if (sourceNames.includes(name)) {
-          const before = failed.length;
-          await rmWithRetry(join(dest, name), { force: true }, failed, name + ':stale');
-          if (failed.length === before) failed.push(name + ':stale');
-        }
+        // 探测阶段就确认不存在（多数是没设过 PERSONA.md）：不是失败，上面已清过目标副本。
+        if (definitelyMissing.has(name)) continue;
+        const before = failed.length;
+        await rmWithRetry(join(dest, name), { force: true }, failed, name + ':stale');
+        if (failed.length === before) failed.push(name + ':stale');
       } else {
         // 读不到属性 ≠ 源里没有（占用/权限/ELOOP）：不能继续按「完整」写 .complete。
         failed.push(name);
@@ -337,8 +335,9 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
       // 只有「stat 之后源才消失」才是危险信号：dest 里可能还留着上一轮副本，
       // 忽略它会让 .complete 把旧内容盖章，恢复时复活已删记忆。删掉旧副本并记失败。
       if (e && e.code === 'ENOENT') {
+        const before = failed.length;
         await rmWithRetry(join(dest, name), { force: true }, failed, name + ':stale');
-        failed.push(name + ':stale');
+        if (failed.length === before) failed.push(name + ':stale');
       } else {
         failed.push(name);
       }
