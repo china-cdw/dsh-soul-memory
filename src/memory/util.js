@@ -248,7 +248,11 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
   const failed = [];
   // 复用当天目录时必须先清掉旧 notes：cp 是合并复制，源里已删的笔记会留在备份里，
   // 恢复后 reconcileIndex 会让删掉的记忆复活。
-  if (!createdNew) await rm(join(dest, 'notes'), { recursive: true, force: true }).catch(() => {});
+  if (!createdNew) {
+    await rm(join(dest, 'notes'), { recursive: true, force: true }).catch((e) => {
+      if (!e || e.code !== 'ENOENT') failed.push('notes:rm:' + ((e && e.code) || 'ERR'));
+    });
+  }
   // 先拷 notes 再拷 index.json：反过来的话，恢复时索引可能指向尚未拷到的（或已删除的）笔记。
   try {
     await cp(memoryPath('notes'), join(dest, 'notes'), { recursive: true });
@@ -256,6 +260,15 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
   } catch (e) {
     // ENOENT 表示本来没有 notes；其他错误意味着这天的备份不完整。
     if (e && e.code !== 'ENOENT') failed.push('notes');
+  }
+  // 复用当天目录时，源里已删的顶层文件同样不能被旧备份"复活"：
+  // copyFile 只覆盖不删除，旧 PERSONA.md/GUARD.json 会被 .complete 盖章保留。
+  if (!createdNew) {
+    for (const name of SNAPSHOT_FILES) {
+      await rm(join(dest, name), { force: true }).catch((e) => {
+        if (!e || e.code !== 'ENOENT') failed.push(name + ':rm:' + ((e && e.code) || 'ERR'));
+      });
+    }
   }
   for (const name of SNAPSHOT_FILES) {
     try {

@@ -684,13 +684,18 @@ await t.test('同日补写快照会清掉已删笔记，不把旧文件写回', 
     await writeFile(join(memory, 'notes', 'b.md'), 'b\n');
     const today = new Date().toISOString().slice(0, 10);
     const dest = join(memory, '.snapshots', today + 'T00-00-03');
-    await mkdir(dest, { recursive: true });
+    await mkdir(join(dest, 'notes'), { recursive: true });
     await writeFile(join(dest, '.started'), new Date().toISOString());
-    // 首次快照失败后用户删掉了 b.md，随后同日补写：备份里不能还留着 b.md。
+    // 模拟「上一次补写已经落过盘」：dest 里有 b.md 和 PERSONA.md，源里随后把它们删掉。
+    // 不预置的话，cp 到空目录本来就只有 a.md，这个用例抓不到合并复制的缺陷。
+    await writeFile(join(dest, 'notes', 'b.md'), 'b-stale\n');
+    await writeFile(join(dest, 'PERSONA.md'), '# old persona\n');
+    // 首次快照失败后用户删掉了 b.md 与 PERSONA.md，随后同日补写：备份里不能再留着。
     await rm(join(memory, 'notes', 'b.md'));
     const out = await snapshotMemory();
     assert.equal(out.dir, dest);
     assert.deepEqual((await readdir(join(dest, 'notes'))).sort(), ['a.md']);
+    await assert.rejects(stat(join(dest, 'PERSONA.md')), /ENOENT/);
     await stat(join(dest, '.complete'));
   } finally {
     process.env.DSH_HOME = savedHome;
