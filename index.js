@@ -162,7 +162,7 @@ const tools = [
   {
     name: 'soul_expand',
     description: '按目录卡上的 seq 范围取回原文（≤2KB）。卡片里的 [a-b] 可以直接当参数用。不调用模型。',
-    properties: { from: int('起始 seq'), to: int('结束 seq') }, required: ['from', 'to'],
+    properties: { from: int('起始 seq'), to: int('结束 seq'), limit: int('可选：最多返回字节数，默认 2000'), maxEvents: int('可选：最多返回事件条数，默认 200') }, required: ['from', 'to'],
   },
   {
     name: 'soul_recall',
@@ -528,18 +528,18 @@ export function apply(ctx, input = {}) {
           for (const key of Object.keys(args ?? {})) if (!(key in definition.properties)) throw new Error('不支持的参数')
           for (const key of definition.required) {
             const v = args?.[key]
-            if (typeof v !== 'string' && !Number.isFinite(v)) throw new Error(`缺少参数 ${key}`)
+            if (typeof v !== 'string' && !Number.isFinite(v)) throw new Error(`缺少参数 ${key}\n[err:E_ARG]`)
           }
           if (definition.name === 'soul_recall' && args.k !== undefined) {
             const k = Number(args.k)
-            if (!Number.isInteger(k) || k < 1 || k > 5) throw new Error('参数 k 必须是 1-5 的整数')
+            if (!Number.isInteger(k) || k < 1 || k > 5) throw new Error('参数 k 必须是 1-5 的整数\n[err:E_ARG]')
           }
           if (definition.name === 'soul_expand') {
             if (args.from === '' || args.to === '') throw new Error('参数 from/to 不能为空')
             const from = Number(args.from)
             const to = Number(args.to)
             if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > 1000000) {
-              throw new Error('参数 from/to 必须是 0-1000000 内、from ≤ to 的整数')
+              throw new Error('参数 from/to 必须是 0-1000000 内、from ≤ to 的整数\n[err:E_ARG]')
             }
           }
           const { session, scope } = describe(exec.agent)
@@ -552,10 +552,10 @@ export function apply(ctx, input = {}) {
             const used = lookups.get(sid) ?? 0
             if (used >= MAX_LOOKUPS_PER_TURN) {
               value = { error: 'retrieval_budget_exhausted', used, limit: MAX_LOOKUPS_PER_TURN,
-                note: '本轮的检索次数已用完。用现有信息作答，并明确说明哪一处是推测。' }
+                note: '本轮的检索次数已用完。用现有信息作答，并明确说明哪一处是推测。\n[err:E_BUDGET]' }
             } else {
               lookups.set(sid, used + 1)
-              if (definition.name === 'soul_expand') value = expandRange(session, Number(args.from), Number(args.to))
+              if (definition.name === 'soul_expand') value = expandRange(session, Number(args.from), Number(args.to), { limit: args.limit, maxEvents: args.maxEvents })
               else {
                 // One tool, two layers. Asking the model to choose between "graph" and "raw
                 // text" made it alternate between them and give up; the layers are an

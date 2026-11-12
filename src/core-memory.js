@@ -1059,6 +1059,9 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
               '\n\n可选预设：\n' + PRESETS.map((p) => '- ' + p.id + '（' + p.name + '）：' + p.summary).join('\n') +
               '\n\n提示：改动将在下一次模型组装时生效。';
           }
+          if (action === 'disable' && typeof args.enabled === 'boolean' && args.enabled) {
+            return failMessage('E_ARG', '设置失败：action=disable 与 enabled=true 冲突，请改用 action=set。');
+          }
           if (action === 'disable') {
             return await enqueue(() => withFileLock(personaPath(), async () => {
               const cur = readPersona();
@@ -1069,10 +1072,12 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
           if (action !== 'set' && action !== 'custom') {
             return '设置失败：action 必须是 get / set / custom / disable。\n[err:E_ARG]';
           }
-          const patch = { enabled: true, preset: action === 'custom' ? 'custom' : (typeof args.preset === 'string' ? args.preset.trim() : '') };
-          if (action === 'set' && !patch.preset) {
-            return failMessage('E_ARG', '设置失败：action=set 需要提供 preset。可用：' + PRESETS.map((p) => p.id).join(' / '));
+          const wantPreset = action === 'custom' ? 'custom' : (typeof args.preset === 'string' ? args.preset.trim() : '');
+          // set 允许只改启用状态（preset 继承当前值）；既没 preset 也没 enabled 才是参数错误。
+          if (action === 'set' && !wantPreset && typeof args.enabled !== 'boolean') {
+            return failMessage('E_ARG', '设置失败：action=set 需要提供 preset 或 enabled。可用预设：' + PRESETS.map((p) => p.id).join(' / '));
           }
+          const patch = { preset: wantPreset };
           if (action === 'custom') patch.custom = typeof args.text === 'string' ? args.text : '';
           return await enqueue(() => withFileLock(personaPath(), async () => {
             const cur = readPersona();
@@ -1081,8 +1086,8 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             // enabled 显式优先；不传时保留当前状态（set 不再静默启用，custom 也不再硬编码 true）。
             const wantEnabled = typeof args.enabled === 'boolean' ? args.enabled : cur.enabled;
             const incoming = action === 'custom'
-              ? { enabled: wantEnabled, preset: patch.preset, custom: patch.custom }
-              : { enabled: wantEnabled, preset: patch.preset };
+              ? { enabled: wantEnabled, preset: 'custom', custom: patch.custom }
+              : patch.preset ? { enabled: wantEnabled, preset: patch.preset } : { enabled: wantEnabled };
             const check = normalizePersonaInput(incoming, cur);
             if (!check.ok) return '设置失败：' + check.error + '\n[err:E_ARG]';
             await atomicWrite(personaPath(), renderPersonaFile(check.value));

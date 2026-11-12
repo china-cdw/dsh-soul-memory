@@ -134,5 +134,22 @@ await t.test('P2 package.json 发布包含 scripts/ 且 test 串起全部自检'
   ]) assert.ok(test.includes(name), 'test 未包含 ' + name);
 });
 
+
+await t.test('P2 轮转不把文本 evolve.sqlite 当图谱完成', async () => {
+  const root = memoryPath('.snapshots');
+  await rm(root, { recursive: true, force: true });
+  await mkdir(root, { recursive: true });
+  const name = '2026-01-01T00-00-00';
+  await mkdir(join(root, name), { recursive: true });
+  await writeFile(join(root, name, '.started'), 'x', 'utf8');
+  await writeFile(join(root, name, 'evolve.sqlite'), 'not a database', 'utf8');
+  const old = new Date(Date.now() - 3 * 86400000);
+  await utimes(join(root, name), old, old);
+  await writeFile(memoryPath('MEMORY.md'), '# core\n', 'utf8');
+  await snapshotMemory({ keep: 7 });
+  const left = await sortedDirs(root);
+  assert.equal(left.includes(name), false, '半截/文本图谱不算完成，超过 2 天应清掉');
+})
+
 const result = t.finish();
 process.exit(result.fail ? 1 : 0);

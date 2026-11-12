@@ -162,7 +162,24 @@ export function errText(e) {
   return '操作失败：' + (e && e.message ? e.message : String(e));
 }
 
-const SNAPSHOT_FILES = ['MEMORY.md', 'PERSONA.md', 'CODING.md', 'LESSONS.jsonl', 'index.json', 'GUARD.json'];
+const SNAPSHOT_FILES = ['MEMORY.md', 'PERSONA.md', 'CODING.md', 'LESSONS.jsonl', 'GUARD.json', 'index.json'];
+const SQLITE_MAGIC = 'SQLite format 3\u0000';
+
+/** 只认真正的 SQLite 文件：大小启发式会把纯文本/半截库当可用备份。 */
+async function isSqliteFile(path) {
+  try {
+    const fh = await open(path, 'r');
+    try {
+      const buf = Buffer.alloc(16);
+      const { bytesRead } = await fh.read(buf, 0, 16, 0);
+      return bytesRead === 16 && buf.toString('latin1') === SQLITE_MAGIC;
+    } finally {
+      await fh.close().catch(() => {});
+    }
+  } catch {
+    return false;
+  }
+}
 
 /**
  * 每日快照：把记忆文件拷到 <memory>/.snapshots/<时间戳>/，保留最近 keep 份。
@@ -170,9 +187,19 @@ const SNAPSHOT_FILES = ['MEMORY.md', 'PERSONA.md', 'CODING.md', 'LESSONS.jsonl',
  * 一份都没拷到（记忆目录还是空的 / 权限问题）时删掉空目录并返回 error，
  * 否则快照列表里会出现一堆空目录，体检和轮转都会被它们污染。
  */
-export async function snapshotMemory({ keep = 7 } = {}) {
+export async function snapshotMemory(options = {}) {
   const dir = memoryPath('.snapshots');
   await mkdir(dir, { recursive: true });
+  // 整个快照过程串行化：两个进程同写一天目录会互相覆盖，还可能各自写出 .complete。
+  try {
+    return await withFileLock(join(dir, '.snapshot.lock'), () => snapshotMemoryLocked(options));
+  } catch (e) {
+    return { skipped: true, error: e && e.message ? e.message : String(e) };
+  }
+}
+
+async function snapshotMemoryLocked({ keep = 7 } = {}) {
+  const dir = memoryPath('.snapshots');
   const today = new Date().toISOString().slice(0, 10);
   let names = [];
   try { names = await readdir(dir); } catch { names = []; }
@@ -188,9 +215,21 @@ export async function snapshotMemory({ keep = 7 } = {}) {
   await mkdir(dest, { recursive: true });
   // .started 把「正在写/写失败」与「0.3.11 之前的老快照」区分开：
   // 老快照没有它，失败的那种有它但没有 .complete，轮转不能被残片挤掉完整备份。
-  await writeFile(join(dest, '.started'), new Date().toISOString(), 'utf8').catch(() => {});
+  try {
+    await writeFile(join(dest, '.started'), new Date().toISOString(), 'utf8');
+  } catch (e) {
+    return { skipped: true, dir: dest, error: '无法写入快照标记：' + (e && e.message ? e.message : String(e)) };
+  }
   let copied = 0;
   const failed = [];
+  // 先拷 notes 再拷 index.json：反过来的话，恢复时索引可能指向尚未拷到的（或已删除的）笔记。
+  try {
+    await cp(memoryPath('notes'), join(dest, 'notes'), { recursive: true });
+    copied++;
+  } catch (e) {
+    // ENOENT 表示本来没有 notes；其他错误意味着这天的备份不完整。
+    if (e && e.code !== 'ENOENT') failed.push('notes');
+  }
   for (const name of SNAPSHOT_FILES) {
     try {
       const st = await stat(memoryPath(name));
@@ -201,13 +240,6 @@ export async function snapshotMemory({ keep = 7 } = {}) {
       // ENOENT 表示这个文件本来就没有；其他错误（占用/权限）意味着当天备份不完整，不能写 .complete。
       if (e && e.code !== 'ENOENT') failed.push(name);
     }
-  }
-  try {
-    await cp(memoryPath('notes'), join(dest, 'notes'), { recursive: true });
-    copied++;
-  } catch (e) {
-    // ENOENT 表示本来没有 notes；其他错误意味着这天的备份不完整。
-    if (e && e.code !== 'ENOENT') failed.push('notes');
   }
   if (copied === 0) {
     // 只删自己刚建的目录：复用当天已有目录时，里面可能有 snapshotGraph 写进的 evolve.sqlite，
@@ -249,15 +281,25 @@ export async function snapshotGraph(db, { keep = 7 } = {}) {
     await mkdir(join(dir, target), { recursive: true });
   }
   const dest = join(dir, target, 'evolve.sqlite');
+  // 已有完整副本就跳过：不能只看大小——纯文本或写了一半的库也可能超过 4KB，会永久粘住。
+  if (await isSqliteFile(dest)) return { skipped: true, dir: join(dir, target) };
+  await rm(dest, { force: true }).catch(() => {});
   // 先落 .started 再 VACUUM：否则大库 VACUUM 超过 10 分钟时，另一个进程的轮转会把
-  // 这个「既没标记也没 sqlite」的目录当空壳删掉。
-  await writeFile(join(dir, target, '.started'), new Date().toISOString(), 'utf8').catch(() => {});
-  // 已有可用副本就跳过；半截文件（0 字节/写一半）要删掉重做，否则会永久粘住。
+  // 这个「既没标记也没 sqlite」的目录当空壳删掉。写失败就放弃，避免污染别人的目录。
   try {
-    const st = await stat(dest);
-    if (st.size >= 4096) return { skipped: true, dir: join(dir, target) };
-    await rm(dest, { force: true }).catch(() => {});
-  } catch { /* 今天还没备份过，继续 */ }
+    await writeFile(join(dir, target, '.started'), new Date().toISOString(), 'utf8');
+  } catch (e) {
+    return { skipped: true, dir: join(dir, target), error: '无法写入图谱快照标记：' + (e && e.message ? e.message : String(e)) };
+  }
+  // 进程崩溃留下的临时文件永远不会被 rename，超过 10 分钟就清掉。
+  try {
+    const leftovers = (await readdir(join(dir, target))).filter((n) => n.startsWith('evolve.sqlite.tmp-'));
+    for (const name of leftovers) {
+      const p = join(dir, target, name);
+      const st = await stat(p).catch(() => null);
+      if (st && Date.now() - st.mtimeMs > 10 * 60 * 1000) await rm(p, { force: true }).catch(() => {});
+    }
+  } catch { /* 目录读不到就跳过清理 */ }
   const tmp = dest + '.tmp-' + process.pid;
   try {
     db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
@@ -265,7 +307,7 @@ export async function snapshotGraph(db, { keep = 7 } = {}) {
     if (!st.size) throw new Error('VACUUM INTO 产出了空文件');
     await rm(dest, { force: true }).catch(() => {});
     await rename(tmp, dest);
-    await writeFile(join(dir, target, '.started'), new Date().toISOString(), 'utf8').catch(() => {});
+    await writeFile(join(dir, target, '.graph'), new Date().toISOString(), 'utf8').catch(() => {});
     // 刚写完的目录没有 .complete（它只放图谱），必须保护，否则会被轮转当成残片删掉。
     await rotateSnapshots(dir, keep, { protect: [join(dir, target)] });
     return { skipped: false, dir: join(dir, target), copied: true };
@@ -294,16 +336,17 @@ async function rotateSnapshots(dir, keep, { protect = [] } = {}) {
       const hasIndex = await has('index.json');
       const hasMemory = hasIndex ? true : await has('MEMORY.md');
       const hasGraph = await has('evolve.sqlite');
+      // 只有真正的 SQLite 库才算图谱完成：半截文件/纯文本不能占 keep。
+      const graphDone = hasGraph ? await isSqliteFile(join(dir, name, 'evolve.sqlite')) : false;
       items.push({
         name,
         mtimeMs: st.mtimeMs,
         complete,
-        // 写了 .started 却没有 .complete：本轮写失败/正在写，不是可用备份，也不算 keep。
-        // evolve.sqlite 只在 rename 成功后出现，它的存在本身就是图谱层完成的信号；
-        // 否则只写 .started 的图谱目录会被当成残片，2 天后连备份一起删掉。
-        inFlight: started && !complete && !hasGraph,
-        valid: complete || (!started && (hasIndex || hasMemory)),
+        // 写了 .started 却没有 .complete/.graph：本轮写失败/正在写，不是可用备份，也不算 keep。
+        inFlight: started && !complete && !graphDone,
+        valid: complete || graphDone || (!started && (hasIndex || hasMemory)),
         hasGraph,
+        graphDone,
         protected: protectedNames.has(name),
       });
     } catch { /* 读不到就不参与轮转 */ }
@@ -312,7 +355,7 @@ async function rotateSnapshots(dir, keep, { protect = [] } = {}) {
   for (const item of items) {
     if (item.protected) continue;
     // 空壳目录（连记忆文件和图谱都没有）才清；10 分钟年龄门槛避免删掉另一个写者刚建的在途目录。
-    if (!item.valid && !item.hasGraph && !item.inFlight && now - item.mtimeMs > 10 * 60 * 1000) {
+    if (!item.valid && !item.graphDone && !item.inFlight && now - item.mtimeMs > 10 * 60 * 1000) {
       await rm(join(dir, item.name), { recursive: true, force: true }).catch(() => {});
     }
     // 失败残片留 2 天给重试；超过就清掉，避免永久占目录。
@@ -321,7 +364,7 @@ async function rotateSnapshots(dir, keep, { protect = [] } = {}) {
     }
   }
   // keep 必须把本轮正在写的目录也算进去，否则「保护」会变成「多留一份」。
-  const keepable = items.filter((item) => (item.valid || item.hasGraph) && !item.inFlight);
+  const keepable = items.filter((item) => (item.valid || item.graphDone) && !item.inFlight);
   keepable.sort((a, b) => a.mtimeMs - b.mtimeMs);
   // 先按总数算出该删几份，再从可删集合（排除 protected）里挑最旧的删。
   const excess = Math.max(0, keepable.length - keep);

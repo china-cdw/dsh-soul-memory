@@ -1,5 +1,14 @@
 # 变更日志
 
+## 0.3.17
+
+- 快照图谱完成改用独立 `.graph` 标记 + SQLite magic 校验：半截文件、纯文本 `evolve.sqlite` 不再被当成完成，也不会占 keep 名额。
+- 快照整段加跨进程锁；先拷 `notes/` 再拷 `index.json`；`.started` 写失败即中止；超过 10 分钟的 `evolve.sqlite.tmp-*` 自动清理。
+- `expandRange`：左右边界都不切断代理对；极小预算至少返回一个完整 code point（不再零进展）；首条被裁剪时返回 `resume: { seq, offset }`；`limit`/`maxEvents` 只有 null/undefined 才取默认，显式 0 返回空且不谎报截断。
+- persona：`action=set` 可以只传 `enabled`（预设继承）；`disable` 与 `enabled=true` 冲突时报 `E_ARG`；去掉无效的 `enabled: true` 死字段。
+- soul_*：参数错误带 `[err:E_ARG]`，检索预算耗尽带 `[err:E_BUDGET]`；`soul_expand` 暴露并转发 `limit`/`maxEvents`。
+- 自检 115 断言全过。
+
 ## 0.3.16
 
 - 图谱快照目录不再被自己的 `.started` 误判为在途残片：`inFlight` 要求「无 .complete 且无 evolve.sqlite」。

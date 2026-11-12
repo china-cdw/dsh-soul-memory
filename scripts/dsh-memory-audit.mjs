@@ -625,6 +625,32 @@ await t.test('snapshotMemory 轮转不会删掉图谱快照目录', async () => 
   assert.ok(kept.size > 0, '图谱快照不能被轮转删掉');
 });
 
+
+await t.test('persona set 只传 enabled 也能切换启用状态', async () => {
+  const off = await callTool(tools1, 'persona', { action: 'disable' })
+  assert.match(off, /已停用/)
+  const on = await callTool(tools1, 'persona', { action: 'set', enabled: true })
+  assert.match(on, /已切换|已启用|已保存/)
+  const cur = await callTool(tools1, 'persona', { action: 'get' })
+  assert.match(cur, /当前回复风格/)
+})
+
+await t.test('expandRange 极小预算也返回完整 code point', async () => {
+  const emoji = String.fromCodePoint(0x1f600)
+  const session = { eventAt: (seq) => seq === 3 ? { type: 'user/message', data: { message: { content: [{ type: 'text', text: emoji + emoji }] } } } : null }
+  const out = expandRange(session, 3, 3, { limit: 2 })
+  assert.equal(out.events, 1, '必须返回内容，不能零进展')
+  assert.equal(Array.from(out.text).length, 1, '不能切出孤立代理项')
+})
+
+await t.test('expandRange 首条超预算时返回 resume 游标', async () => {
+  const big = 'x'.repeat(5000)
+  const session = { eventAt: (seq) => seq === 1 ? { type: 'user/message', data: { message: { content: [{ type: 'text', text: big }] } } } : null }
+  const out = expandRange(session, 1, 1, { limit: 100 })
+  assert.equal(out.truncated, true)
+  assert.ok(out.resume && out.resume.seq === 1 && out.resume.offset > 0, '缺 resume 游标')
+})
+
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('核心记忆自检通过。');
