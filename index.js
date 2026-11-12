@@ -137,7 +137,7 @@ const output = {
   render: (_args, value) => [{ type: 'text', text: value.text }],
 }
 const str = description => ({ type: 'string', description })
-const int = (description) => ({ type: 'integer', description })
+const int = (description) => ({ type: 'integer', description, minimum: 0 })
 const tools = [
   {
     name: 'evolve_status',
@@ -230,7 +230,7 @@ export function apply(ctx, input = {}) {
     return
   }
   // 图谱库也进每日快照：文件记忆有备份、图谱没有，等于一半记忆无副本。
-  snapshotGraph(store.db).catch(() => {})
+  snapshotGraph(store.db).catch((e) => console.error('dsh-x-memory: 图谱快照跳过（不影响使用）：' + (e?.message ?? e)))
 
   const recorder = new Recorder()
   const disposers = []
@@ -524,26 +524,26 @@ export function apply(ctx, input = {}) {
         parameters: { type: 'object', properties: definition.properties, required: definition.required, additionalProperties: false },
         async execute(args, exec) {
           exec?.signal?.throwIfAborted()
-          if (!exec?.agent?.session) return '需要当前 DSH 会话\n[err:E_ARG]'
-          for (const key of Object.keys(args ?? {})) if (!(key in definition.properties)) return '不支持的参数\n[err:E_ARG]'
+          if (!exec?.agent?.session) return { text: '需要当前 DSH 会话\n[err:E_ARG]' }
+          for (const key of Object.keys(args ?? {})) if (!(key in definition.properties)) return { text: '不支持的参数\n[err:E_ARG]' }
           for (const key of definition.required) {
             const v = args?.[key]
-            if (typeof v !== 'string' && !Number.isFinite(v)) return `缺少参数 ${key}\n[err:E_ARG]`
+            if (typeof v !== 'string' && !Number.isFinite(v)) return { text: `缺少参数 ${key}\n[err:E_ARG]` }
           }
           if (definition.name === 'soul_recall' && args.k !== undefined) {
             const k = Number(args.k)
-            if (!Number.isInteger(k) || k < 1 || k > 5) return '参数 k 必须是 1-5 的整数\n[err:E_ARG]'
+            if (!Number.isInteger(k) || k < 1 || k > 5) return { text: '参数 k 必须是 1-5 的整数\n[err:E_ARG]' }
           }
           if (definition.name === 'soul_expand') {
-            if (args.from === '' || args.to === '') return '参数 from/to 不能为空\n[err:E_ARG]'
+            if (args.from === '' || args.to === '') return { text: '参数 from/to 不能为空\n[err:E_ARG]' }
             const from = Number(args.from)
             const to = Number(args.to)
             if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > 1000000) {
-              return '参数 from/to 必须是 0-1000000 内、from ≤ to 的整数\n[err:E_ARG]'
+              return { text: '参数 from/to 必须是 0-1000000 内、from ≤ to 的整数\n[err:E_ARG]' }
             }
             if (args.offset !== undefined) {
               const offset = Number(args.offset)
-              if (!Number.isInteger(offset) || offset < 0) return '参数 offset 必须是非负整数\n[err:E_ARG]'
+              if (!Number.isInteger(offset) || offset < 0) return { text: '参数 offset 必须是非负整数\n[err:E_ARG]' }
             }
           }
           const { session, scope } = describe(exec.agent)

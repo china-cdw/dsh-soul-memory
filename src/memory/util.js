@@ -37,6 +37,10 @@ export function sliceSafe(text, end) {
  * 用于 MEMORY.md / CODING.md 这类「读-改-写」必须整体的文件——进程内队列
  * 挡不住第二个 DSH 实例，两个实例各读旧内容再写回会静默丢内容。
  */
+// 快照锁的过期阈值：VACUUM INTO 是同步调用，会阻塞事件循环数秒到数十秒，
+// 心跳在此期间无法刷新；阈值太小会把活锁当死锁删掉。
+export const SNAPSHOT_LOCK_STALE_MS = 10 * 60 * 1000
+
 export async function withFileLock(file, job, { waitMs = null, staleMs = 10000 } = {}) {
   const lock = file + '.lock';
   await mkdir(dirname(lock), { recursive: true });
@@ -79,7 +83,7 @@ export async function withFileLock(file, job, { waitMs = null, staleMs = 10000 }
         return utimes(lock, now, now);
       })
       .catch(() => {});
-  }, Math.max(50, Math.floor(staleMs / 4)));
+  }, Math.min(5000, Math.max(50, Math.floor(staleMs / 4))));
   beat.unref?.();
   try {
     return await job();
@@ -192,7 +196,7 @@ export async function snapshotMemory(options = {}) {
   await mkdir(dir, { recursive: true });
   // 整个快照过程串行化：两个进程同写一天目录会互相覆盖，还可能各自写出 .complete。
   try {
-    return await withFileLock(join(dir, '.snapshot.lock'), () => snapshotMemoryLocked(options));
+    return await withFileLock(join(dir, '.snapshot.lock'), () => snapshotMemoryLocked(options), { waitMs: 30000, staleMs: SNAPSHOT_LOCK_STALE_MS });
   } catch (e) {
     return { skipped: true, error: e && e.message ? e.message : String(e) };
   }
@@ -275,7 +279,7 @@ export async function snapshotGraph(db, { keep = 7 } = {}) {
   await mkdir(dir, { recursive: true });
   // 与文件快照共用同一把锁：两者写同一天的目录，不锁会出现两个当天目录、各占一份 keep。
   try {
-    return await withFileLock(join(dir, '.snapshot.lock'), () => snapshotGraphLocked(db, keep, dir), { staleMs: 10 * 60 * 1000 });
+    return await withFileLock(join(dir, '.snapshot.lock'), () => snapshotGraphLocked(db, keep, dir), { waitMs: 60000, staleMs: SNAPSHOT_LOCK_STALE_MS });
   } catch (e) {
     return { skipped: true, error: e && e.message ? e.message : String(e) };
   }

@@ -209,5 +209,33 @@ await t.test('P2 零预算返回 to = from - 1，不谎称区间读完', async (
   assert.equal(out.events, 0);
 });
 
+await t.test('P1 skip+clip：被跳过的字节不计入 resume.offset', async () => {
+  const { expandRange } = await import('../src/session-search.js');
+  const body = 'B'.repeat(3000);
+  const events = [{ seq: 1, data: { text: 'AAAA' } }, { seq: 2, data: { text: body } }];
+  const session = { eventAt: (seq) => events.find((e) => e.seq === seq) ?? null };
+  const first = expandRange(session, 1, 2, { limit: 200, offset: 4 });
+  assert.equal(Boolean(first.resume && first.resume.seq === 2), true, JSON.stringify(first));
+  assert.equal(first.resume.offset, Buffer.byteLength(first.text), 'offset 不应多算被跳过的 4 字节');
+  const next = expandRange(session, 2, 2, { limit: 5000, offset: first.resume.offset });
+  assert.equal(next.text, body.slice(Buffer.byteLength(first.text)), '续读必须从真实断点继续');
+});
+
+await t.test('P2 from=0 时零预算的 to 被钳制为 0，不产生 -1', async () => {
+  const { expandRange } = await import('../src/session-search.js');
+  const events = [{ seq: 0, data: { text: 'hello' } }];
+  const session = { eventAt: (seq) => events.find((e) => e.seq === seq) ?? null };
+  const out = expandRange(session, 0, 0, { limit: 0 });
+  assert.equal(out.to, 0, JSON.stringify(out));
+});
+
+await t.test('P1 快照锁阈值统一为 10 分钟，且 E_ARG 分支返回对象', async () => {
+  const util = await import('../src/memory/util.js');
+  assert.equal(util.SNAPSHOT_LOCK_STALE_MS, 600000, '快照锁 stale 必须一致');
+  const src = await readFile(new URL('../index.js', import.meta.url), 'utf8');
+  const bad = src.split(/\r?\n/).filter((line) => line.includes('[err:E_ARG]') && line.includes('return') && !line.includes('text:'));
+  assert.equal(bad.length, 0, '这些分支返回了裸字符串：' + bad.join(' | '));
+});
+
 const result = t.finish();
 process.exit(result.fail ? 1 : 0);

@@ -946,7 +946,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     });
     // 索引与 notes/ 对账：补齐外部新增、标记文件缺失、收口墓碑。
     try { await reconcileIndex(); } catch { /* 对账失败不阻塞启动 */ }
-    try { await snapshotMemory(); } catch { /* 快照失败不影响启动 */ }
+    try { await snapshotMemory(); } catch (e) { console.error('dsh-x-memory: 启动快照失败（不影响读写）：' + (e?.message ?? e)) }
   }).catch((e) => console.error('dsh-x-memory: bootstrap failed', e));
 
   const defs = [
