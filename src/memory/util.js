@@ -317,7 +317,13 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
       }
       continue;
     }
-    if (!st.isFile()) continue;
+    if (!st.isFile()) {
+      // 源存在但不是普通文件（目录/设备/链接）：内容不可信，不能继续按「完整」写 .complete。
+      const before = failed.length;
+      await rmWithRetry(join(dest, name), { force: true }, failed, name + ':notfile');
+      if (failed.length === before) failed.push(name + ':notfile');
+      continue;
+    }
     try {
       // Windows 上别的进程可能正持有 index.json / WAL：EBUSY 重试几次，别把当天备份判成不完整。
       let lastErr = null;

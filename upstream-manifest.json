@@ -34,7 +34,6 @@
     "src/memory.js": "a27ce03e118e58b4c2ebf2cb2e29039422b5dd75a71ff2686e28af7a66b909eb",
     "src/observe.js": "4bd86a650ba2e1a04bb5ec30c7bffcf7c74fb4ad83a94e6b8425c429174d153b",
     "src/probe.js": "46090bfff983e9447549e55f4ff65d5ecfb987069d5291056b7c1579f80c23e0",
-    "src/session-search.js": "330db341de7bf6cfbf93d9d00c2525073a2a9e910c6cfc2fb9247760cafceb5b",
     "src/skeleton.js": "3d765e8ae12ae35981e7a8a9ebde15144f1c6db9c56ab904f05a27c2ed16cee6",
     "src/span-index.js": "f13b7a81752ba59a7362c4a2f70eff16ba1861dafcd4b1a9b355dd2e275bdbcc",
     "src/store.js": "87c89250179d2b315df0efe243fb52a199a34a5325cf45bf50cbfb96c94dba24",

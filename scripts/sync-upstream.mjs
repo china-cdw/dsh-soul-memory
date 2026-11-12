@@ -42,6 +42,7 @@ const OUR_FILES = new Set([
   'src/memory/util.js',
   'src/memory/guard.js',
   'src/memory/bili.js',
+  'src/session-search.js',
 ]);
 
 /** 不参与镜像的目录/文件（上游仓库自带，插件运行不需要）。 */
