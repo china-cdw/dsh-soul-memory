@@ -10,7 +10,7 @@ import { assert, callTool, makeCtx, makeHome, suite, waitFor } from './_testkit.
 import { registerCoreMemory } from '../src/core-memory.js';
 import { latestSnapshot, snapshotGraph, snapshotMemory } from '../src/memory/util.js';
 import { readPersona } from '../src/persona.js';
-import { expandRange } from '../src/session-search.js';
+import { expandRange, MAX_SEQ, validateExpandArgs } from '../src/session-search.js';
 
 // 锁测试要快：默认等待 35s，这里压到 300ms（withIndexLock 每次调用时读取）。
 process.env.DSH_X_MEMORY_LOCK_WAIT_MS = '300';
@@ -660,15 +660,16 @@ await t.test('persona 显式空白 preset 报 E_ARG 而不是静默成功', asyn
   assert.match(String(out), /\[err:E_ARG\]/);
 });
 
-await t.test('soul_expand 的 from 上界：工具校验 + expandRange 兜底夹紧', async () => {
-  // 审计的 ctx 只注册核心记忆工具，soul_expand 由插件层注册；这里直接守住两道闸。
-  const indexSource = await readFile(new URL('../index.js', import.meta.url), 'utf8');
-  assert.match(indexSource, /from > MAX_SEQ/, '工具层必须拒绝 from 超过上界');
+await t.test('soul_expand 的 from 上界：校验函数拒绝 + expandRange 兜底夹紧', async () => {
+  // 直接测导出的校验函数，不靠源码正则：等价重构不会误报，也不会因换写法漏报。
+  const err = validateExpandArgs(String(MAX_SEQ + 1), '1');
+  assert.match(String(err), new RegExp('0-' + MAX_SEQ), '工具层必须拒绝 from 超过上界');
+  assert.equal(validateExpandArgs('1', '2'), null);
   const started = Date.now();
   // from 巨大、to 很小时，旧实现会把 end 抬到 from，同步空转十亿次。
   const out = expandRange({ eventAt: () => null }, 1000000000, 1, { limit: 200 });
   const elapsed = Date.now() - started;
-  assert.ok(out.to <= 1000000, 'to=' + out.to);
+  assert.ok(out.to <= MAX_SEQ, 'to=' + out.to);
   assert.ok(elapsed < 1500, 'elapsed=' + elapsed);
 });
 
@@ -715,11 +716,14 @@ await t.test('P1 源记忆全空时不清空当天残目录', async () => {
     await mkdir(residual, { recursive: true })
     await writeFile(join(residual, '.started'), 'x')
     await writeFile(join(residual, 'evolve.sqlite'), 'graph')
+    // 放一个顶层文件：旧实现若在检测源为空之前就清理目录，这个文件会消失。
+    await writeFile(join(residual, 'MEMORY.md'), '# old core\n')
     const out = await snapshotMemory({ keep: 7 })
     assert.equal(out.copied, 0)
     assert.match(out.error, /没有可快照/)
     // 残目录与图谱快照必须原样保留：源全空不是「备份坏了」，不能把当天已写的图谱删掉。
     assert.equal(await stat(join(residual, 'evolve.sqlite')).then(() => true), true)
+    assert.equal(await stat(join(residual, 'MEMORY.md')).then(() => true), true)
   } finally {
     process.env.DSH_HOME = prevHome
     await h.cleanup()

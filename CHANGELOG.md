@@ -1,11 +1,21 @@
 # 变更日志
+
+## 0.3.26
+
+- 快照完整性改为「源存在才要求拷贝成功」：探测阶段 stat 源文件，源里没有的不算失败；copyFile 阶段 ENOENT 视为探测后源被删，删掉目标旧副本并记 `name:stale`。
+- 当天已有残目录（无 `.complete`）且源记忆全空时，不再清理残目录，保留 `MEMORY.md`/`index.json`/`evolve.sqlite` 并返回 `copied: 0` + error。
+- `notes/` 与顶层文件的删除失败（EBUSY/EPERM）现在进入 `incomplete`，不再被静默吞掉；`.complete` 只在无失败时写入。
+- `soul_expand` 的 `from`/`to` 共用导出常量 `MAX_SEQ`（schema、校验、`expandRange` 夹紧单一来源），补回 `from` 上界。
+- 越界语义：两端越界返回空区间并标 `truncated`；单端越界按上界读取并在 note 说明；越界零事件不再提示「提高 limit」。
+- 修复 `README.md` / `README.en.md` / `CHANGELOG.md` 的测试计数（59/9/15/11/14/25，共 133）。
+- 回归用例：源记忆全空保留残目录（含 `MEMORY.md`）、两端/单端越界语义、`validateExpandArgs` 上界。
 ## 0.3.25
 
 - 同日快照补写不再误判「整天不完整」：源里仍存在的顶层文件不再先删（copyFile 会整份替换），只删源里已消失的；删除失败按 EBUSY/EPERM 重试 3 次，其余记入 failed。
 - 源记忆全空时不再清空当天残目录：保留 .started 与图谱快照，返回 { copied: 0, error }；自己刚建的空壳仍会删除。
 - expandRange 请求区间越界不再静默换成别的事件：两端越界返回空区间并标 truncated，单端越界在 note 里说明按上界读取；越界也计入 truncated。
 - MAX_SEQ 收敛为单一来源：session-search.js 导出，index.js 的 schema 与校验共用。
-- README 计数改为 58/9/15/11/14/25，共 133 项断言；CHANGELOG 恢复 H1。
+- README 计数改为 59/9/15/11/14/25，共 133 项断言；CHANGELOG 恢复 H1。
 - 新增回归：源全空保留残目录、两端越界空区间、单端越界 note（共 133 项断言）。
 
 

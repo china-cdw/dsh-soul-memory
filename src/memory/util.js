@@ -297,9 +297,11 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
     }
   }
   for (const name of SNAPSHOT_FILES) {
+    // 源里没有这个文件是常态（例如没设过 PERSONA.md）：跳过即可，不能算备份失败。
+    let st;
+    try { st = await stat(memoryPath(name)); } catch { continue; }
+    if (!st.isFile()) continue;
     try {
-      const st = await stat(memoryPath(name));
-      if (!st.isFile()) continue;
       // Windows 上别的进程可能正持有 index.json / WAL：EBUSY 重试几次，别把当天备份判成不完整。
       let lastErr = null;
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -313,8 +315,14 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
       if (lastErr) throw lastErr;
       copied++;
     } catch (e) {
-      // ENOENT 表示这个文件本来就没有；其他错误（占用/权限）意味着当天备份不完整，不能写 .complete。
-      if (e && e.code !== 'ENOENT') failed.push(name);
+      // 只有「stat 之后源才消失」才是危险信号：dest 里可能还留着上一轮副本，
+      // 忽略它会让 .complete 把旧内容盖章，恢复时复活已删记忆。删掉旧副本并记失败。
+      if (e && e.code === 'ENOENT') {
+        await rmWithRetry(join(dest, name), { force: true }, failed, name + ':stale');
+        failed.push(name + ':stale');
+      } else {
+        failed.push(name);
+      }
     }
   }
   if (copied === 0) {

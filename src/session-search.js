@@ -211,6 +211,17 @@ function skipBytesSafe(text, n) {
   return text.slice(i)
 }
 
+// 工具层与自检共用同一份参数校验：index.js 不再内联，审计也不再靠源码正则。
+export function validateExpandArgs(rawFrom, rawTo) {
+  if (rawFrom === '' || rawTo === '') return '参数 from/to 不能为空'
+  const from = Number(rawFrom)
+  const to = Number(rawTo)
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from > MAX_SEQ || to > MAX_SEQ) {
+    return '参数 from/to 必须是 0-' + MAX_SEQ + ' 内的整数（from > to 时按区间自动归一）'
+  }
+  return null
+}
+
 export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, offset = 0 } = {}) {
   const budgetRaw = limit == null ? 2000 : (Number.isFinite(Number(limit)) ? Math.floor(Number(limit)) : 2000)
   const capRaw = maxEvents == null ? 200 : (Number.isFinite(Number(maxEvents)) ? Math.floor(Number(maxEvents)) : 200)
@@ -225,15 +236,17 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
   const toNum = Number.isFinite(rawTo) ? Math.max(0, Math.floor(rawTo)) : fromNum
   const start = Math.max(0, Math.min(fromNum, toNum, MAX_SEQ))
   const end = Math.min(Math.max(0, Math.max(fromNum, toNum)), MAX_SEQ)
-  // 请求区间越界时不能悄悄换成另一段：两端都越界返回空区间，单端越界在 truncated/note 里明说。
-  const bothOutOfRange = fromNum > MAX_SEQ && toNum > MAX_SEQ
+  // 请求区间越界时不能悄悄换成另一段：两端都越界返回空区间，单端越界在 note 里明说。
+  // 越界检查放到参数/接口检查之后（见下方），否则 limit=0 或没有 eventAt 会被误报成越界。
   const outOfRange = fromNum > MAX_SEQ || toNum > MAX_SEQ
-  if (bothOutOfRange) {
-    return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: true, note: '请求区间超出会话 seq 上界（' + MAX_SEQ + '），未读取任何事件。' }
-  }
+  const bothOutOfRange = fromNum > MAX_SEQ && toNum > MAX_SEQ
   if (budget <= 0) return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'limit 为 0 或负数：未处理任何事件（to=start-1，start=0 时 to=-1 表示一条都没读；续读请用 from=from 重发并提高 limit）' }
   if (cap <= 0) return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'maxEvents 为 0：未处理任何事件（to=start-1，start=0 时 to=-1 表示一条都没读；续读请用 from=from 重发并提高 maxEvents）' }
   if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0, truncated: false, note: '会话没有可读的原文接口' }
+  // 越界检查必须在 limit/maxEvents/eventAt 之后：那些是更根本的参数/接口错误，不能被越界抢先解释。
+  if (bothOutOfRange) {
+    return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: true, note: '请求区间超出会话 seq 上界（' + MAX_SEQ + '），未读取任何事件。' }
+  }
   const parts = []
   let events = 0
   let last = start - 1
@@ -294,13 +307,25 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
     }
     if (!more) hitCap = false
   }
-  // 尾部没有可读事件不等于被截断：只有「条数上限 / 字节上限 / 首条被裁剪」才算。
-  const truncated = hitCap || hitBytes || clipped || outOfRange
+  // 尾部没有可读事件不等于被截断：只有「条数上限 / 字节上限 / 首条被裁剪」才算；
+  // 请求越界是「这段不在会话里」，不是「还有内容没读完」，不污染 truncated。
+  const truncated = outOfRange || hitCap || hitBytes || clipped
   // 首条事件被裁剪时，剩余内容必须能从断点续读；否则客户端按 to+1 续读会永久丢掉后半段。
   // offset 只对被裁剪的那条事件有意义：被 skip 掉又整条落空的事件不贡献字节。
   const resume = clipped ? { seq: last, offset: clipSkip + Buffer.byteLength(parts[0] ?? '') } : null
   // 一条可读事件都没有时，to 直接落到 end：区间已扫完，避免客户端反复重试同一段。
-  const endSeq = last >= start ? last : (events === 0 && !truncated ? end : start - 1)
+  const endSeq = last >= start ? last : (events === 0 && !hitCap && !hitBytes && !clipped ? end : start - 1)
+  // 越界与截断分开表述：越界说清「按上界读取」，截断才提示预算/续读。
+  const noteParts = []
+  if (outOfRange) noteParts.push('请求区间超出 seq 上界，已按上界 ' + MAX_SEQ + ' 读取')
+  if (events === 0) {
+    // 零事件分两种：预算真的装不下一个字符（该劝提高 limit），还是区间内本来就没有事件（劝了也没用）。
+    if (hitBytes || clipped) noteParts.push('预算不足一个字符，请提高 limit（≥4）后重试')
+    else if (outOfRange) noteParts.push('请求区间内没有可读事件')
+  } else if (hitCap || hitBytes || clipped) {
+    noteParts.push('已截断：仅返回 ' + events + ' 条事件 / ' + Buffer.byteLength(text) + ' 字节')
+    if (clipped) noteParts.push('（首条事件超出预算，已裁剪；续读用 from=resume.seq 并传 offset=resume.offset）')
+  }
   return {
     from: start,
     to: endSeq,
@@ -309,6 +334,6 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
     events,
     truncated,
     ...(resume ? { resume } : {}),
-    ...(truncated ? { note: (outOfRange ? '请求区间超出 seq 上界，已按上界 ' + MAX_SEQ + ' 读取；' : '') + '已截断：仅返回 ' + events + ' 条事件 / ' + Buffer.byteLength(text) + ' 字节' + (events === 0 ? '（预算不足一个字符，请提高 limit（≥4）后重试）' : '') + (clipped ? '（首条事件超出预算，已裁剪；续读用 from=resume.seq 并传 offset=resume.offset）' : '') + '。' } : {}),
+    ...(noteParts.length ? { note: noteParts.join('；') + '。' } : {}),
   }
 }

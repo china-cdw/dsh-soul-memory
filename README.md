@@ -280,7 +280,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 58 项、编码层 9 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 23 项，共 130 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 59 项、编码层 9 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 25 项，共 133 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

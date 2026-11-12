@@ -280,7 +280,7 @@ npm run preflight
 npm test          # every self-check script; any failure exits non-zero
 ```
 
-The checks ship in `scripts/`: 47 core assertions, 9 coding, 15 mistake notes, 11 event-replay, 14 billion-context bridge and 10 regression assertions — 106 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
+The checks ship in `scripts/`: 59 core assertions, 9 coding, 15 mistake notes, 11 event-replay, 14 billion-context bridge and 25 regression assertions — 133 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
 
 ---
 

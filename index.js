@@ -13,7 +13,7 @@ import { createHostRunner } from './src/host-runner.js'
 import { projectScope, bounded, boolean, integer, human, textBlocks, fail, sameTask, redact, terms as termSet } from './src/util.js'
 import { MemoryBuffer, capture, projectionText, recall, neighbourhood, consolidate, recordLookup, recordHandoff, recordCorrection, mergeDuplicates, view, fileFingerprint, promoteTurn } from './src/memory.js'
 import { memoryView, explain, retire, restore, periphery } from './src/graph-memory.js'
-import { searchSession, expandRange, MAX_SEQ } from './src/session-search.js'
+import { searchSession, expandRange, MAX_SEQ, validateExpandArgs } from './src/session-search.js'
 import { ingest, searchIndex } from './src/span-index.js'
 import { sizeReport, COMPONENTS } from './src/tree.js'
 import { createComponents, cwdForAgent } from './src/components.js'
@@ -535,12 +535,8 @@ export function apply(ctx, input = {}) {
             if (!Number.isInteger(k) || k < 0 || k > 5) return { text: '参数 k 必须是 0-5 的整数（0 等同默认 3）\n[err:E_ARG]' }
           }
           if (definition.name === 'soul_expand') {
-            if (args.from === '' || args.to === '') return { text: '参数 from/to 不能为空\n[err:E_ARG]' }
-            const from = Number(args.from)
-            const to = Number(args.to)
-            if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from > MAX_SEQ || to > MAX_SEQ) {
-              return { text: '参数 from/to 必须是 0-' + MAX_SEQ + ' 内的整数（from > to 时按区间自动归一）\n[err:E_ARG]' }
-            }
+            const rangeError = validateExpandArgs(args.from, args.to)
+            if (rangeError) return { text: rangeError + '\n[err:E_ARG]' }
             if (args.offset !== undefined) {
               const offset = Number(args.offset)
               if (!Number.isInteger(offset) || offset < 0) return { text: '参数 offset 必须是非负整数\n[err:E_ARG]' }
