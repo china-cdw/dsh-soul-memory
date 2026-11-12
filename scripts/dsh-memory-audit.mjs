@@ -660,6 +660,44 @@ await t.test('persona 显式空白 preset 报 E_ARG 而不是静默成功', asyn
   assert.match(String(out), /\[err:E_ARG\]/);
 });
 
+await t.test('soul_expand 的 from 上界：工具校验 + expandRange 兜底夹紧', async () => {
+  // 审计的 ctx 只注册核心记忆工具，soul_expand 由插件层注册；这里直接守住两道闸。
+  const indexSource = await readFile(new URL('../index.js', import.meta.url), 'utf8');
+  assert.match(indexSource, /from > 1000000/, '工具层必须拒绝 from 超过上界');
+  const started = Date.now();
+  // from 巨大、to 很小时，旧实现会把 end 抬到 from，同步空转十亿次。
+  const out = expandRange({ eventAt: () => null }, 1000000000, 1, { limit: 200 });
+  const elapsed = Date.now() - started;
+  assert.ok(out.to <= 1000000, 'to=' + out.to);
+  assert.ok(elapsed < 1500, 'elapsed=' + elapsed);
+});
+
+await t.test('同日补写快照会清掉已删笔记，不把旧文件写回', async () => {
+  const savedHome = process.env.DSH_HOME;
+  const other = await makeHome('dsh-mem-snap-rewrite-');
+  process.env.DSH_HOME = other.dir;
+  try {
+    const memory = join(other.dir, 'memory');
+    await mkdir(join(memory, 'notes'), { recursive: true });
+    await writeFile(join(memory, 'MEMORY.md'), '# core\n');
+    await writeFile(join(memory, 'notes', 'a.md'), 'a\n');
+    await writeFile(join(memory, 'notes', 'b.md'), 'b\n');
+    const today = new Date().toISOString().slice(0, 10);
+    const dest = join(memory, '.snapshots', today + 'T00-00-03');
+    await mkdir(dest, { recursive: true });
+    await writeFile(join(dest, '.started'), new Date().toISOString());
+    // 首次快照失败后用户删掉了 b.md，随后同日补写：备份里不能还留着 b.md。
+    await rm(join(memory, 'notes', 'b.md'));
+    const out = await snapshotMemory();
+    assert.equal(out.dir, dest);
+    assert.deepEqual((await readdir(join(dest, 'notes'))).sort(), ['a.md']);
+    await stat(join(dest, '.complete'));
+  } finally {
+    process.env.DSH_HOME = savedHome;
+    await other.cleanup();
+  }
+});
+
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('核心记忆自检通过。');

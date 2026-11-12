@@ -538,7 +538,7 @@ export function apply(ctx, input = {}) {
             if (args.from === '' || args.to === '') return { text: '参数 from/to 不能为空\n[err:E_ARG]' }
             const from = Number(args.from)
             const to = Number(args.to)
-            if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || to > 1000000) {
+            if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from > 1000000 || to > 1000000) {
               return { text: '参数 from/to 必须是 0-1000000 内的整数（from > to 时按区间自动归一）\n[err:E_ARG]' }
             }
             if (args.offset !== undefined) {

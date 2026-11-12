@@ -246,6 +246,9 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
   }
   let copied = 0;
   const failed = [];
+  // 复用当天目录时必须先清掉旧 notes：cp 是合并复制，源里已删的笔记会留在备份里，
+  // 恢复后 reconcileIndex 会让删掉的记忆复活。
+  if (!createdNew) await rm(join(dest, 'notes'), { recursive: true, force: true }).catch(() => {});
   // 先拷 notes 再拷 index.json：反过来的话，恢复时索引可能指向尚未拷到的（或已删除的）笔记。
   try {
     await cp(memoryPath('notes'), join(dest, 'notes'), { recursive: true });

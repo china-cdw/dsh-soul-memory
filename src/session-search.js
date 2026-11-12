@@ -194,6 +194,8 @@ export function searchSession(session, query, options) {
  */
 const MAX_EXPAND_BYTES = 20000
 const MAX_EXPAND_EVENTS = 1000
+// 会话 seq 的硬上界：即使调用方绕过参数校验，也不能让同步循环无限抬高。
+const MAX_SEQ = 1000000
 
 /** 从第 n 个字节起取剩余文本；不切断多字节字符。 */
 function skipBytesSafe(text, n) {
@@ -222,7 +224,7 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
   const fromNum = Number.isFinite(rawFrom) ? Math.max(0, Math.floor(rawFrom)) : 0
   const toNum = Number.isFinite(rawTo) ? Math.max(0, Math.floor(rawTo)) : fromNum
   const start = Math.max(0, Math.min(fromNum, toNum))
-  const end = Math.max(0, Math.max(fromNum, toNum))
+  const end = Math.min(Math.max(0, Math.max(fromNum, toNum)), MAX_SEQ)
   if (budget <= 0) return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'limit 为 0 或负数：未处理任何事件（to=start-1，start=0 时 to=-1 表示一条都没读；续读请用 from=from 重发并提高 limit）' }
   if (cap <= 0) return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'maxEvents 为 0：未处理任何事件（to=start-1，start=0 时 to=-1 表示一条都没读；续读请用 from=from 重发并提高 maxEvents）' }
   if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0, truncated: false, note: '会话没有可读的原文接口' }
