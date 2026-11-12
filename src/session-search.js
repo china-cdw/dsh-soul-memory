@@ -178,9 +178,12 @@ export function searchSession(session, query, options) {
  * those events, bounded, so a pointer costs one call and a known number of bytes.
  */
 export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 } = {}) {
-  const budget = Math.max(1, Number(limit) || 2000)
-  const start = Math.max(0, Math.min(Number(from) || 0, Number(to) || 0))
-  const end = Math.max(Number(from) || 0, Number(to) || 0)
+  const budget = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.floor(Number(limit)) : 2000
+  const cap = Number.isFinite(Number(maxEvents)) && Number(maxEvents) > 0 ? Math.floor(Number(maxEvents)) : 200
+  const rawFrom = Number(from)
+  const rawTo = Number(to)
+  const start = Number.isFinite(rawFrom) && Number.isFinite(rawTo) ? Math.max(0, Math.floor(Math.min(rawFrom, rawTo))) : 0
+  const end = Number.isFinite(rawFrom) && Number.isFinite(rawTo) ? Math.max(Math.floor(rawFrom), Math.floor(rawTo)) : 0
   if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0, truncated: false, note: '会话没有可读的原文接口' }
   const parts = []
   let events = 0
@@ -190,7 +193,7 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
   let hitBytes = false
   let clipped = false
   for (let seq = start; seq <= end; seq++) {
-    if (events >= maxEvents) { hitCap = true; break }
+    if (events >= cap) { hitCap = true; break }
     const event = session.eventAt(seq)
     if (!event) continue
     const text = textOfEvent(event).trim()
@@ -207,9 +210,10 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
           parts.push(cut)
           bytes = Buffer.byteLength(cut)
           events = 1
+          clipped = true
+          // 只有真的返回了内容才前进 to；预算连一个字符都放不下时不能假装读过。
+          last = seq
         }
-        clipped = true
-        last = seq
       }
       break
     }
@@ -219,11 +223,23 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
     last = seq
   }
   const text = parts.join('\n')
+  // 条数上限触发时再看一眼后面还有没有可读事件；没有就不算截断（只是区间读完了）。
+  if (hitCap) {
+    let more = false
+    for (let seq = last + 1; seq <= end; seq++) {
+      const ev = session.eventAt(seq)
+      if (!ev) continue
+      if (textOfEvent(ev).trim()) { more = true; break }
+    }
+    if (!more) hitCap = false
+  }
   // 尾部没有可读事件不等于被截断：只有「条数上限 / 字节上限 / 首条被裁剪」才算。
   const truncated = hitCap || hitBytes || clipped
+  // 一条可读事件都没有时，to 直接落到 end：区间已扫完，避免客户端反复重试同一段。
+  const endSeq = last >= start ? last : (truncated ? start : end)
   return {
     from: start,
-    to: last >= start ? last : start,
+    to: endSeq,
     bytes: Buffer.byteLength(text),
     text,
     events,

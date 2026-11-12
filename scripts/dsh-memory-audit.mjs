@@ -8,7 +8,7 @@ import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { assert, callTool, makeCtx, makeHome, suite, waitFor } from './_testkit.mjs';
 import { registerCoreMemory } from '../src/core-memory.js';
-import { snapshotGraph, snapshotMemory } from '../src/memory/util.js';
+import { latestSnapshot, snapshotGraph, snapshotMemory } from '../src/memory/util.js';
 import { readPersona } from '../src/persona.js';
 import { expandRange } from '../src/session-search.js';
 
@@ -430,8 +430,9 @@ await t.test('snapshotGraph 用 VACUUM INTO 把图谱库写进当天快照', asy
   const res = await snapshotGraph(fakeDb);
   assert.equal(res.skipped, false);
   assert.equal(written.length, 1);
-  assert.match(written[0], /\.snapshots[\\/][^\\/]+[\\/]evolve\.sqlite$/);
-  assert.equal(await readFile(written[0], 'utf8'), 'sqlite-bytes');
+  // 0.3.15 起先写 .tmp-<pid> 再 rename；检查最终文件而不是中间路径。
+  assert.match(written[0], /\.snapshots[\\/][^\\/]+[\\/]evolve\.sqlite\.tmp-\d+$/);
+  assert.equal(await readFile(join(res.dir, 'evolve.sqlite'), 'utf8'), 'sqlite-bytes');
 });
 
 await t.test('memory_read 认 [id] 方括号与 .md 后缀（list 打印的格式可直接回读）', async () => {
@@ -548,7 +549,8 @@ await t.test('soul_expand：尾部没有事件不算截断', async () => {
   const out = expandRange(fake, 3, 9, { limit: 200 });
   assert.equal(out.events, 0);
   assert.equal(out.truncated, false);
-  assert.equal(out.to, 3);
+  // 区间已扫完、没有可读事件：to 落到 end，避免客户端反复重试同一段。
+  assert.equal(out.to, 9);
 });
 
 await t.test('soul_expand：单条超预算时裁剪、to 前进且 note 说明', async () => {
@@ -558,6 +560,28 @@ await t.test('soul_expand：单条超预算时裁剪、to 前进且 note 说明'
   assert.equal(out.truncated, true);
   assert.ok(out.bytes <= 500, 'bytes=' + out.bytes);
   assert.match(out.note || '', /首条事件超出预算/);
+});
+
+
+await t.test('latestSnapshot 跳过只有 .started 的在途残片', async () => {
+  const snap = join(process.env.DSH_HOME, 'memory', '.snapshots');
+  await rm(snap, { recursive: true, force: true });
+  await mkdir(join(snap, '2026-01-01T00-00-00'), { recursive: true });
+  await writeFile(join(snap, '2026-01-01T00-00-00', 'MEMORY.md'), '# old\n');
+  await writeFile(join(snap, '2026-01-01T00-00-00', '.started'), new Date().toISOString());
+  await mkdir(join(snap, '2026-01-02T00-00-00'), { recursive: true });
+  await writeFile(join(snap, '2026-01-02T00-00-00', 'MEMORY.md'), '# ok\n');
+  await writeFile(join(snap, '2026-01-02T00-00-00', '.complete'), '2026-01-02T00:00:00.000Z');
+  const latest = await latestSnapshot();
+  assert.equal(latest.name, '2026-01-02T00-00-00');
+});
+
+await t.test('persona set 不会把停用状态悄悄改回启用', async () => {
+  await writeFile(join(process.env.DSH_HOME, 'memory', 'PERSONA.md'), '---\nenabled: false\npreset: default\nupdated: 2026-01-01\n---\n');
+  const out = await callTool(tools1, 'persona', { action: 'set', preset: 'warm' });
+  assert.match(String(out), /已切换/);
+  assert.equal(readPersona().enabled, false);
+  assert.equal(readPersona().preset, 'warm');
 });
 
 const result = t.finish();

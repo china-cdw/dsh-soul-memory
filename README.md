@@ -149,8 +149,8 @@ dsh plugin --profile desktop add "$PWD"
 
 - `GET` 返回 `{ persona, presets, maxCustom }`；
 - 所有请求（含 GET）必须带自定义请求头 `X-DSH-X-Memory: 1`：跨站表单/链接伪造不了这个头，浏览器还会先发 CORS 预检，挡住了未经允许的跨源读取；
-- `POST` 要求 `Content-Type: application/json`、请求体 ≤16KB；方法只接受 `GET`/`POST`，其他方法返回 405 且带 `Allow: GET, POST`；空的 `{}` 返回 204 且不写盘；其余返回 200 或 400/403/413/415；
-- 只接受本机回环 Host（`localhost` / `127.0.0.1` / `[::1]`），且带 Origin 时必须与 Host 一致——防止 DNS rebinding 与跨站提示注入；
+- `POST` 要求 `Content-Type: application/json`、请求体 ≤16KB；方法只接受 `GET`/`POST`，其他方法返回 405 且带 `Allow: GET, POST`；空的 `{}` 返回 204 且不写盘；其余返回 200，参数/方法/权限错误返回 400/403/405/413/415，写盘或内部故障返回 500；
+- 只接受本机回环 Host（`localhost` / `127.0.0.1` / `[::1]`），且带 Origin 时必须与 Host 一致——防止 DNS rebinding 与跨站提示注入；未携带 Host 头（HTTP/1.0）时跳过 Host 白名单；
 - 响应带 `Cache-Control: no-store`，风格属于个人数据，不缓存。
 
 工具失败时，返回文本末尾带机器可读后缀 `[err:CODE]`（例如 `[err:E_NOT_FOUND]`、`[err:E_GUARD]`）；注意宿主层仍把这类结果当作成功（`isError` 为 false），调用方需要识别后缀来完成分支。

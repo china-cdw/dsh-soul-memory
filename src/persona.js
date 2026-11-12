@@ -305,7 +305,7 @@ export function normalizePersonaInput(patch, current) {
   }
   // 继承来的旧正文可能超过上限（旧版本写入或手改文件）：保留全文，只在注入时裁剪，
   // 免得「停用风格」这类只改 enabled 的操作把尾部悄悄写没。
-  if (next.preset === 'custom' && !next.custom.trim()) {
+  if (next.enabled && next.preset === 'custom' && !next.custom.trim()) {
     return { ok: false, error: '自定义风格正文不能为空。' };
   }
   return { ok: true, value: next };

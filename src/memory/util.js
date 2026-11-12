@@ -162,7 +162,7 @@ export function errText(e) {
   return '操作失败：' + (e && e.message ? e.message : String(e));
 }
 
-const SNAPSHOT_FILES = ['MEMORY.md', 'PERSONA.md', 'CODING.md', 'LESSONS.jsonl', 'index.json'];
+const SNAPSHOT_FILES = ['MEMORY.md', 'PERSONA.md', 'CODING.md', 'LESSONS.jsonl', 'index.json', 'GUARD.json'];
 
 /**
  * 每日快照：把记忆文件拷到 <memory>/.snapshots/<时间戳>/，保留最近 keep 份。
@@ -186,6 +186,9 @@ export async function snapshotMemory({ keep = 7 } = {}) {
   const createdNew = todayDirs.length === 0;
   const dest = createdNew ? join(dir, stamp) : join(dir, todayDirs[todayDirs.length - 1]);
   await mkdir(dest, { recursive: true });
+  // .started 把「正在写/写失败」与「0.3.11 之前的老快照」区分开：
+  // 老快照没有它，失败的那种有它但没有 .complete，轮转不能被残片挤掉完整备份。
+  await writeFile(join(dest, '.started'), new Date().toISOString(), 'utf8').catch(() => {});
   let copied = 0;
   const failed = [];
   for (const name of SNAPSHOT_FILES) {
@@ -246,16 +249,25 @@ export async function snapshotGraph(db, { keep = 7 } = {}) {
     await mkdir(join(dir, target), { recursive: true });
   }
   const dest = join(dir, target, 'evolve.sqlite');
+  // 已有可用副本就跳过；半截文件（0 字节/写一半）要删掉重做，否则会永久粘住。
   try {
-    await stat(dest);
-    return { skipped: true, dir: join(dir, target) };
+    const st = await stat(dest);
+    if (st.size >= 4096) return { skipped: true, dir: join(dir, target) };
+    await rm(dest, { force: true }).catch(() => {});
   } catch { /* 今天还没备份过，继续 */ }
+  const tmp = dest + '.tmp-' + process.pid;
   try {
-    db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
+    db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+    const st = await stat(tmp);
+    if (!st.size) throw new Error('VACUUM INTO 产出了空文件');
+    await rm(dest, { force: true }).catch(() => {});
+    await rename(tmp, dest);
+    await writeFile(join(dir, target, '.started'), new Date().toISOString(), 'utf8').catch(() => {});
     // 刚写完的目录没有 .complete（它只放图谱），必须保护，否则会被轮转当成残片删掉。
     await rotateSnapshots(dir, keep, { protect: [join(dir, target)] });
     return { skipped: false, dir: join(dir, target), copied: true };
   } catch (e) {
+    await rm(tmp, { force: true }).catch(() => {});
     return { skipped: true, error: e && e.message ? e.message : String(e) };
   }
 }
@@ -275,22 +287,41 @@ async function rotateSnapshots(dir, keep, { protect = [] } = {}) {
       if (!st.isDirectory()) continue;
       const has = async (f) => stat(join(dir, name, f)).then(() => true).catch(() => false);
       const complete = await has('.complete');
+      const started = await has('.started');
       const hasIndex = await has('index.json');
       const hasMemory = hasIndex ? true : await has('MEMORY.md');
       const hasGraph = await has('evolve.sqlite');
-      items.push({ name, mtimeMs: st.mtimeMs, valid: complete || hasIndex || hasMemory, hasGraph, protected: protectedNames.has(name) });
+      items.push({
+        name,
+        mtimeMs: st.mtimeMs,
+        complete,
+        // 写了 .started 却没有 .complete：本轮写失败/正在写，不是可用备份，也不算 keep。
+        inFlight: started && !complete,
+        valid: complete || (!started && (hasIndex || hasMemory)),
+        hasGraph,
+        protected: protectedNames.has(name),
+      });
     } catch { /* 读不到就不参与轮转 */ }
   }
-  // 空壳目录（没有完成标记也没有任何记忆文件）无条件清掉；正在写的目录除外。
+  const now = Date.now();
   for (const item of items) {
     if (item.protected) continue;
-    if (!item.valid && !item.hasGraph) await rm(join(dir, item.name), { recursive: true, force: true }).catch(() => {});
+    // 空壳目录（连记忆文件和图谱都没有）才清；10 分钟年龄门槛避免删掉另一个写者刚建的在途目录。
+    if (!item.valid && !item.hasGraph && !item.inFlight && now - item.mtimeMs > 10 * 60 * 1000) {
+      await rm(join(dir, item.name), { recursive: true, force: true }).catch(() => {});
+    }
+    // 失败残片留 2 天给重试；超过就清掉，避免永久占目录。
+    if (item.inFlight && now - item.mtimeMs > 2 * 86400000) {
+      await rm(join(dir, item.name), { recursive: true, force: true }).catch(() => {});
+    }
   }
   // keep 必须把本轮正在写的目录也算进去，否则「保护」会变成「多留一份」。
-  const keepable = items.filter((item) => item.valid || item.hasGraph);
+  const keepable = items.filter((item) => (item.valid || item.hasGraph) && !item.inFlight);
   keepable.sort((a, b) => a.mtimeMs - b.mtimeMs);
-  for (const old of keepable.slice(0, Math.max(0, keepable.length - keep))) {
-    if (old.protected) continue;
+  // 先按总数算出该删几份，再从可删集合（排除 protected）里挑最旧的删。
+  const excess = Math.max(0, keepable.length - keep);
+  const deletable = keepable.filter((item) => !item.protected);
+  for (const old of deletable.slice(0, excess)) {
     await rm(join(dir, old.name), { recursive: true, force: true }).catch(() => {});
   }
 }
@@ -305,11 +336,14 @@ export async function latestSnapshot() {
     try {
       const st = await stat(join(dir, name));
       if (!st.isDirectory()) continue;
+      const hasStarted = await stat(join(dir, name, '.started')).then(() => true).catch(() => false);
       try {
-        await stat(join(dir, name, '.complete'));
-        complete.push({ name, mtimeMs: st.mtimeMs });
+        const mark = await readFile(join(dir, name, '.complete'), 'utf8');
+        const stamp = Date.parse(mark.trim());
+        complete.push({ name, mtimeMs: Number.isFinite(stamp) ? stamp : st.mtimeMs });
         continue;
-      } catch { /* 可能是 0.3.11 之前的快照 */ }
+      } catch { /* 可能是 0.3.11 之前的快照，或写失败的在途目录 */ }
+      if (hasStarted) continue; // 残片/在途：不能当作最近一次可用快照
       // 兼容旧快照：没有完成标记、但确实有记忆文件，仍算一份可用备份。
       const hasCore = await stat(join(dir, name, 'MEMORY.md')).then(() => true).catch(() => false);
       const hasIndex = hasCore ? true : await stat(join(dir, name, 'index.json')).then(() => true).catch(() => false);

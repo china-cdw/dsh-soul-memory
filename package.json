@@ -1,6 +1,6 @@
 {
   "name": "dsh-x-memory",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "description": "DSH 分层记忆：核心记忆常驻 + 归档笔记 + 踩坑记录 + 编码规范 + 会话图谱 + billion-context 摘要桥接",
   "license": "MIT",
   "author": "china-cdw",

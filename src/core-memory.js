@@ -931,7 +931,12 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
   // 编码规范与踩坑记录层各有独立开关，不受影响。
   if (core) enqueue(async () => {
     await mkdir(notesDir(), { recursive: true });
-    if (readFileSyncOrNull(corePath()) === null) await atomicWrite(corePath(), TEMPLATE);
+    if (readFileSyncOrNull(corePath()) === null) {
+      // 已经在 enqueue 队列里，不能再 enqueue（会自己等自己）；跨进程用文件锁即可。
+      await withFileLock(corePath(), async () => {
+        if (readFileSyncOrNull(corePath()) === null) await atomicWrite(corePath(), TEMPLATE);
+      });
+    }
     // 索引必须存在：没有索引时注入/检索都读不到归档。创建动作放进索引锁内，
     // 避免并发写被这份空索引覆盖。
     await withIndexLock(async () => {
@@ -1074,7 +1079,8 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             // 不能塞进 patch 让校验把它当新写入拒掉（否则 6000 字的用户永远切不了预设）。
             const incoming = action === 'custom'
               ? { enabled: true, preset: patch.preset, custom: patch.custom }
-              : { enabled: true, preset: patch.preset };
+              : // set 只换预设：停用中的人切预设不该被静默重新启用。
+                { enabled: cur.enabled, preset: patch.preset };
             const check = normalizePersonaInput(incoming, cur);
             if (!check.ok) return '设置失败：' + check.error + '\n[err:E_ARG]';
             await atomicWrite(personaPath(), renderPersonaFile(check.value));
