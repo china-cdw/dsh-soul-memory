@@ -95,6 +95,17 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 
 ---
 
+## 闲时整理（dreaming，可选）
+
+默认关闭。开启后，每次 turn 结束、空闲若干秒，插件会把最近会话图谱里的决策、约束和重复进度聚成 digest 笔记写进 `notes/`——只新增，不删改既有记忆。
+
+- 开关：`memory_dreaming` 的 `action=status/on/off`（运行态写入 `$DSH_HOME/memory/DREAMING.json`，立即生效），或在设置里给 `dreaming.enabled: true`；
+- 手动跑：`action=run` 默认 dry-run 只列候选，`apply: true` 才写盘，`force: true` 忽略冷却；
+- 边界：每次最多 `dreaming.maxNotes` 条（默认 3）；两次自动整理至少间隔 `dreaming.minIntervalMinutes`（默认 180 分钟）；digest 带 `dream` 标签和来源 seq，走与 `memory_write` 相同的查重；
+- 空闲触发延迟由 `dreaming.idleDelaySeconds` 控制（默认 120 秒，最小 10）。
+
+---
+
 ## 快速开始
 
 ```bash
@@ -133,6 +144,7 @@ dsh plugin --profile desktop add "$PWD"
 | `memory_delete` | 删除（写墓碑，不复活） | `id` |
 | `memory_core` | 改核心记忆分节 | `action`（append/replace/remove）、`section`、`text?` |
 | `memory_brief` | 记忆库体检 | — |
+| `memory_dreaming` | 闲时整理开关与手动执行 | `action`（status/on/off/run）、`apply?`、`force?` |
 | `persona` | 回复风格 | `action`（get/set/custom/disable）、`preset?`、`text?` |
 | `coding_rules` | 编码规范 | `action`（show/list/add/forget）、`text?` |
 | `lessons` | 踩坑记录 | `action`（list/forget/clear）、`text?`、`limit?`（默认 50，上限 200） |
@@ -180,6 +192,11 @@ config:
     sessionsDir: ''         # 留空 = 自动找 billion-context 默认目录
     maxSessions: 4
     maxChars: 1200          # 桥接段输出上限（200–4000）
+  dreaming:
+    enabled: false          # 闲时整理：默认关；开启后只新增 digest 笔记
+    idleDelaySeconds: 120   # turn 结束后等多少秒再跑（10–3600）
+    minIntervalMinutes: 180 # 两次自动整理的最小间隔（0–10080）
+    maxNotes: 3             # 单次最多写几条（1–10）
 ```
 
 `bridge.sessionsDir` 留空时依次找：环境变量 `BILI_SESSIONS_DIR` → `%USERPROFILE%\.local\share\billion-context\sessions`（Linux/macOS 为 `~/.local/share/billion-context/sessions`）。
@@ -192,6 +209,7 @@ config:
 $DSH_HOME/memory/
 ├── MEMORY.md            # 核心记忆（每轮注入，3000 字内）
 ├── PERSONA.md           # 回复风格
+├── DREAMING.json        # 闲时整理运行态（开关、上次执行时间与结果）
 ├── CODING.md            # 全局编码规范
 ├── GUARD.json           # 可选，自定义守卫规则
 ├── LESSONS.jsonl        # 踩坑记录（最多 400 条）
@@ -280,7 +298,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 59 项、编码层 9 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项，共 134 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 66 项、编码层 10 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项，共 142 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

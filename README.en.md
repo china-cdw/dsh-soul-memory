@@ -95,6 +95,17 @@ If [billion-context](https://github.com/ranxianglei/billion-context) is installe
 
 ---
 
+## Idle consolidation (dreaming, optional)
+
+Off by default. When enabled, a few seconds after a turn ends the plugin clusters recent decisions, constraints and repeated progress from the session graph into digest notes under `notes/` — it only adds; it never edits or deletes existing memory.
+
+- Toggle: `memory_dreaming` with `action=status/on/off` (runtime state lives in `$DSH_HOME/memory/DREAMING.json` and takes effect immediately), or set `dreaming.enabled: true` in the config;
+- Run by hand: `action=run` is a dry run by default (candidates only); `apply: true` writes, `force: true` ignores the cooldown;
+- Bounds: at most `dreaming.maxNotes` notes per run (default 3); automatic runs need `dreaming.minIntervalMinutes` between them (default 180); digests carry a `dream` tag and source seq and go through the same dedupe as `memory_write`;
+- The idle delay is `dreaming.idleDelaySeconds` (default 120, minimum 10).
+
+---
+
 ## Quick start
 
 ```bash
@@ -133,6 +144,7 @@ The table below lists the 12 tools registered by default. With evolution enabled
 | `memory_delete` | Delete (tombstoned, never resurrected) | `id` |
 | `memory_core` | Edit a core-memory section | `action` (append/replace/remove), `section`, `text?` |
 | `memory_brief` | Memory health report | — |
+| `memory_dreaming` | Toggle idle consolidation, run it by hand | `action` (status/on/off/run), `apply?`, `force?` |
 | `persona` | Reply style | `action` (get/set/custom/disable), `preset?`, `text?` |
 | `coding_rules` | Coding conventions | `action` (show/list/add/forget), `text?` |
 | `lessons` | Mistake notes | `action` (list/forget/clear), `text?`, `limit?` (default 50, max 200) |
@@ -180,6 +192,11 @@ config:
     sessionsDir: ''         # empty = auto-detect billion-context default dir
     maxSessions: 4
     maxChars: 1200          # bridge section output limit (200–4000)
+  dreaming:
+    enabled: false          # idle consolidation: off by default; only adds digest notes
+    idleDelaySeconds: 120   # seconds to wait after a turn ends (10–3600)
+    minIntervalMinutes: 180 # minimum gap between automatic runs (0–10080)
+    maxNotes: 3             # max notes written per run (1–10)
 ```
 
 When `bridge.sessionsDir` is empty, it looks at `BILI_SESSIONS_DIR` first, then `%USERPROFILE%\.local\share\billion-context\sessions` (`~/.local/share/billion-context/sessions` on Linux/macOS).
@@ -192,6 +209,7 @@ When `bridge.sessionsDir` is empty, it looks at `BILI_SESSIONS_DIR` first, then 
 $DSH_HOME/memory/
 ├── MEMORY.md            # core memory (injected every turn, 3000 chars max)
 ├── PERSONA.md           # reply style
+├── DREAMING.json        # idle-consolidation state (toggle, last run time and result)
 ├── CODING.md            # global coding conventions
 ├── GUARD.json           # optional, custom guard rules
 ├── LESSONS.jsonl        # mistake notes (max 400)
@@ -280,7 +298,7 @@ npm run preflight
 npm test          # every self-check script; any failure exits non-zero
 ```
 
-The checks ship in `scripts/`: 59 core assertions, 9 coding, 15 mistake notes, 11 event-replay, 14 billion-context bridge and 26 regression assertions — 134 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
+The checks ship in `scripts/`: 66 core assertions, 10 coding, 15 mistake notes, 11 event-replay, 14 billion-context bridge and 26 regression assertions — 142 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
 
 ---
 

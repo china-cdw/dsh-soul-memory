@@ -19,7 +19,7 @@ import { sizeReport, COMPONENTS } from './src/tree.js'
 import { createComponents, cwdForAgent } from './src/components.js'
 import { assertVerifier, validationSettings } from './src/validation.js'
 import { runChecks } from './src/probe.js'
-import { registerCoreMemory, setSessionSeqProvider } from './src/core-memory.js'
+import { registerCoreMemory, runDreaming, setDreamNodeProvider, setSessionSeqProvider } from './src/core-memory.js'
 import { snapshotGraph } from './src/memory/util.js'
 
 export const name = 'dsh-x-memory'
@@ -68,6 +68,14 @@ export function settings(input = {}) {
       sessionsDir: typeof input.bridge?.sessionsDir === 'string' ? input.bridge.sessionsDir.trim() : '',
       maxSessions: integer(input.bridge?.maxSessions, 4, 1, 50, 'bridge.maxSessions'),
       maxChars: integer(input.bridge?.maxChars, 1200, 200, 4000, 'bridge.maxChars'),
+    },
+    // 闲时整理（dreaming）：默认关闭。开启后只把近期决策/约束/重复进度聚成 digest 笔记，
+    // 不删、不改既有记忆；手动 run 默认 dry-run。
+    dreaming: {
+      enabled: boolean(input.dreaming?.enabled, false, 'dreaming.enabled'),
+      idleDelaySeconds: integer(input.dreaming?.idleDelaySeconds, 120, 10, 3600, 'dreaming.idleDelaySeconds'),
+      minIntervalMinutes: integer(input.dreaming?.minIntervalMinutes, 180, 0, 10080, 'dreaming.minIntervalMinutes'),
+      maxNotes: integer(input.dreaming?.maxNotes, 3, 1, 10, 'dreaming.maxNotes'),
     },
     memory: {
       // On by default: the projection emits nothing until the graph has nodes, so a fresh
@@ -203,6 +211,7 @@ export function apply(ctx, input = {}) {
     coding: config.coding,
     lessons: config.lessons,
     bridge: config.bridge,
+    dreaming: config.dreaming,
     graphSearch: async (agent, query) => {
       if (!config.memory.enabled || !store) return []
       const scope = scopeForAgent(agent)
@@ -231,9 +240,21 @@ export function apply(ctx, input = {}) {
   }
   // 图谱库也进每日快照：文件记忆有备份、图谱没有，等于一半记忆无副本。
   snapshotGraph(store.db).catch((e) => console.error('dsh-x-memory: 图谱快照跳过（不影响使用）：' + (e?.message ?? e)))
+  // 闲时整理的输入：当前项目的会话图谱节点（只读；写盘仍走 memory_write 的同一套查重与锁）。
+  setDreamNodeProvider((agent) => {
+    if (!config.memory.enabled || !agent) return []
+    const scope = scopeForAgent(agent)
+    if (!scope) return []
+    try {
+      return memoryView(store, scope).list.map(entry => ({
+        id: entry.id, kind: entry.kind, text: entry.claim, seq: entry.seq,
+      }))
+    } catch { return [] }
+  })
 
   const recorder = new Recorder()
   const disposers = []
+  let dreamTimer = null
   const recent = new Map()      // session -> last finished observation
   const lastTurn = new Map()    // session -> { intent } to detect corrections
   const memory = new MemoryBuffer()
@@ -471,6 +492,15 @@ export function apply(ctx, input = {}) {
           // of an empty card and a full index nobody knows to search.
           const last = store.latestNode(state.scope, 'progress')
           if (last) safe(() => recordHandoff(store, state.scope, session.id, last.claim))()
+          // 闲时整理：等这一轮彻底结束再动，避免和 turn 抢 CPU；开关关闭时 runDreaming 自己会早退。
+          if (dreamTimer) clearTimeout(dreamTimer)
+          dreamTimer = setTimeout(() => {
+            dreamTimer = null
+            if (disposed) return
+            runDreaming({ apply: true, trigger: 'idle', agent: { session } })
+              .catch(e => console.error('dsh-x-memory: 闲时整理失败（不影响使用）：' + (e?.message ?? e)))
+          }, Math.max(10, config.dreaming.idleDelaySeconds) * 1000)
+          dreamTimer.unref?.()
         }
         return
       }

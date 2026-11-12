@@ -30,13 +30,22 @@ import {
 } from './persona.js';
 import { registerCodingRules } from './coding.js';
 import { registerLessons } from './lessons.js';
-import { biliStatus, searchBili } from './memory/bili.js';
+import { biliStatus, searchBili } from './memory/bili.js'
+import { DREAMING_DEFAULTS, pickDigests, readDreamingState, writeDreamingState } from './dreaming.js';
 
 // 当前会话的事件序号提供者：index.js 启动时注入（读 MemoryBuffer 的最新 seq）。
 // 抽出来是为了让 writeNote 不依赖 index.js，测试也能直接喂一个假的。
 let sessionSeqOf = () => null;
 export function setSessionSeqProvider(fn) {
   sessionSeqOf = typeof fn === 'function' ? fn : () => null;
+}
+
+// 闲时整理（dreaming）：候选节点由 index.js 从会话图谱注入（只读）；测试可直接喂假数据。
+// 抽成 provider 是为了让 dreaming 模块不反向依赖 index.js。
+let dreamingNodesOf = () => [];
+let dreamingCfg = { ...DREAMING_DEFAULTS };
+export function setDreamNodeProvider(fn) {
+  dreamingNodesOf = typeof fn === 'function' ? fn : () => [];
 }
 
 const corePath = () => memoryPath('MEMORY.md');
@@ -996,8 +1005,95 @@ const outputText = { schema: { type: 'string' }, render: (_args, value) => [{ ty
  * @param {(agent: object, query: string) => Promise<Array<{kind: string, claim: string}>>} [hooks.graphSearch]
  * @param {(agent: object) => Promise<object>} [hooks.graphStats]
  */
-export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, coding = null, lessons = null, bridge = null, core = true } = {}) {
-  const bridgeCfg = bridge && typeof bridge === 'object' ? bridge : null;
+/**
+ * 执行一次闲时整理。默认 dry-run：只返回候选，不写盘。
+ * 写盘只走 writeNote（同一套查重、锁与索引维护），且绝不删改既有记忆。
+ */
+export async function runDreaming({ apply = false, force = false, trigger = 'manual', agent = null } = {}) {
+  const state = await readDreamingState()
+  const enabled = state.configured ? state.enabled === true : dreamingCfg.enabled === true
+  if (!enabled) {
+    return { ok: false, enabled: false, skipped: 'disabled', hint: '闲时整理未开启：用 memory_dreaming action=on，或设置 dreaming.enabled=true。' }
+  }
+  const lastRunAt = Number.isFinite(Date.parse(state.lastRunAt)) ? Date.parse(state.lastRunAt) : 0
+  const cooldownMs = Math.max(0, Number(dreamingCfg.minIntervalMinutes) || 0) * 60000
+  if (!force && cooldownMs > 0 && lastRunAt && Date.now() - lastRunAt < cooldownMs) {
+    return {
+      ok: false, enabled: true, skipped: 'cooldown', lastRunAt: state.lastRunAt,
+      remainMinutes: Math.ceil((cooldownMs - (Date.now() - lastRunAt)) / 60000),
+    }
+  }
+  const nodes = await Promise.resolve(dreamingNodesOf(agent))
+  const drafts = pickDigests(nodes, {
+    maxNotes: Math.max(1, Number(dreamingCfg.maxNotes) || 3),
+    minCluster: Math.max(2, Number(dreamingCfg.minCluster) || 2),
+  })
+  const candidates = drafts.map(d => ({ title: d.title, events: d.events, tags: d.tags, seq: d.seq }))
+  if (!apply) {
+    return { ok: true, enabled: true, dryRun: true, trigger, candidates: candidates.length, drafts: candidates }
+  }
+  const written = []
+  const skipped = []
+  for (const draft of drafts) {
+    const res = await writeNote({
+      title: draft.title,
+      content: draft.content,
+      tags: draft.tags,
+      session: draft.session ?? undefined,
+      seq: draft.seq ?? undefined,
+    })
+    const text = typeof res === 'string' ? res : (res && res.text) || ''
+    if (/疑似重复/.test(text)) skipped.push(draft.title)
+    else written.push({ title: draft.title, result: text.slice(0, 200) })
+  }
+  const at = new Date().toISOString()
+  await writeDreamingState({
+    lastRunAt: at,
+    lastResult: { at, trigger, candidates: drafts.length, written: written.length, skipped: skipped.length },
+  })
+  return {
+    ok: true, enabled: true, dryRun: false, trigger, candidates: drafts.length,
+    written: written.length, skipped, at,
+  }
+}
+
+async function dreamingTool(args = {}, exec = null) {
+  const action = typeof args.action === 'string' ? args.action : 'status'
+  try {
+    if (action === 'status') {
+      const state = await readDreamingState()
+      const enabled = state.configured ? state.enabled === true : dreamingCfg.enabled === true
+      const source = state.configured ? '运行态（memory_dreaming on/off 写入 DREAMING.json）' : '设置项 dreaming.enabled'
+      const lastRunAt = Number.isFinite(Date.parse(state.lastRunAt)) ? Date.parse(state.lastRunAt) : 0
+      const cooldownMs = Math.max(0, Number(dreamingCfg.minIntervalMinutes) || 0) * 60000
+      const remain = lastRunAt && cooldownMs > 0 ? Math.max(0, cooldownMs - (Date.now() - lastRunAt)) : 0
+      return [
+        '闲时整理（dreaming）：' + (enabled ? '已开启' : '已关闭'),
+        '开关来源：' + source,
+        '触发：每次 turn/end 后空闲 ' + dreamingCfg.idleDelaySeconds + ' 秒；冷却 ' + dreamingCfg.minIntervalMinutes + ' 分钟；单次最多 ' + dreamingCfg.maxNotes + ' 条',
+        '上次整理：' + (state.lastRunAt || '从未') + (remain ? '（冷却中，约 ' + Math.ceil(remain / 60000) + ' 分钟后可再跑）' : ''),
+        '上次结果：' + (state.lastResult ? JSON.stringify(state.lastResult) : '从未执行'),
+        '只新增 digest 笔记，不删改既有记忆；action=run 默认 dry-run，apply=true 才写盘。',
+      ].join('\n')
+    }
+    if (action === 'on' || action === 'off') {
+      await writeDreamingState({ enabled: action === 'on' })
+      return '闲时整理已' + (action === 'on' ? '开启' : '关闭') + '（已写入 DREAMING.json，立即生效）。' +
+        (action === 'on' ? '\n开启后每次 turn/end 后空闲 ' + dreamingCfg.idleDelaySeconds + ' 秒触发一次；只新增 digest，不删改既有记忆。' : '')
+    }
+    if (action === 'run') {
+      const out = await runDreaming({ apply: args.apply === true, force: args.force === true, trigger: 'manual', agent: exec?.agent ?? null })
+      return JSON.stringify(out, null, 2)
+    }
+    return '设置失败：action 必须是 status / on / off / run。\n[err:E_ARG]'
+  } catch (e) {
+    return failMessage('E_INTERNAL', errText(e))
+  }
+}
+
+export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, coding = null, lessons = null, bridge = null, dreaming = null, core = true } = {}) {
+  const bridgeCfg = bridge && typeof bridge === 'object' ? bridge : null
+  dreamingCfg = { ...DREAMING_DEFAULTS, ...(dreaming && typeof dreaming === 'object' ? dreaming : {}) };
   // 核心记忆层可单独关闭（memory.enabled=false）：工具、注入节、风格路由、bootstrap 一起停，
   // 编码规范与踩坑记录层各有独立开关，不受影响。
   if (core) enqueue(async () => {
@@ -1177,6 +1273,20 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
           }));
         } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
       },
+    },
+    {
+      name: 'memory_dreaming',
+      description: '闲时整理（dreaming）开关：把近期决策/约束/重复进度聚成 digest 笔记。默认关闭；action=status 查看，on/off 切换，run 手动执行（默认只列候选，apply=true 才写盘，force=true 忽略冷却）。只新增笔记，不删改既有记忆。',
+      parameters: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          action: { type: 'string', enum: ['status', 'on', 'off', 'run'], description: 'status=查看；on/off=开关；run=执行一次' },
+          apply: { type: 'boolean', description: 'action=run 时是否写盘；默认 false（dry-run）' },
+          force: { type: 'boolean', description: 'action=run 时忽略冷却时间' },
+        },
+        required: ['action'],
+      },
+      execute: (args, exec) => dreamingTool(args, exec),
     },
   ];
 

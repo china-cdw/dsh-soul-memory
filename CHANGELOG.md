@@ -1,4 +1,12 @@
 # 变更日志
+## 0.3.33
+
+### 可选：闲时整理（dreaming）
+- 新增 `memory_dreaming` 工具：`status` 查看开关与上次结果，`on`/`off` 写入 `DREAMING.json` 立即生效，`run` 默认 dry-run（`apply: true` 才写、`force: true` 忽略冷却）。
+- 默认关闭；开启后每次 turn 结束按 `dreaming.idleDelaySeconds`（默认 120 秒）起 unref 定时器，把近期会话图谱里的决策、约束和重复进度聚成 digest 笔记——只新增，不改不删既有记忆。
+- 边界：单次最多 `maxNotes`（默认 3）条；自动整理有 `minIntervalMinutes`（默认 180）冷却；digest 带 `dream` 标签与来源 seq，走同一套查重。
+- 配置项：`dreaming.enabled`、`dreaming.idleDelaySeconds`、`dreaming.minIntervalMinutes`、`dreaming.maxNotes`；数据目录新增 `DREAMING.json`。
+- README 中英双语补充 dreaming 小节、工具表、配置与数据目录；断言数更新为 66 核心 / 10 编码 / 15 踩坑 / 11 重放 / 14 桥接 / 26 回归，共 142 项。
 
 ## 0.3.32
 

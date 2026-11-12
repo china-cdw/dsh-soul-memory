@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { assert, callTool, makeCtx, makeHome, suite, waitFor } from './_testkit.mjs';
-import { registerCoreMemory, setSessionSeqProvider } from '../src/core-memory.js';
+import { registerCoreMemory, setDreamNodeProvider, setSessionSeqProvider } from '../src/core-memory.js';
 import { latestSnapshot, snapshotGraph, snapshotMemory } from '../src/memory/util.js';
 import { readPersona } from '../src/persona.js';
 import { normalize, extract } from '../src/skeleton.js';
@@ -776,6 +776,54 @@ await t.test('宿主注入的运行时上下文不进入图谱', async () => {
   const { nodes } = extract(blocks);
   assert.equal(nodes.filter((n) => n.kind === 'constraint' && n.seq === 0).length, 0);
   assert.equal(nodes.filter((n) => n.kind === 'constraint' && n.seq === 1).length, 1);
+});
+
+await t.test('P0 闲时整理默认关闭：run 直接返回 disabled', async () => {
+  const out = JSON.parse(await callTool(tools1, 'memory_dreaming', { action: 'run' }));
+  assert.equal(out.ok, false);
+  assert.equal(out.skipped, 'disabled');
+});
+
+await t.test('P0 闲时整理开关持久化到 DREAMING.json', async () => {
+  const on = await callTool(tools1, 'memory_dreaming', { action: 'on' });
+  assert.match(on, /已开启/);
+  const raw = JSON.parse(await readFile(join(memoryDir, 'DREAMING.json'), 'utf8'));
+  assert.equal(raw.enabled, true);
+  assert.match(await callTool(tools1, 'memory_dreaming', { action: 'status' }), /已开启/);
+  await callTool(tools1, 'memory_dreaming', { action: 'off' });
+  const off = JSON.parse(await readFile(join(memoryDir, 'DREAMING.json'), 'utf8'));
+  assert.equal(off.enabled, false);
+});
+
+await t.test('P0 闲时整理 dry-run 不写盘、apply 写不超过上限且带 dream 标签', async () => {
+  await callTool(tools1, 'memory_dreaming', { action: 'on' });
+  setDreamNodeProvider(() => ([
+    { id: 'n1', kind: 'decision', text: '缓存失效采用事件驱动而不是轮询', why: '轮询延迟高且浪费 CPU', seq: 11 },
+    { id: 'n2', kind: 'progress', text: '缓存失效采用事件驱动而不是轮询（已完成）', seq: 12 },
+    { id: 'n3', kind: 'progress', text: '缓存失效采用事件驱动而不是轮询（已测试）', seq: 13 },
+    { id: 'n4', kind: 'constraint', text: '必须保持 Node 22 兼容', seq: 14 },
+    { id: 'n5', kind: 'constraint', text: '必须保持 Node 22 兼容（CI 已验）', seq: 15 },
+  ]));
+  const count = async () => (await readdir(notesDir)).filter((n) => n.endsWith('.md')).length;
+  const before = await count();
+  const dry = JSON.parse(await callTool(tools1, 'memory_dreaming', { action: 'run' }));
+  assert.equal(dry.dryRun, true);
+  assert.ok(dry.candidates >= 1, '没有选出候选');
+  assert.equal(await count(), before, 'dry-run 写了盘');
+
+  const applied = JSON.parse(await callTool(tools1, 'memory_dreaming', { action: 'run', apply: true }));
+  assert.equal(applied.dryRun, false);
+  assert.ok(applied.written >= 1 && applied.written <= 3, 'written=' + applied.written);
+  assert.equal(await count(), before + applied.written);
+  const index = await readIndex();
+  const dreams = index.notes.filter((n) => Array.isArray(n.tags) && n.tags.includes('dream'));
+  assert.ok(dreams.length >= 1, '没有写入带 dream 标签的笔记');
+
+  const again = JSON.parse(await callTool(tools1, 'memory_dreaming', { action: 'run', apply: true }));
+  assert.equal(again.skipped, 'cooldown');
+
+  await callTool(tools1, 'memory_dreaming', { action: 'off' });
+  setDreamNodeProvider(null);
 });
 
 const result = t.finish();
