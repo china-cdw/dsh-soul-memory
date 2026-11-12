@@ -4,6 +4,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { assert, callTool, makeCtx, makeHome, suite } from './_testkit.mjs';
+import { readFileSync } from 'node:fs';
 import { addRule, codingPath, collectRules, forgetRule, registerCodingRules } from '../src/coding.js';
 
 const home = await makeHome('dsh-mem-coding-');
@@ -114,6 +115,18 @@ await t.test('addRule/forgetRule 返回机器可读错误码', async () => {
   assert.equal(missing.ok, false);
   assert.equal(missing.code, 'E_NOT_FOUND');
 });
+await t.test('P1 why/pitfall 子项写入，forget 时连子项一起删', async () => {
+  const add = await addRule('写测试要先复现缺陷。', { why: '没有复现就无法确认修的是根因。', pitfall: '只跑新测试可能漏掉回归。' });
+  assert.equal(add.ok, true);
+  const after = readFileSync(codingPath(), 'utf8');
+  assert.match(after, /- 写测试要先复现缺陷。[\s\S]*为什么：没有复现/);
+  assert.match(after, /陷阱：只跑新测试/);
+  const del = await forgetRule('写测试要先复现缺陷。');
+  assert.equal(del.ok, true);
+  assert.equal(del.removed, 3);
+  assert.doesNotMatch(readFileSync(codingPath(), 'utf8'), /为什么：没有复现/);
+});
+
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('编码规范自检通过。');

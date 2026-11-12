@@ -1,5 +1,18 @@
 # 变更日志
 
+## 0.3.31
+
+### 借鉴三份参考实现后的三项增强
+
+- **检索准入**：`memory_search` 在查询含两个以上词时，只命中一个词的条目折叠为「低相关已折叠」，不再挤占前 8 条；标题/标签强命中仍直接保留。
+- **规则三要素**：`coding_rules action=add` 支持可选 `why`/`pitfall`，写为缩进子项（规则 + 为什么为真 + 陷阱）；`forget` 连子项一起删，不留孤儿。
+- **来源指纹**：`memory_write` 支持可选 `paths`（最多 10 个文件），front-matter 记录 sha256；`memory_read` 时比对，文件改过标「已变更（记忆可能过时）」，缺失标「已缺失」。
+
+### 验证
+
+- 新增 3 条回归（来源指纹变更/缺失、检索折叠、why/pitfall 连删）；六套共 **137 断言**全过。
+- `preflight` 通过；`sync-upstream --check` 仍通过。
+
 ## 0.3.30
 
 - 删除两处真实死代码：`src/memory/util.js` 的 `SECRET_PATTERN`（从未被引用，真正生效的是 `SECRET_VALUE`）、`src/persona.js` 的 `presetById`（从未被引用，调用方直接用 `PRESET_BY_ID`）。

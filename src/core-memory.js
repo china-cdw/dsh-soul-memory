@@ -14,8 +14,8 @@
 //      memory_search 在关键词无命中或命中不足时，可回落到会话图谱检索（由 index.js 注入）。
 import { readFile, mkdir, readdir, rm, stat, writeFile, utimes } from 'node:fs/promises';
 import { readFileSync, statSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWrite, createQueue, latestSnapshot, memoryPath, safeJson, sliceSafe, snapshotMemory, withFileLock } from './memory/util.js';
 import { checkGuard, isSensitive } from './memory/guard.js';
 import {
@@ -70,6 +70,10 @@ function parseNoteFile(text) {
       for (const line of fm.split('\n')) {
         const at = line.indexOf(':');
         if (at > 0) out.meta[line.slice(0, at).trim()] = line.slice(at + 1).trim();
+      }
+      if (typeof out.meta.sources === 'string') {
+        try { out.meta.sources = JSON.parse(out.meta.sources); }
+        catch { delete out.meta.sources; }
       }
     }
   }
@@ -139,6 +143,7 @@ function noteFileText(meta, content) {
     'updated: ' + meta.updated + '\n' +
     (meta.supersededBy ? 'supersededBy: ' + meta.supersededBy + '\n' : '') +
     (meta.sensitive ? 'sensitive: true\n' : '') +
+    (meta.sources ? 'sources: ' + JSON.stringify(meta.sources) + '\n' : '') +
     '---\n\n' + content + '\n';
 }
 
@@ -614,6 +619,24 @@ async function markSuperseded(target, newId) {
   return true;
 }
 
+/** 读取用户显式声明的来源文件指纹；单条记忆最多 10 个，读不到记为缺失。 */
+async function fingerprintPaths(paths) {
+  const list = Array.isArray(paths) ? paths.filter((p) => typeof p === 'string' && p.trim()).slice(0, 10) : [];
+  const out = [];
+  for (const p of list) {
+    const abs = isAbsolute(p) ? p : resolve(process.cwd(), p);
+    try {
+      const st = await stat(abs);
+      if (!st.isFile()) continue;
+      const buf = await readFile(abs);
+      out.push({ path: p, sha256: createHash('sha256').update(buf).digest('hex').slice(0, 16), mtime: Math.round(st.mtimeMs) });
+    } catch {
+      out.push({ path: p, missing: true });
+    }
+  }
+  return out;
+}
+
 async function writeNote(args) {
   const title = typeof args.title === 'string' ? args.title.replace(/\s+/g, ' ').trim() : '';
   const content = typeof args.content === 'string' ? args.content : '';
@@ -631,6 +654,7 @@ async function writeNote(args) {
     return failMessage('E_GUARD', '拒绝保存：内容命中守卫规则（私钥或凭据形状），未落盘。请删掉敏感片段后重试。');
   }
   const sensitive = guard.kind === 'sensitive';
+  const sources = await fingerprintPaths(args.paths);
   try {
     return await enqueue(() => withLockedIndex(async (existing) => {
       let target = null;
@@ -656,7 +680,7 @@ async function writeNote(args) {
       }
       const id = makeId(title, existing);
       const now = new Date().toISOString();
-      const meta = { id, title, tags, created: now, updated: now, size: 0, ...(sensitive ? { sensitive: true } : {}) };
+      const meta = { id, title, tags, created: now, updated: now, size: 0, ...(sensitive ? { sensitive: true } : {}), ...(sources.length ? { sources } : {}) };
       const fileText = noteFileText(meta, content);
       meta.size = fileText.length;
       await atomicWrite(join(notesDir(), id + '.md'), fileText);
@@ -684,11 +708,20 @@ async function searchNotes(args, graphSearch, agent, bridge) {
     const notes = await loadIndex();
     const now = Date.now();
     const scored = [];
+    // 检索准入：查询至少两个词时，只命中一个词的条目算低相关，折叠而不丢弃。
+    const qTokens = [...new Set(tokensOf(query.toLowerCase()))];
+    const needTokens = Math.min(2, qTokens.length);
+    let folded = 0;
     // 正文走缓存：同一次搜索里每条笔记只读一次盘，重复搜索直接命中内存。
     for (const note of notes) {
       const bodyText = await readNoteBody(note.id);
       const score = scoreNote(note, query, bodyText, now);
-      if (score > 0) scored.push({ note, score, bodyText });
+      if (score <= 0) continue;
+      const lower = ((note.title || '') + ' ' + (note.tags || []).join(' ') + ' ' + bodyText).toLowerCase();
+      let matched = 0;
+      for (const t of qTokens) if (lower.indexOf(t) >= 0) matched++;
+      if (matched >= needTokens || score >= 3) scored.push({ note, score, bodyText });
+      else folded++;
     }
     scored.sort((a, b) => b.score - a.score);
 
@@ -713,6 +746,8 @@ async function searchNotes(args, graphSearch, agent, bridge) {
       });
       sections.push('【归档记忆】找到 ' + scored.length + ' 条（显示前 ' + shown.length + ' 条）：\n\n' + lines.join('\n\n'));
     }
+
+    if (folded) sections.push('【低相关已折叠】另有 ' + folded + ' 条只命中部分关键词，未列出；需要时换更精确的词再搜。');
 
     if (graphHits.length) {
       const lines = graphHits.map((h) => {
@@ -765,10 +800,25 @@ async function readNote(ref) {
       return failMessage('E_READ', '记忆 [' + note.id + '] 在索引中存在但文件读取失败：' + errText(e));
     }
     const parsed = parseNoteFile(text);
+    const sourceLines = [];
+    for (const src of (Array.isArray(parsed.meta.sources) ? parsed.meta.sources : [])) {
+      let state = '未变';
+      try {
+        const abs = isAbsolute(src.path) ? src.path : resolve(process.cwd(), src.path);
+        const st = await stat(abs);
+        if (!st.isFile()) state = '不是普通文件';
+        else if (src.sha256) {
+          const buf = await readFile(abs);
+          if (createHash('sha256').update(buf).digest('hex').slice(0, 16) !== src.sha256) state = '已变更（记忆可能过时）';
+        }
+      } catch { state = '已缺失'; }
+      sourceLines.push('- ' + src.path + '：' + state);
+    }
     let out = '[' + note.id + '] ' + note.title +
       (note.supersededBy ? '（已被 [' + note.supersededBy + '] 取代）' : '') +
       (note.sensitive ? '（敏感内容）' : '') +
-      '\n创建：' + note.created + ((note.tags && note.tags.length) ? '\n标签：' + note.tags.join(', ') : '') + '\n\n' +
+      '\n创建：' + note.created + ((note.tags && note.tags.length) ? '\n标签：' + note.tags.join(', ') : '') +
+      (sourceLines.length ? '\n来源：\n' + sourceLines.join('\n') : '') + '\n\n' +
       (note.sensitive ? '（此条被守卫标记为疑似凭据，正文默认隐藏；下面是显式读取内容）\n\n' : '') + parsed.body;
     if (out.length > 8000) out = truncateWithFences(out, 8000) + '\n…（内容过长已截断）';
     return out;
@@ -961,6 +1011,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
           tags: { type: 'array', items: { type: 'string' }, description: '可选标签数组，便于检索' },
           force: { type: 'boolean', description: '已确认不是重复时传 true，跳过重复检查' },
           supersedes: { type: 'string', description: '可选：被这条新记忆取代的旧记忆 id（旧条目会被标记为已被取代，不删除）' },
+          paths: { type: 'array', items: { type: 'string' }, description: '可选：这条记忆依据的文件路径；之后文件改了，memory_read 会提示「已过时」' },
         },
         required: ['title', 'content'],
       },

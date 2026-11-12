@@ -168,8 +168,11 @@ function ruleKey(text) {
   return normalizeRule(text).replace(/\s+/g, '');
 }
 
-export async function addRule(text) {
+export async function addRule(text, opts = {}) {
   const rule = normalizeRule(text);
+  const why = normalizeRule(opts.why || '');
+  const pitfall = normalizeRule(opts.pitfall || '');
+  if (why.length > 400 || pitfall.length > 400) return { ok: false, code: 'E_ARG', error: '为什么/陷阱各不能超过 400 字。' };
   if (!rule) return { ok: false, code: 'E_ARG', error: '规则内容不能为空。' };
   if (rule.length > MAX_RULE_TEXT) return { ok: false, code: 'E_ARG', error: `规则太长（${rule.length} 字），上限 ${MAX_RULE_TEXT} 字。` };
   try {
@@ -187,13 +190,14 @@ export async function addRule(text) {
     if (lines.some((line) => ruleKey(line.replace(/^\s*-\s*/, '')) === ruleKey(rule))) {
       return { ok: false, code: 'E_DUPLICATE', error: '已有相同规则，未重复写入。' };
     }
+    const block = [`- ${rule}`, ...(why ? [`  - 为什么：${why}`] : []), ...(pitfall ? [`  - 陷阱：${pitfall}`] : [])];
     const idx = lines.findIndex((line) => line.trim() === '## 规则');
     if (idx >= 0) {
       let at = idx + 1;
       while (at < lines.length && lines[at].trim() === '') at++;
-      lines.splice(at, 0, `- ${rule}`);
+      lines.splice(at, 0, ...block);
     } else {
-      lines.push('', '## 规则', '', `- ${rule}`);
+      lines.push('', '## 规则', '', ...block);
     }
     try {
       await atomicWrite(path, lines.join('\n').replace(/\n{3,}/g, '\n\n'));
@@ -221,11 +225,22 @@ export async function forgetRule(text) {
     }
     if (!existing) return { ok: false, code: 'E_NOT_FOUND', error: '全局编码规范还是空的。' };
     const lines = existing.split('\n');
-    const kept = lines.filter((line) => {
+    // 顺序扫描：删掉规则行时连带删掉它缩进的「为什么 / 陷阱」子行，不留孤儿。
+    const kept = [];
+    let skipSub = false;
+    for (const line of lines) {
+      if (/^\s{2,}-\s/.test(line)) {
+        if (skipSub) continue;
+        kept.push(line);
+        continue;
+      }
       const m = line.match(/^\s*-\s*(.*)$/);
-      if (!m) return true;
-      return ruleKey(m[1]) !== ruleKey(rule);
-    });
+      if (m) {
+        if (ruleKey(m[1]) === ruleKey(rule)) { skipSub = true; continue; }
+        skipSub = false;
+      }
+      kept.push(line);
+    }
     const removed = lines.length - kept.length;
     if (!removed) return { ok: false, code: 'E_NOT_FOUND', error: '没有找到完全匹配的规则；先 action=list 看一眼。' };
     try {
@@ -268,7 +283,7 @@ export function registerCodingRules(ctx, options = {}) {
 
   ctx.tools.register({
     name: 'coding_rules',
-    description: '编码规范固定记忆。show=看当前会注入的规则（全局+项目）；list=看全局 CODING.md 原文；add=追加一条全局规则（跨会话生效，用户纠正你的写法后用它记住）；forget=删除一条全局规则（需完全匹配）。',
+    description: '编码规范固定记忆。show=看当前会注入的规则（全局+项目）；list=看全局 CODING.md 原文；add=追加一条全局规则（跨会话生效，用户纠正你的写法后用它记住；可选 why/pitfall 记「为什么为真」和「陷阱」）；forget=删除一条全局规则（需完全匹配，连同子项一起删）。',
     output: outputText,
     parameters: {
       type: 'object',
@@ -276,13 +291,15 @@ export function registerCodingRules(ctx, options = {}) {
       properties: {
         action: { type: 'string', enum: ['show', 'list', 'add', 'forget'], description: '操作' },
         text: { type: 'string', description: 'add / forget 时的规则内容（一句话，一条规则）' },
+        why: { type: 'string', description: 'add 可选：为什么这条为真（一句话）' },
+        pitfall: { type: 'string', description: 'add 可选：什么时候会踩坑（一句话）' },
       },
       required: ['action'],
     },
     async execute(args = {}, exec) {
       const action = args.action;
       if (action === 'add') {
-        const res = await addRule(args.text);
+        const res = await addRule(args.text, { why: args.why, pitfall: args.pitfall });
         return res.ok ? `已记入全局编码规范：${res.rule}` : `未写入：${res.error}\n[err:${res.code || 'E_IO'}]`;
       }
       if (action === 'forget') {

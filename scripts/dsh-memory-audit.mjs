@@ -733,6 +733,26 @@ await t.test('P1 源记忆全空时不清空当天残目录', async () => {
   }
 })
 
+await t.test('P0 来源指纹：文件改了 memory_read 标已过时', async () => {
+  const src = join(home.dir, 'fingerprint-source.txt');
+  await writeFile(src, 'v1', 'utf8');
+  const saved = await callTool(tools1, 'memory_write', {
+    title: '指纹来源', content: '这条记忆依据一个源文件。', paths: [src], force: true,
+  });
+  assert.match(saved, /已保存归档记忆/);
+  const id = /\[([^\]]+)\]/.exec(saved)[1];
+  assert.match(await callTool(tools1, 'memory_read', { id }), /来源：[\s\S]*未变/);
+  await writeFile(src, 'v2-changed', 'utf8');
+  assert.match(await callTool(tools1, 'memory_read', { id }), /已变更/);
+});
+
+await t.test('P0 检索准入：只命中一个词的条目被折叠而不是列出', async () => {
+  await callTool(tools1, 'memory_write', { title: '折叠测试甲', content: 'zebra 只在正文出现一次。', force: true });
+  const out = await callTool(tools1, 'memory_search', { query: 'zebra 完全不相关的另一个词' });
+  assert.match(out, /低相关已折叠/);
+  assert.doesNotMatch(out, /折叠测试甲/);
+});
+
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('核心记忆自检通过。');
