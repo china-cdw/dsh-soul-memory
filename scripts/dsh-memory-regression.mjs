@@ -249,5 +249,43 @@ await t.test('P1 空事件不会让 offset 顺延吃掉下一条开头', async (
   assert.ok(out.text.includes('ABCD'), JSON.stringify(out));
 });
 
+await t.test('P1 from 指向不存在的 seq 时 offset 不清零会吞下一条开头', async () => {
+  const { expandRange } = await import('../src/session-search.js');
+  const events = [{ seq: 2, data: { text: 'ABCDEFGH' } }];
+  const session = { eventAt: (seq) => events.find((e) => e.seq === seq) ?? null };
+  const out = expandRange(session, 1, 2, { limit: 2000, offset: 4 });
+  assert.equal(out.text, 'ABCDEFGH', JSON.stringify(out));
+});
+
+await t.test('P2 零预算返回可回填的 next 起点', async () => {
+  const { expandRange } = await import('../src/session-search.js');
+  const events = [{ seq: 0, data: { text: 'hello' } }];
+  const session = { eventAt: (seq) => events.find((e) => e.seq === seq) ?? null };
+  const out = expandRange(session, 0, 0, { limit: 0 });
+  assert.equal(out.next, 0, JSON.stringify(out));
+  assert.match(out.note, /from=from/, out.note);
+});
+
+await t.test('P0 死锁回收串行：多个写者同时回收不会一起进临界区', async () => {
+  const { withFileLock } = await import('../src/memory/util.js');
+  const target = join(memoryPath('.'), 'lock-target.txt');
+  const lock = target + '.lock';
+  await writeFile(target, '', 'utf8');
+  // 伪造 pid 已死、mtime 早于 2s 回收阈值的锁。
+  await writeFile(lock, '999999-' + Date.now() + '-dead', 'utf8');
+  const old = new Date(Date.now() - 60000);
+  await utimes(lock, old, old);
+  let inside = 0;
+  let max = 0;
+  const job = () => withFileLock(target, async () => {
+    inside += 1;
+    max = Math.max(max, inside);
+    await new Promise((r) => setTimeout(r, 30));
+    inside -= 1;
+  }, { waitMs: 8000, staleMs: 10000 });
+  await Promise.all([job(), job(), job()]);
+  assert.equal(max, 1, 'critical section overlap: ' + max);
+});
+
 const result = t.finish();
 process.exit(result.fail ? 1 : 0);

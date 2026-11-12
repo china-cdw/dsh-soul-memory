@@ -97,8 +97,8 @@ function sliceAround(text, from, to, limit) {
     const c = text.charCodeAt(start)
     if (c >= 0xdc00 && c <= 0xdfff) start -= 1
   }
-  // 预算连一个字符都放不下时，返回窗口起点处的第一个完整 code point：
-  // 宁可超出几字节，也不能让调用方拿不到任何内容（否则会反复重试同一区间）。
+  // 预算连一个字符都放不下时返回空串（严格不超预算），由调用方提示提高 limit；
+  // 不能违背「不超过 limit」的承诺去返回半个字符。
   if (end === start) {
     const cp = text.codePointAt(start)
     if (cp === undefined) return ''
@@ -223,8 +223,8 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
   const toNum = Number.isFinite(rawTo) ? Math.max(0, Math.floor(rawTo)) : fromNum
   const start = Math.max(0, Math.min(fromNum, toNum))
   const end = Math.max(0, Math.max(fromNum, toNum))
-  if (budget <= 0) return { from: start, to: start - 1, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'limit 为 0 或负数：未处理任何事件（to 停在 start 前一位；start=0 时 to=0）' }
-  if (cap <= 0) return { from: start, to: start - 1, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'maxEvents 为 0：未处理任何事件（to 停在 start 前一位；start=0 时 to=0）' }
+  if (budget <= 0) return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'limit 为 0 或负数：未处理任何事件（to=start-1，start=0 时 to=-1 表示一条都没读；续读请用 from=from 重发并提高 limit）' }
+  if (cap <= 0) return { from: start, to: start - 1, next: start, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'maxEvents 为 0：未处理任何事件（to=start-1，start=0 时 to=-1 表示一条都没读；续读请用 from=from 重发并提高 maxEvents）' }
   if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0, truncated: false, note: '会话没有可读的原文接口' }
   const parts = []
   let events = 0
@@ -238,7 +238,9 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
   for (let seq = start; seq <= end; seq++) {
     if (events >= cap) { hitCap = true; break }
     const event = session.eventAt(seq)
-    if (!event) continue
+    // 指定区间的起点不存在时也要清掉 offset：否则 skip 会顺延到下一条真实事件，
+    // 悄悄吃掉它的开头（offset 只作用于调用方指定的那一条事件）。
+    if (!event) { pendingSkip = 0; continue }
     const text = textOfEvent(event).trim()
     // 即使这条事件为空，也要先把 offset 消费掉：否则 skip 会顺延到后面的条目，
     // 悄悄吃掉下一条事件的开头。
@@ -299,6 +301,6 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
     events,
     truncated,
     ...(resume ? { resume } : {}),
-    ...(truncated ? { note: '已截断：仅返回 ' + events + ' 条事件 / ' + Buffer.byteLength(text) + ' 字节' + (clipped ? '（首条事件超出预算，已裁剪；续读用 from=resume.seq 并传 offset=resume.offset）' : '') + '。' } : {}),
+    ...(truncated ? { note: '已截断：仅返回 ' + events + ' 条事件 / ' + Buffer.byteLength(text) + ' 字节' + (events === 0 ? '（预算不足一个字符，请提高 limit（≥4）后重试）' : '') + (clipped ? '（首条事件超出预算，已裁剪；续读用 from=resume.seq 并传 offset=resume.offset）' : '') + '。' } : {}),
   }
 }

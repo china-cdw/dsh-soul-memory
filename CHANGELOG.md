@@ -1,5 +1,15 @@
 # 变更日志
 
+## 0.3.22
+
+- 死锁回收串行化：pid 已死的锁通过 `<lock>.reclaim` 二级锁串行回收，删除前复核内容与 mtime，避免多个写者同时进临界区（实测重叠 3/3 → 0/3）。
+- `soul_expand` 的 `from` 指向不存在的 seq 时同步清空 `pendingSkip`，offset 不再顺延吃掉下一条事件的开头。
+- 零预算返回可回填的 `next`，并修正 note 中 `to` 的说明（from=0 时 to=-1 表示一条都没读）。
+- 预算不足一个字符时 note 明确提示「提高 limit（≥4）」，不再让调用方原地打转。
+- `soul_recall` 的 `k` 允许 0（等同默认 3），避免收紧校验造成的破坏性变更；`from > to` 交给区间归一化，不再报错。
+- `sliceAround` 注释与「严格不超预算」的实现对齐；README 中英文修正续读协议（首条被裁剪用 resume.seq+offset，其他截断用 from=to+1）。
+- 自检 126 断言全过（含缺失事件 offset、零预算 next、死锁回收并发三条新回归）。
+
 ## 0.3.21
 
 - 修复 `soul_expand` 的 offset 在空事件上顺延、吞掉下一条开头（空事件也先消费 offset；`from=0` 零预算返回 `to=-1` 且标 `truncated`）。

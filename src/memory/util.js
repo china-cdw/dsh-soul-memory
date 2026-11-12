@@ -46,7 +46,7 @@ function pidAlive(pid) {
   try { process.kill(pid, 0); return true } catch (e) { return Boolean(e && e.code === 'EPERM') }
 }
 
-export async function withFileLock(file, job, { waitMs = null, staleMs = 10000 } = {}) {
+export async function withFileLock(file, job, { waitMs = null, staleMs = 10000, deadReclaim = true } = {}) {
   const lock = file + '.lock';
   await mkdir(dirname(lock), { recursive: true });
   const token = process.pid + '-' + Date.now() + '-' + Math.random().toString(16).slice(2);
@@ -72,7 +72,18 @@ export async function withFileLock(file, job, { waitMs = null, staleMs = 10000 }
         // 进程崩溃留下的锁：pid 已不存在就立刻回收，不必等 stale 过期（否则要白等十分钟）。
         const holderPid = Number(String(before ?? '').split('-')[0]);
         const dead = Number.isInteger(holderPid) && holderPid > 0 && !pidAlive(holderPid);
-        if (dead && Date.now() - st.mtimeMs > 2000) await rm(lock, { force: true });
+        if (dead && Date.now() - st.mtimeMs > 2000 && deadReclaim) {
+          // 回收权必须串行：多个进程同时判定同一把锁是死锁时，只有一个能删；
+          // 复核内容与 mtime，避免把别人刚抢到的活锁删掉。
+          try {
+            await withFileLock(lock + '.reclaim', async () => {
+              const again = await readFile(lock, 'utf8').catch(() => null)
+              const st2 = await stat(lock).catch(() => null)
+              if (again !== before || !st2 || Date.now() - st2.mtimeMs <= 2000) return
+              await rm(lock, { force: true })
+            }, { waitMs: 2000, staleMs: 5000, deadReclaim: false })
+          } catch { /* 回收失败就让路，下一轮再试 */ }
+        }
         else if (before !== null && Date.now() - st.mtimeMs > staleMs) {
           const again = await readFile(lock, 'utf8').catch(() => null);
           const st2 = await stat(lock);
