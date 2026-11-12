@@ -1,5 +1,11 @@
 # 变更日志
 
+## 0.3.32
+
+- **归档记忆记录来源会话与事件序号**：`memory_write` 未显式传 `session`/`seq` 时，自动取 `exec.agent.session.id` 与当前会话最新事件序号，写入 front-matter；`memory_read` 显示「来源会话：<sid> #<seq>（可 soul_expand 回看原文）」，让记忆能回捞到原始对话。
+- **宿主注入文本不再进入记忆**：新增 `injected()` 特征识别（runtime-context 快照、`[骨架]`、技能清单、系统提醒、核心记忆/编码规范/踩坑注入段落），入缓冲与纠正判断前跳过；`skeleton.normalize` 把这类消息标为 `sourceKind: "host"`，`extract` 直接跳过，避免把「宿主告诉我什么」误当成「用户约束」。
+- 回归：新增 2 条用例（自动来源会话、注入上下文不进图谱），共 139 断言。
+
 ## 0.3.31
 
 ### 借鉴三份参考实现后的三项增强

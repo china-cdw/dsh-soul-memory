@@ -152,6 +152,30 @@ function normalizePath(p) {
 
 export const human = message => message?.source?.kind === 'user'
 
+/**
+ * 宿主把运行时上下文、技能目录、定时任务通知、system-reminder 等以 user-role 消息注入。
+ * 它们不是人的话：进入会话图谱会变成永久的「约束/事实」，下一轮又被当作已知内容复述，
+ * 形成自我污染（dsh-soul 2.1 修过同一问题）。按开头特征识别，宁可少记，不要记错。
+ */
+const HOST_INJECTED = [
+  /^Current runtime context\./i,
+  /^Time sampled while preparing/i,
+  /^\[骨架\]/,
+  /^A skill is a reusable set of task-specific instructions/i,
+  /^<system-reminder>/,
+  /^<available_skills>/,
+  /^You are an AI agent powered by DeepSeek Harness/i,
+  /^# 跨会话记忆/,
+  /^# DSH 核心记忆/,
+  /^# 编码规范（dsh-x-memory）/,
+  /^# 踩过的坑（dsh-x-memory/,
+  /^## 最近归档记忆/,
+]
+export const injected = text => {
+  const head = String(text ?? '').trimStart().slice(0, 400)
+  return HOST_INJECTED.some(re => re.test(head))
+}
+
 export function textBlocks(content) {
   if (!Array.isArray(content)) return ''
   return bounded(content.filter(b => b?.type === 'text' && typeof b.text === 'string').map(b => b.text).join('\n'), 6000)

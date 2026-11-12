@@ -32,6 +32,13 @@ import { registerCodingRules } from './coding.js';
 import { registerLessons } from './lessons.js';
 import { biliStatus, searchBili } from './memory/bili.js';
 
+// 当前会话的事件序号提供者：index.js 启动时注入（读 MemoryBuffer 的最新 seq）。
+// 抽出来是为了让 writeNote 不依赖 index.js，测试也能直接喂一个假的。
+let sessionSeqOf = () => null;
+export function setSessionSeqProvider(fn) {
+  sessionSeqOf = typeof fn === 'function' ? fn : () => null;
+}
+
 const corePath = () => memoryPath('MEMORY.md');
 const notesDir = () => memoryPath('notes');
 const indexPath = () => memoryPath('index.json');
@@ -75,6 +82,7 @@ function parseNoteFile(text) {
         try { out.meta.sources = JSON.parse(out.meta.sources); }
         catch { delete out.meta.sources; }
       }
+      if (typeof out.meta.seq === 'string' && /^\d+$/.test(out.meta.seq)) out.meta.seq = Number(out.meta.seq);
     }
   }
   return out;
@@ -141,6 +149,8 @@ function noteFileText(meta, content) {
     'tags: ' + ((meta.tags || []).join(', ')) + '\n' +
     'created: ' + meta.created + '\n' +
     'updated: ' + meta.updated + '\n' +
+    (meta.session ? 'session: ' + meta.session + '\n' : '') +
+    (Number.isInteger(meta.seq) ? 'seq: ' + meta.seq + '\n' : '') +
     (meta.supersededBy ? 'supersededBy: ' + meta.supersededBy + '\n' : '') +
     (meta.sensitive ? 'sensitive: true\n' : '') +
     (meta.sources ? 'sources: ' + JSON.stringify(meta.sources) + '\n' : '') +
@@ -637,7 +647,7 @@ async function fingerprintPaths(paths) {
   return out;
 }
 
-async function writeNote(args) {
+async function writeNote(args, exec = null) {
   const title = typeof args.title === 'string' ? args.title.replace(/\s+/g, ' ').trim() : '';
   const content = typeof args.content === 'string' ? args.content : '';
   if (!title || !content.trim()) return failMessage('E_ARG', '保存失败：title 和 content 均不能为空。');
@@ -655,6 +665,10 @@ async function writeNote(args) {
   }
   const sensitive = guard.kind === 'sensitive';
   const sources = await fingerprintPaths(args.paths);
+  // 记下这条记忆从哪个会话、哪个事件序号写出来：以后能 soul_expand 回看原文，
+  // 而不是只留一句脱离上下文的结论。
+  const session = typeof args.session === 'string' ? args.session.trim() : String(exec?.agent?.session?.id ?? '').trim();
+  const seq = Number.isInteger(args.seq) ? args.seq : (session ? sessionSeqOf(session) : null);
   try {
     return await enqueue(() => withLockedIndex(async (existing) => {
       let target = null;
@@ -680,7 +694,13 @@ async function writeNote(args) {
       }
       const id = makeId(title, existing);
       const now = new Date().toISOString();
-      const meta = { id, title, tags, created: now, updated: now, size: 0, ...(sensitive ? { sensitive: true } : {}), ...(sources.length ? { sources } : {}) };
+      const meta = {
+        id, title, tags, created: now, updated: now, size: 0,
+        ...(sensitive ? { sensitive: true } : {}),
+        ...(sources.length ? { sources } : {}),
+        ...(session ? { session } : {}),
+        ...(Number.isInteger(seq) ? { seq } : {}),
+      };
       const fileText = noteFileText(meta, content);
       meta.size = fileText.length;
       await atomicWrite(join(notesDir(), id + '.md'), fileText);
@@ -818,6 +838,7 @@ async function readNote(ref) {
       (note.supersededBy ? '（已被 [' + note.supersededBy + '] 取代）' : '') +
       (note.sensitive ? '（敏感内容）' : '') +
       '\n创建：' + note.created + ((note.tags && note.tags.length) ? '\n标签：' + note.tags.join(', ') : '') +
+      (note.session ? '\n来源会话：' + note.session + (Number.isInteger(note.seq) ? ' #' + note.seq + '（可 soul_expand 回看原文）' : '') : '') +
       (sourceLines.length ? '\n来源：\n' + sourceLines.join('\n') : '') + '\n\n' +
       (note.sensitive ? '（此条被守卫标记为疑似凭据，正文默认隐藏；下面是显式读取内容）\n\n' : '') + parsed.body;
     if (out.length > 8000) out = truncateWithFences(out, 8000) + '\n…（内容过长已截断）';
@@ -1012,10 +1033,12 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
           force: { type: 'boolean', description: '已确认不是重复时传 true，跳过重复检查' },
           supersedes: { type: 'string', description: '可选：被这条新记忆取代的旧记忆 id（旧条目会被标记为已被取代，不删除）' },
           paths: { type: 'array', items: { type: 'string' }, description: '可选：这条记忆依据的文件路径；之后文件改了，memory_read 会提示「已过时」' },
+          session: { type: 'string', description: '可选：来源会话 id；不传时自动取当前会话' },
+          seq: { type: 'integer', description: '可选：来源事件序号；不传时自动取当前会话最新序号' },
         },
         required: ['title', 'content'],
       },
-      execute: writeNote,
+      execute: (args, exec) => writeNote(args, exec),
     },
     {
       name: 'memory_core',

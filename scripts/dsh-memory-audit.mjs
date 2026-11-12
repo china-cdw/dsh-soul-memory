@@ -7,9 +7,10 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { assert, callTool, makeCtx, makeHome, suite, waitFor } from './_testkit.mjs';
-import { registerCoreMemory } from '../src/core-memory.js';
+import { registerCoreMemory, setSessionSeqProvider } from '../src/core-memory.js';
 import { latestSnapshot, snapshotGraph, snapshotMemory } from '../src/memory/util.js';
 import { readPersona } from '../src/persona.js';
+import { normalize, extract } from '../src/skeleton.js';
 import { expandRange, MAX_SEQ, validateExpandArgs } from '../src/session-search.js';
 
 // 锁测试要快：默认等待 35s，这里压到 300ms（withIndexLock 每次调用时读取）。
@@ -751,6 +752,30 @@ await t.test('P0 检索准入：只命中一个词的条目被折叠而不是列
   const out = await callTool(tools1, 'memory_search', { query: 'zebra 完全不相关的另一个词' });
   assert.match(out, /低相关已折叠/);
   assert.doesNotMatch(out, /折叠测试甲/);
+});
+
+await t.test('memory_write 自动记录来源会话与事件序号', async () => {
+  setSessionSeqProvider(() => 42);
+  const saved = await callTool(tools1, 'memory_write', {
+    title: '来源会话测试', content: '这条记忆应带来源会话与事件序号。', force: true,
+  }, { agent: { session: { id: 'sess-abc123' } } });
+  const open = saved.indexOf('[');
+  const close = saved.indexOf(']', open + 1);
+  const id = open >= 0 && close > open ? saved.slice(open + 1, close) : '';
+  const out = await callTool(tools1, 'memory_read', { id });
+  assert.match(out, /来源会话：sess-abc123 #42/);
+  setSessionSeqProvider(null);
+});
+
+await t.test('宿主注入的运行时上下文不进入图谱', async () => {
+  const blocks = normalize([
+    { seq: 0, type: 'user/message', data: { source: { kind: 'user' }, content: 'Current runtime context. Current working directory: C:/x' } },
+    { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: '必须用中文回答所有问题' } },
+  ]);
+  assert.equal(blocks.find((b) => b.seq === 0).sourceKind, 'host');
+  const { nodes } = extract(blocks);
+  assert.equal(nodes.filter((n) => n.kind === 'constraint' && n.seq === 0).length, 0);
+  assert.equal(nodes.filter((n) => n.kind === 'constraint' && n.seq === 1).length, 1);
 });
 
 const result = t.finish();

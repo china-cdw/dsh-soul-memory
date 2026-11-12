@@ -1,4 +1,4 @@
-import { bounded, bytes as sizeOf, terms as termSet, hash, redact } from './util.js'
+import { bounded, bytes as sizeOf, terms as termSet, hash, redact, injected } from './util.js'
 // One-way: consolidation reads the memory model and the store, never this module. Keeping the
 // arrow pointing this way is what lets `compact()` stay a pure function of its inputs — the
 // caller passes a profile in, so the same span and the same profile always render the same bytes.
@@ -91,7 +91,9 @@ export function normalize(events = []) {
       // They are content, but they are not the human, and treating them as standing instructions
       // turns a paragraph of boilerplate into a pinned constraint.
       const source = event?.data?.source ?? event?.data?.message?.source ?? null
-      if (text) push({ seq, kind: 'user', sourceKind: source?.kind ?? 'unknown', text })
+      // 宿主注入的内容（运行时上下文、技能目录、system-reminder…）标成 host：
+      // 即使宿主把 source.kind 报成 user，也不该被当成人的话进入图谱。
+      if (text) push({ seq, kind: 'user', sourceKind: injected(text) ? 'host' : (source?.kind ?? 'unknown'), text })
       continue
     }
     if (type === 'assistant/message' || type === 'assistant') {
@@ -187,6 +189,8 @@ export function extract(blocks, { scope = 'default', hashOf = null } = {}) {
   }
 
   for (const block of blocks) {
+    // 宿主注入块不产生任何节点（约束、决策、进度都不该来自运行时上下文）。
+    if (block.sourceKind === 'host') continue
     if (block.kind === 'user') {
       turnArtifacts = []
       // Only the human speaks with authority. Injected runtime context and job notices are

@@ -10,7 +10,7 @@ import { readDefaults } from './src/harness.js'
 import { turnCounter } from './src/gate.js'
 import { hostProbe } from './src/host-probe.js'
 import { createHostRunner } from './src/host-runner.js'
-import { projectScope, bounded, boolean, integer, human, textBlocks, fail, sameTask, redact, terms as termSet } from './src/util.js'
+import { projectScope, bounded, boolean, integer, human, textBlocks, fail, sameTask, redact, terms as termSet, injected } from './src/util.js'
 import { MemoryBuffer, capture, projectionText, recall, neighbourhood, consolidate, recordLookup, recordHandoff, recordCorrection, mergeDuplicates, view, fileFingerprint, promoteTurn } from './src/memory.js'
 import { memoryView, explain, retire, restore, periphery } from './src/graph-memory.js'
 import { searchSession, expandRange, MAX_SEQ, validateExpandArgs } from './src/session-search.js'
@@ -19,7 +19,7 @@ import { sizeReport, COMPONENTS } from './src/tree.js'
 import { createComponents, cwdForAgent } from './src/components.js'
 import { assertVerifier, validationSettings } from './src/validation.js'
 import { runChecks } from './src/probe.js'
-import { registerCoreMemory } from './src/core-memory.js'
+import { registerCoreMemory, setSessionSeqProvider } from './src/core-memory.js'
 import { snapshotGraph } from './src/memory/util.js'
 
 export const name = 'dsh-x-memory'
@@ -237,6 +237,11 @@ export function apply(ctx, input = {}) {
   const recent = new Map()      // session -> last finished observation
   const lastTurn = new Map()    // session -> { intent } to detect corrections
   const memory = new MemoryBuffer()
+  // memory_write 自动记下来源：会话 id 由工具上下文给，事件序号从缓冲区取。
+  setSessionSeqProvider((sid) => {
+    const events = memory.peek(sid)
+    return events.length ? events[events.length - 1].seq : 0
+  })
   const cwdBySession = new Map()
   // Sufficiency signal: when the incoming question barely touches the card, the card is not
   // enough and the model must be told so before it answers from imagination.
@@ -355,6 +360,8 @@ export function apply(ctx, input = {}) {
           if (!human(message)) continue
           const text = textBlocks(message.content)
           if (!text.trim()) continue
+          // 宿主注入的运行时上下文/技能目录不是人的话：不猜意图、不当纠正、不进缓冲。
+          if (injected(text)) continue
           // Buffer the raw message: one normalizer decides what a block is, and it is the
           // same one that the offline bench exercises.
           if (config.memory.enabled) memory.push(sid, { type: 'user/message', data: { message } })
