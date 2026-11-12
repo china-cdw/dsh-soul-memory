@@ -61,7 +61,11 @@ export async function withFileLock(file, job, { waitMs = null, staleMs = 10000, 
       break;
     } catch (e) {
       if (!e || e.code !== 'EEXIST') throw e;
-      if (Date.now() - started > effectiveWait) throw new Error('文件写入被占用（' + lock + ' 超过 ' + effectiveWait + 'ms 未释放）');
+      if (Date.now() - started > effectiveWait) {
+        const err = new Error('文件写入被占用（' + lock + ' 超过 ' + effectiveWait + 'ms 未释放）')
+        err.code = 'E_LOCK'
+        throw err
+      }
       try {
         // 删过期锁前必须复核内容：stat 与 rm 之间持有者可能刚换人，
         // 直接 rm 会把别人新建的有效锁删掉，两个写者同时进临界区。

@@ -861,7 +861,8 @@ export class Store {
       .map(row => [row.rel, { n: row.n, avg: row.avg }]))
     const hubs = this.db.prepare(`SELECT n.id, n.kind, n.claim, COUNT(e.id) degree, ROUND(MAX(e.w),2) peak
       FROM node n JOIN edge e ON (e.src = n.id OR e.dst = n.id)
-      WHERE n.scope=? AND n.state='active' GROUP BY n.id ORDER BY degree DESC, peak DESC LIMIT 5`).all(scope)
+      JOIN node o ON o.id = CASE WHEN e.src = n.id THEN e.dst ELSE e.src END
+      WHERE n.scope=? AND n.state='active' AND o.state='active' GROUP BY n.id ORDER BY degree DESC, peak DESC LIMIT 5`).all(scope)
     const edges = this.db.prepare(`SELECT COUNT(*) n FROM edge WHERE scope=? AND
       src IN (SELECT id FROM node WHERE scope=? AND state='active')
       AND dst IN (SELECT id FROM node WHERE scope=? AND state='active')`).get(scope, scope, scope)?.n ?? 0

@@ -1033,18 +1033,45 @@ await t.test('P0 reason 里含 { 时裁决不丢', async () => {
   assert.deepEqual(parsed.retire.map((x) => x.id), ['y1'], '应捞出 y1：' + JSON.stringify(parsed))
 });
 
-await t.test('P0 dry-run 不报 rejected，改为 wouldRetire', async () => {
+await t.test('P0 dry-run 不报 rejected；wouldRetire 已移除（与 planned 恒等）', async () => {
   await callTool(tools1, 'memory_dreaming', { action: 'on' });
   setDreamNodeProvider(() => ([{ id: 'w1', kind: 'progress', text: '网络断开重试网络断开重试网络断开', seq: 71 }]));
   setDreamGenerator(async () => '{"items":[{"id":"w1","verdict":"noise","reason":"重复"}]}');
   setDreamRetireProvider((agent, ids) => ids.length);
   const out = JSON.parse(await callTool(tools1, 'memory_dreaming', { action: 'run', force: true }));
   assert.equal(out.cleanup.rejected, 0, 'dry-run 不该有 rejected');
-  assert.equal(out.cleanup.wouldRetire, 1, 'dry-run 应给出 wouldRetire');
+  assert.equal(out.cleanup.planned, 1, 'dry-run 应给出 planned');
+  // wouldRetire 曾与 planned 恒等且未过护栏，0.3.40 移除；真实条数看 apply 后的 retired/rejected。
+  assert.equal(out.cleanup.wouldRetire, undefined, 'wouldRetire 已移除');
   assert.equal(out.cleanup.retired, 0);
   setDreamGenerator(null);
   setDreamRetireProvider(null);
   setDreamNodeProvider(() => []);
+  await callTool(tools1, 'memory_dreaming', { action: 'off' });
+});
+
+
+await t.test('P0 reason 也按最近 id 配对，不串位', async () => {
+  const reply = { text: '{"items":[{"id":"r1","verdict":"keep","reason":"属于寒暄","id":"r2","verdict":"noise","reason":"断网重试重复"},', finishKind: 'max-tokens' };
+  const parsed = parseCleanupVerdicts(reply, [{ id: 'r1' }, { id: 'r2' }]);
+  assert.deepEqual(parsed.retire.map((x) => x.id), ['r2'], JSON.stringify(parsed));
+  assert.equal(parsed.retire[0].reason, '断网重试重复', 'reason=' + JSON.stringify(parsed.retire[0]));
+});
+
+await t.test('P0 截断的尾部对象：未闭合也要捞回完整裁决', async () => {
+  const reply = { text: '{"items":[{"id":"t1","verdict":"keep","reason":"有用"},{"id":"t2","verdict":"noise","reason":"重复"}', finishKind: 'length' };
+  const parsed = parseCleanupVerdicts(reply, [{ id: 't1' }, { id: 't2' }]);
+  assert.deepEqual(parsed.retire.map((x) => x.id), ['t2'], JSON.stringify(parsed));
+});
+
+await t.test('P1 DREAMING.json 损坏时 run 明确跳过，不用默认值覆盖', async () => {
+  const { writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const file = join(process.env.DSH_HOME, 'memory', 'DREAMING.json');
+  writeFileSync(file, '{ broken json', 'utf8');
+  const out = JSON.parse(await callTool(tools1, 'memory_dreaming', { action: 'run', force: true }));
+  assert.equal(out.skipped, 'corrupt', JSON.stringify(out));
+  writeFileSync(file, JSON.stringify({ enabled: false }), 'utf8');
   await callTool(tools1, 'memory_dreaming', { action: 'off' });
 });
 

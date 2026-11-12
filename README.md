@@ -97,18 +97,19 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 
 ## 闲时整理（dreaming，可选）
 
-默认关闭。开启后，插件会把最近会话图谱里的决策、约束和重复进度聚成 digest 笔记写进 `notes/`（只新增，不删改既有记忆）；开了 `dreaming.ai` 时还会先让模型判一遍垃圾（寒暄、断网重发的重复对话、明显错乱的内容），判定为 noise/duplicate 的节点只 retire——从投影与联想扩散里消失、原始会话日志不删；默认只动 hits=0、未被取代、创建 ≥7 天的节点（比 periphery 启发式更窄：不看重要性分数），可用 `action=retired` 查看、`action=restore` 恢复；retired 超过 30 天后才可能被清理。`dreaming.autoApply` 默认 false：空闲不会自动整理，必须手动 `run`；设为 true 后才在空闲时自动 run。
+默认关闭。开启后，插件会把最近会话图谱里的决策、约束和重复进度聚成 digest 笔记写进 `notes/`（只新增，不删改既有记忆）；开了 `dreaming.ai` 时还会先让模型判一遍垃圾（寒暄、断网重发的重复对话、明显错乱的内容），判定为 noise/duplicate 的节点只 retire——从投影与联想扩散里消失、原始会话日志不删；默认只动 pin=0、hits=0、未被取代、创建 ≥7 天的节点（比 periphery 启发式更窄：不看重要性分数），可用 `action=retired` 查看、`action=restore` 恢复；retired 超过 30 天后才可能被清理。`dreaming.autoApply` 默认 false：空闲不会自动整理，必须手动 `run`；设为 true 后才在空闲时自动 run。
 
 - 开关：`memory_dreaming` 的 `action=status/on/off`（运行态写入 `$DSH_HOME/memory/DREAMING.json`，立即生效），或在设置里给 `dreaming.enabled: true`；开启后是否允许空闲自动改库由 `dreaming.autoApply`（默认 false）决定；
 - 手动跑：`action=run` 默认 dry-run 只列候选，`apply: true` 才写盘，`force: true` 忽略冷却；
 - 边界：每次最多 `dreaming.maxNotes` 条（默认 3）；两次自动整理至少间隔 `dreaming.minIntervalMinutes`（默认 180 分钟）；digest 带 `dream` 标签和来源 seq，走与 `memory_write` 相同的查重；
 - 空闲触发延迟由 `dreaming.idleDelaySeconds` 控制（默认 120 秒，最小 10）；
 - AI 清理（默认开）：模型只做裁决，必须返回严格 JSON；判 `noise`/`duplicate` 的节点 retire，`keep` 与编造 id 一律不动；某一批失败不影响其他批；全部失败或无 llm 时降级为「不清理」，digest 照写、冷却照常推进（`cleanup.available=false` 并在 `reason` 里说明 `llm_failed`/`no_llm`）；
-- 分批与容错：候选每 12 条一批调用；输出被 token 上限截断时，从残缺 JSON 里捞出完整裁决；某批失败不影响其他批的结果；
+- 分批与容错：候选每 12 条一批调用；输出被 token 上限截断时，从残缺 JSON 里捞出完整裁决（含末尾被截断的未闭合对象）；某批失败不影响其他批的结果；
+- 损坏保护：`DREAMING.json` 读不出或损坏时 `run` 返回 `skipped:"corrupt"`、`status` 顶部会提示，且不会用默认值覆盖原文件（损坏副本留在 `DREAMING.json.bad-<时间戳>`，只保留最近 3 份）；修复或重建用 `action=on`；
 - 路由兜底：`dreaming.provider/model` → 插件顶层 provider/model → 当前 agent → 宿主 `cordis.patch.yml` 的 `agent-default-model`，都没有才报错并给出配置指引；
-- AI 路由：`dreaming.provider` / `dreaming.model`，留空用全局默认模型；扫描上限 `dreaming.maxScanNodes`（默认 60，范围 10–300），单次最多 retire `dreaming.maxRetirePerRun`（默认 20，范围 1–100）；`action=retired` 列出库里当前仍为 retired 的节点（restore 后即消失），`action=restore` 配 `ids` 恢复。
+- AI 路由：`dreaming.provider` / `dreaming.model`，留空用全局默认模型；扫描上限 `dreaming.maxScanNodes`（默认 60，范围 10–300），单次最多 retire `dreaming.maxRetirePerRun`（默认 20，范围 1–100）；`action=retired` 列出库里当前仍为 retired 的节点（restore 后即消失），`action=restore` 配 `ids` 恢复；整理正在运行时 restore 返回 `[err:E_BUSY]`。
 
-- `cleanup` 字段：`available`（模型是否可用）、`reason`（`disabled` / `no_candidates` / `no_generator` / `no_llm` / `llm_failed` / null）、`scanned`、`planned`（模型判为 noise/duplicate、去重并按单次上限截断后的条数）、`wouldRetire`（本批预计退役的条数，dry-run 时用来看「如果 apply 会 retire 几条」）、`retired`（真正退役的条数，受护栏与单次上限限制；dry-run 恒为 0）、`keep`、`invalid`、`rejected`（apply 时 planned 与 retired 的差额，被护栏挡下；dry-run 恒为 0）、`details`（每条裁决的 id/verdict/reason）、`error`（部分批失败时的首个错误）。`action=retired` 的 `retiredAt` 取节点的 `seen`（最近一次被抽取或退役的时间）。
+- `cleanup` 字段：`available`（模型是否可用）、`reason`（`disabled` / `no_candidates` / `no_generator` / `no_llm` / `llm_failed` / null）、`scanned`、`planned`（模型判为 noise/duplicate、去重并按单次上限截断后的条数；真正退役还受护栏影响，看 apply 的 `retired`/`rejected`）、`retired`（真正退役的条数，受护栏与单次上限限制；dry-run 恒为 0）、`keep`、`invalid`、`rejected`（apply 时 planned 与 retired 的差额，被护栏挡下；dry-run 恒为 0）、`details`（每条裁决的 id/verdict/reason）、`error`（部分批失败时的首个错误）。`action=retired` 的 `retiredAt` 取节点的 `seen`（最近一次被抽取或退役的时间）。
 
 ---
 
@@ -310,7 +311,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 82 项、编码层 10 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项，共 158 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 85 项、编码层 10 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项，共 161 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

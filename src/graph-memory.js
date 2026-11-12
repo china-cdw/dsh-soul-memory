@@ -214,7 +214,7 @@ function statements(store) {
   if (set) return set
   set = {
     edge: store.db.prepare('SELECT src, dst, rel, w FROM edge WHERE scope=?'),
-    retire: store.db.prepare("UPDATE node SET state='retired', seen=? WHERE id=? AND pin=0"),
+    retire: store.db.prepare("UPDATE node SET state='retired', seen=? WHERE id=? AND scope=? AND pin=0 AND state='active'"),
     // 只翻 state，且只对"未被取代"的节点生效：valid_to 是 supersede 留下的有效性区间，
     // 抹掉它等于把已被取代的旧结论复活成 current。要恢复被取代的节点，
     // 应当显式重新确立新结论，而不是靠一条 restore 命令抹掉历史。
@@ -426,7 +426,7 @@ export function retire(store, scope, view, options) {
   if (!gone.length) return []
   const stmt = statements(store).retire
   const now = Date.now()
-  for (const entry of gone) stmt.run(now, entry.id)
+  for (const entry of gone) stmt.run(now, entry.id, scope)
   return gone.map(entry => entry.id)
 }
 

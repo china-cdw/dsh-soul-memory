@@ -37,6 +37,7 @@ export async function readDreamingState() {
     if (e && e.code !== 'ENOENT') {
       // 读不出来（占用/权限/IO）也要留副本：否则下一轮写回会以默认值为底，静默重置用户开关。
       await copyFile(dreamingStatePath(), dreamingStatePath() + '.bad-' + Date.now()).catch(() => {})
+      await pruneBadBackups()
       console.error('dsh-x-memory: 读取 DREAMING.json 失败，已备份并按默认值处理：' + ((e && e.message) || e))
       return { ...DREAMING_DEFAULTS, configured: false, corrupt: true }
     }
@@ -55,6 +56,7 @@ export async function readDreamingState() {
   } catch (e) {
     // 文件损坏时先留副本：否则下一轮写回会以默认值为底，静默重置 enabled/lastRunAt/lastResult。
     await copyFile(dreamingStatePath(), dreamingStatePath() + '.bad-' + Date.now()).catch(() => {})
+    await pruneBadBackups()
     console.error('dsh-x-memory: DREAMING.json 解析失败，已备份为 .bad 并按默认值处理：' + ((e && e.message) || e))
     return { ...DREAMING_DEFAULTS, configured: false, corrupt: true }
   }
@@ -64,6 +66,16 @@ export async function readDreamingState() {
 export async function withDreamingRunLock(job) {
   // 不能用 DREAMING.json 自己的锁：run 期间写 lastResult 会再抢同一把锁。
   return withFileLock(dreamingStatePath() + '.run', job, { waitMs: 1, staleMs: 30 * 60 * 1000 })
+}
+
+/** 损坏备份只留最近 3 份：每次读到损坏文件都会写一份，不清理会无限增长。 */
+async function pruneBadBackups() {
+  try {
+    const { readdir, unlink } = await import('node:fs/promises')
+    const dir = dirname(dreamingStatePath())
+    const names = (await readdir(dir)).filter((n) => n.startsWith('DREAMING.json.bad-')).sort()
+    while (names.length > 3) await unlink(dir + '/' + names.shift()).catch(() => {})
+  } catch { /* 备份清理失败不影响主流程 */ }
 }
 
 export async function writeDreamingState(patch) {
@@ -76,6 +88,7 @@ export async function writeDreamingState(patch) {
     const next = { ...current, ...(patch && typeof patch === 'object' ? patch : {}) }
     // configured 是读时推导出来的状态，不属于落盘字段。
     delete next.configured
+    delete next.corrupt
     await atomicWrite(target, JSON.stringify(next, null, 2) + '\n')
     return next
   })
@@ -220,6 +233,8 @@ function jsonObjectSpans(text) {
       if (start !== undefined) spans.push([start, i])
     }
   }
+  // 截断点总落在最后一条对象上：未闭合的对象也要收，否则它的完整 id/verdict 会整条丢失。
+  for (let i = stack.length - 1; i >= 0; i--) spans.push([stack[i], text.length - 1])
   return spans
 }
 
@@ -253,10 +268,18 @@ function recoverItems(raw) {
       const db = b.at >= at ? b.at - at : (at - b.at) * 2
       return da - db
     })
+    // reason 也必须按「离该 id 最近」归属：同对象两个 id 时取第一个会把两边的理由串起来。
+    const reasons = []
     const rre = /"reason"\s*:\s*"([^"]{0,200})"/g
-    const r = rre.exec(body)
+    let r
+    while ((r = rre.exec(body))) reasons.push({ reason: r[1], at: base + r.index })
+    reasons.sort((a, b) => {
+      const da = a.at >= at ? a.at - at : (at - a.at) * 2
+      const db = b.at >= at ? b.at - at : (at - b.at) * 2
+      return da - db
+    })
     seen.add(id)
-    out.push({ id, verdict: verdicts[0].verdict, reason: r ? r[1] : '' })
+    out.push({ id, verdict: verdicts[0].verdict, reason: reasons.length ? reasons[0].reason : '' })
   }
   return out.length ? { items: out } : null
 }

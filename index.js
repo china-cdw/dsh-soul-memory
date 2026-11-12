@@ -373,7 +373,7 @@ export function apply(ctx, input = {}) {
     if (!scope) return 0
     let changed = 0
     try {
-      const stmt = store.db.prepare("UPDATE node SET state='active', seen=? WHERE id=? AND scope=? AND state='retired'")
+      const stmt = store.db.prepare("UPDATE node SET state='active', seen=? WHERE id=? AND scope=? AND state='retired' AND valid_to IS NULL")
       store.tx(() => {
         const now = Date.now()
         for (const id of ids) changed += stmt.run(now, id, scope).changes

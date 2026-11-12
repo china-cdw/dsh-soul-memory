@@ -1040,7 +1040,7 @@ export async function runDreaming(opts = {}) {
     try {
       return await withDreamingRunLock(() => runDreamingLocked(opts))
     } catch (e) {
-      if (e && /占用|未释放/.test(String(e.message || ''))) {
+      if (e && (e.code === 'E_LOCK' || /占用|未释放/.test(String(e.message || '')))) {
         return { ok: false, enabled: true, skipped: 'running', hint: '另一个进程正在整理，稍后再试。' }
       }
       throw e
@@ -1051,6 +1051,9 @@ export async function runDreaming(opts = {}) {
 
 async function runDreamingLocked({ apply = false, force = false, trigger = 'manual', agent = null } = {}) {
   const state = await readDreamingState()
+  if (state.corrupt) {
+    return { ok: false, enabled: false, skipped: 'corrupt', hint: 'DREAMING.json 读不出或已损坏（已备份为 .bad-<时间戳>）；用 memory_dreaming action=on 重建配置后再试。' }
+  }
   const enabled = state.configured ? state.enabled === true : dreamingCfg.enabled === true
   if (!enabled) {
     return { ok: false, enabled: false, skipped: 'disabled', hint: '闲时整理未开启：用 memory_dreaming action=on，或设置 dreaming.enabled=true。' }
@@ -1108,7 +1111,6 @@ async function runDreamingLocked({ apply = false, force = false, trigger = 'manu
         const retired = apply && dreamRetire && ids.length ? Number(dreamRetire(agent, ids)) || 0 : 0
         cleanup = {
           ...cleanup, available: true, reason: null, planned: planned.length, retired,
-          wouldRetire: ids.length,
           keep: merged.keep, invalid: merged.invalid, details: planned,
           // dry-run 没调用 retire，不能用 planned - 0 冒充被拒绝；只有 apply 才有拒绝语义。
           rejected: apply ? Math.max(0, planned.length - retired) : 0,
@@ -1161,10 +1163,11 @@ async function dreamingTool(args = {}, exec = null) {
       const cooldownMs = Math.max(0, Number(dreamingCfg.minIntervalMinutes) || 0) * 60000
       const remain = lastRunAt && cooldownMs > 0 ? Math.max(0, cooldownMs - (Date.now() - lastRunAt)) : 0
       return [
+        ...(state.corrupt ? ['⚠ DREAMING.json 读不出或已损坏（已备份为 .bad-<时间戳>）；当前按默认值（关闭）运行，用 action=on 重建。'] : []),
         '闲时整理（dreaming）：' + (enabled ? '已开启' : '已关闭'),
         '开关来源：' + source,
         '触发：每次 turn/end 后空闲 ' + dreamingCfg.idleDelaySeconds + ' 秒；冷却 ' + dreamingCfg.minIntervalMinutes + ' 分钟；单次最多 ' + dreamingCfg.maxNotes + ' 条',
-        '清理：' + (dreamingCfg.ai === false ? '仅启发式（不做 AI 判断）' : (dreamGenerate ? 'AI 判断废话/断网重复/被纠正的错误结论后 retire（只动 hits=0、未被取代、创建 ≥7 天的节点；action=retired 可看、restore 可恢复）' : 'AI 未就绪（未配置模型路由）')) + '；扫描上限 ' + (dreamingCfg.maxScanNodes ?? 60) + ' 条、单次最多 retire ' + (dreamingCfg.maxRetirePerRun ?? 20) + ' 条；retired 30 天后会被清理',
+        '清理：' + (dreamingCfg.ai === false ? '仅启发式（不做 AI 判断）' : (dreamGenerate ? 'AI 判断废话/断网重复/被纠正的错误结论后 retire（只动 pin=0、hits=0、未被取代、创建 ≥7 天的节点；action=retired 可看、restore 可恢复）' : 'AI 未就绪（未配置模型路由）')) + '；扫描上限 ' + (dreamingCfg.maxScanNodes ?? 60) + ' 条、单次最多 retire ' + (dreamingCfg.maxRetirePerRun ?? 20) + ' 条；retired 30 天后会被清理',
         '自动执行：' + (dreamingCfg.autoApply ? '开启（空闲到期自动 apply）' : '关闭（空闲不自动改库，只能手动 run）'),
         '上次整理：' + (state.lastRunAt || '从未') + (remain ? '（冷却中，约 ' + Math.ceil(remain / 60000) + ' 分钟后可再跑）' : ''),
         '上次结果：' + (state.lastResult ? JSON.stringify(state.lastResult) : '从未执行'),
@@ -1199,8 +1202,14 @@ async function dreamingTool(args = {}, exec = null) {
       const ids = Array.isArray(args.ids) ? args.ids.map(String).filter(Boolean) : []
       if (!ids.length) return '恢复失败：请传 ids 数组（可用 action=retired 查看）。\n[err:E_ARG]'
       if (!dreamRestore) return '恢复失败：当前环境没有可用的图谱恢复器。\n[err:E_INTERNAL]'
-      const changed = Number(dreamRestore(exec?.agent ?? null, ids)) || 0
-      return '已恢复 ' + changed + ' 个节点（state=active）；未被恢复的 id 可能不存在或本来就不是 retired。'
+      let changed = 0
+      try {
+        changed = Number(await withDreamingRunLock(() => dreamRestore(exec?.agent ?? null, ids))) || 0
+      } catch (e) {
+        if (e && e.code === 'E_LOCK') return '恢复失败：闲时整理正在运行，请稍后再试。\n[err:E_BUSY]'
+        throw e
+      }
+      return '已恢复 ' + changed + ' 个节点（state=active）；未被恢复的 id 可能不存在、本来就不是 retired，或已被取代。'
     }
     return '未知 action：必须是 status / on / off / run / retired / restore。\n[err:E_ARG]'
   } catch (e) {

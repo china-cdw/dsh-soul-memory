@@ -1,5 +1,17 @@
 # 变更日志
 
+## 0.3.40
+
+- AI 裁决的 `reason` 也按「离该 id 最近」归属，同一对象里两个 id 不再互相借理由；
+- 截断恢复补上末尾未闭合对象：回复在最后一条中途被 token 上限切断时，该条完整裁决也能捞回；
+- 移除 dry-run 虚报的 `wouldRetire`（它只是 planned 的副本、没过护栏）；dry-run 看 `planned`，真实退役看 apply 的 `retired`/`rejected`；
+- `DREAMING.json` 读不出或损坏时 `run` 返回 `skipped:"corrupt"`、`status` 顶部提示，且不再用默认值覆盖原文件；损坏副本按时间戳保留最近 3 份；
+- 锁占用错误改用 `E_LOCK` 区分，内层 DREAMING.json 写盘失败不再被误报成 `skipped:"running"`；
+- `graph-memory.js` 的 retire SQL 补 `scope` 与 `state='active'`，避免跨作用域或把 superseded 节点改成 retired；
+- `restore` 补 `valid_to IS NULL`；整理运行中 restore 返回 `[err:E_BUSY]`；
+- 边统计（`byRel`/`edges`/`hubs` 的 degree）只算两端都 active 的边；
+- README 同步：cleanup 字段表、`pin=0` 护栏、`E_BUSY`、损坏保护说明；计数 85/161；
+- 自检 161 断言全过。
 ## 0.3.39
 
 - **裁决配对**：`recoverItems` 改成按对象边界前向扫描，verdict 归「离该 id 最近」的对象——同一对象出现两个 id、或 `reason` 里带 `{` 时，不再把裁决判给相邻节点。
