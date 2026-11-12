@@ -579,9 +579,50 @@ await t.test('latestSnapshot 跳过只有 .started 的在途残片', async () =>
 await t.test('persona set 不会把停用状态悄悄改回启用', async () => {
   await writeFile(join(process.env.DSH_HOME, 'memory', 'PERSONA.md'), '---\nenabled: false\npreset: default\nupdated: 2026-01-01\n---\n');
   const out = await callTool(tools1, 'persona', { action: 'set', preset: 'warm' });
-  assert.match(String(out), /已切换/);
+  // 0.3.16：停用状态下切预设不再谎报「已切换」，文案必须如实说明仍停用。
+  assert.match(String(out), /仍处于停用状态/);
+  assert.doesNotMatch(String(out), /已切换/);
   assert.equal(readPersona().enabled, false);
   assert.equal(readPersona().preset, 'warm');
+});
+
+await t.test('expandRange 极小预算仍有进展且不切断 emoji', async () => {
+  const emoji = String.fromCodePoint(0x1f600);
+  const fake = { eventAt: (seq) => (seq === 1 ? { type: 'user/message', data: { content: emoji + '中文正文' } } : null) };
+  const out = expandRange(fake, 1, 1, { limit: 4 });
+  assert.ok(out.text.length > 0, '极小预算也要返回内容');
+  assert.ok(out.to >= 1, 'to 必须前进');
+  const last = out.text.charCodeAt(out.text.length - 1);
+  assert.ok(!(last >= 0xd800 && last <= 0xdbff), '不能以孤立高代理项结尾');
+});
+
+await t.test('persona set enabled=true 会真正启用并回报已切换', async () => {
+  const personaFile = join(process.env.DSH_HOME, 'memory', 'PERSONA.md');
+  await writeFile(personaFile, '---\nenabled: false\npreset: default\n---\n', 'utf8');
+  const out = await callTool(tools1, 'persona', { action: 'set', preset: 'warm', enabled: true });
+  assert.match(String(out), /已切换/);
+  assert.equal(readPersona().enabled, true);
+});
+
+await t.test('snapshotMemory 轮转不会删掉图谱快照目录', async () => {
+  const snap = join(process.env.DSH_HOME, 'memory', '.snapshots');
+  await rm(snap, { recursive: true, force: true });
+  const old = Date.now() / 1000 - 86400 * 3;
+  for (const [name, age] of [['2025-01-01T00-00-00', 0], ['2025-01-02T00-00-00', 1], ['2025-01-03T00-00-00', 2]]) {
+    const dir = join(snap, name);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'MEMORY.md'), '# ' + name + '\n', 'utf8');
+    await writeFile(join(dir, '.complete'), new Date().toISOString(), 'utf8');
+    await utimes(dir, old + age * 3600, old + age * 3600);
+  }
+  const graphDir = join(snap, '2025-01-04T00-00-00');
+  await mkdir(graphDir, { recursive: true });
+  await writeFile(join(graphDir, 'evolve.sqlite'), 'sqlite-placeholder', 'utf8');
+  await writeFile(join(graphDir, '.started'), new Date().toISOString(), 'utf8');
+  await utimes(graphDir, Date.now() / 1000, Date.now() / 1000);
+  await snapshotMemory({ keep: 3 });
+  const kept = await stat(join(graphDir, 'evolve.sqlite'));
+  assert.ok(kept.size > 0, '图谱快照不能被轮转删掉');
 });
 
 const result = t.finish();

@@ -1,5 +1,14 @@
 # 变更日志
 
+## 0.3.16
+
+- 图谱快照目录不再被自己的 `.started` 误判为在途残片：`inFlight` 要求「无 .complete 且无 evolve.sqlite」。
+- `snapshotGraph` 先写 `.started` 再 VACUUM，大库写入期间不会被另一进程当空壳删掉。
+- `sliceAround` 不再切断代理对；预算放不下一个字符时至少返回首个完整 code point，保证调用方有进展。
+- `expandRange` 逐端归一 from/to、end clamp 到 ≥0；`limit=0`/`maxEvents=0` 显式返回空结果并说明。
+- persona 工具新增 `enabled` 参数；停用状态下切预设不再谎报「已切换」，提示需要显式启用。
+- README.en 同步状态码（405/500）与「无 Host 头（HTTP/1.0）跳过白名单」说明。
+- 自检：核心 52 + 编码 9 + 踩坑 15 + 重放 11 + 桥接 14 + 回归 10 = 111 断言全过。
 ## 0.3.15 — 快照在途状态与 API 边界
 
 - 快照在途标记 `.started`：写失败的残片不再占用 keep 名额、不再被 `latestSnapshot` 报成「最近可用快照」；空壳目录清理加 10 分钟年龄门槛，避免删掉并发写者刚建的当天目录。

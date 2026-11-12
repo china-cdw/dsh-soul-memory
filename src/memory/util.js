@@ -249,6 +249,9 @@ export async function snapshotGraph(db, { keep = 7 } = {}) {
     await mkdir(join(dir, target), { recursive: true });
   }
   const dest = join(dir, target, 'evolve.sqlite');
+  // 先落 .started 再 VACUUM：否则大库 VACUUM 超过 10 分钟时，另一个进程的轮转会把
+  // 这个「既没标记也没 sqlite」的目录当空壳删掉。
+  await writeFile(join(dir, target, '.started'), new Date().toISOString(), 'utf8').catch(() => {});
   // 已有可用副本就跳过；半截文件（0 字节/写一半）要删掉重做，否则会永久粘住。
   try {
     const st = await stat(dest);
@@ -296,7 +299,9 @@ async function rotateSnapshots(dir, keep, { protect = [] } = {}) {
         mtimeMs: st.mtimeMs,
         complete,
         // 写了 .started 却没有 .complete：本轮写失败/正在写，不是可用备份，也不算 keep。
-        inFlight: started && !complete,
+        // evolve.sqlite 只在 rename 成功后出现，它的存在本身就是图谱层完成的信号；
+        // 否则只写 .started 的图谱目录会被当成残片，2 天后连备份一起删掉。
+        inFlight: started && !complete && !hasGraph,
         valid: complete || (!started && (hasIndex || hasMemory)),
         hasGraph,
         protected: protectedNames.has(name),

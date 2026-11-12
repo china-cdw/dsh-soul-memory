@@ -1041,6 +1041,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
           action: { type: 'string', enum: ['get', 'set', 'custom', 'disable'], description: 'get=查看；set=切预设；custom=写自定义；disable=停用' },
           preset: { type: 'string', description: 'action=set 时的预设 id，如 warm / concise / rigorous / humorous / gentle / default' },
           text: { type: 'string', description: 'action=custom 时的风格正文（建议 200 字内，上限 ' + MAX_CUSTOM_TEXT + ' 字符）' },
+          enabled: { type: 'boolean', description: '可选：显式启用/停用风格注入；不传则保留当前启用状态' },
         },
         required: ['action'],
       },
@@ -1077,15 +1078,19 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             const cur = readPersona();
             // 只有 action=custom 才把 custom 当显式入参；切预设时继承的旧正文可能超过 4000 字，
             // 不能塞进 patch 让校验把它当新写入拒掉（否则 6000 字的用户永远切不了预设）。
+            // enabled 显式优先；不传时保留当前状态（set 不再静默启用，custom 也不再硬编码 true）。
+            const wantEnabled = typeof args.enabled === 'boolean' ? args.enabled : cur.enabled;
             const incoming = action === 'custom'
-              ? { enabled: true, preset: patch.preset, custom: patch.custom }
-              : // set 只换预设：停用中的人切预设不该被静默重新启用。
-                { enabled: cur.enabled, preset: patch.preset };
+              ? { enabled: wantEnabled, preset: patch.preset, custom: patch.custom }
+              : { enabled: wantEnabled, preset: patch.preset };
             const check = normalizePersonaInput(incoming, cur);
             if (!check.ok) return '设置失败：' + check.error + '\n[err:E_ARG]';
             await atomicWrite(personaPath(), renderPersonaFile(check.value));
             const preset = PRESETS.find((p) => p.id === check.value.preset);
-            return '已切换回复风格为「' + (preset ? preset.name : check.value.preset) + '」。已在后续模型组装中生效。';
+            const label = preset ? preset.name : check.value.preset;
+            return check.value.enabled
+              ? '已切换回复风格为「' + label + '」。已在后续模型组装中生效。'
+              : '已保存预设「' + label + '」，但风格注入仍处于停用状态（enabled: false），当前不会注入；需要时传 enabled=true 或在设置页重新启用。';
           }));
         } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
       },

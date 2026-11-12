@@ -90,6 +90,10 @@ function sliceAround(text, from, to, limit) {
     }
     if (!grew) break
   }
+  // 不切断代理对：末尾若只剩高代理项就回退一位（宁可少 3 字节，也不返回非法 UTF-16）。
+  if (end > start && text.charCodeAt(end - 1) >= 0xd800 && text.charCodeAt(end - 1) <= 0xdbff) end -= 1
+  // 预算连一个字符都放不下时，至少返回第一个完整 code point，保证调用方有进展。
+  if (end === start && text.length) return Array.from(text)[0] || ''
   return text.slice(start, end)
 }
 
@@ -178,12 +182,16 @@ export function searchSession(session, query, options) {
  * those events, bounded, so a pointer costs one call and a known number of bytes.
  */
 export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 } = {}) {
-  const budget = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.floor(Number(limit)) : 2000
-  const cap = Number.isFinite(Number(maxEvents)) && Number(maxEvents) > 0 ? Math.floor(Number(maxEvents)) : 200
+  const budget = limit === undefined ? 2000 : (Number.isFinite(Number(limit)) ? Math.floor(Number(limit)) : 2000)
+  const cap = maxEvents === undefined ? 200 : (Number.isFinite(Number(maxEvents)) ? Math.floor(Number(maxEvents)) : 200)
   const rawFrom = Number(from)
   const rawTo = Number(to)
-  const start = Number.isFinite(rawFrom) && Number.isFinite(rawTo) ? Math.max(0, Math.floor(Math.min(rawFrom, rawTo))) : 0
-  const end = Number.isFinite(rawFrom) && Number.isFinite(rawTo) ? Math.max(Math.floor(rawFrom), Math.floor(rawTo)) : 0
+  // 逐端归一：一个端点坏掉不该把另一个有效端点一起丢掉。
+  const fromNum = Number.isFinite(rawFrom) ? Math.max(0, Math.floor(rawFrom)) : 0
+  const toNum = Number.isFinite(rawTo) ? Math.max(0, Math.floor(rawTo)) : fromNum
+  const start = Math.max(0, Math.min(fromNum, toNum))
+  const end = Math.max(0, Math.max(fromNum, toNum))
+  if (budget <= 0 || cap <= 0) return { from: start, to: start, bytes: 0, text: '', events: 0, truncated: true, note: '预算为 0：无法返回内容' }
   if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0, truncated: false, note: '会话没有可读的原文接口' }
   const parts = []
   let events = 0

@@ -149,8 +149,8 @@ The style settings page calls the local route `/dsh-x-memory/persona` over same-
 
 - `GET` returns `{ persona, presets, maxCustom }`;
 - every request (GET included) must carry the custom header `X-DSH-X-Memory: 1`: cross-site forms and links cannot forge it, and the browser sends a CORS preflight first, which blocks unapproved cross-origin reads;
-- `POST` requires `Content-Type: application/json` and a body of at most 16KB; only `GET`/`POST` are accepted (other methods return 405 with `Allow: GET, POST`); an empty `{}` returns 204 and writes nothing; otherwise it answers 200 or 400/403/413/415;
-- only loopback hosts (`localhost`, `127.0.0.1`, `[::1]`) are accepted, and any Origin must match the Host — this blocks DNS rebinding and cross-site prompt injection;
+- `POST` requires `Content-Type: application/json` and a body of at most 16KB; only `GET`/`POST` are accepted (other methods return 405 with `Allow: GET, POST`); an empty `{}` returns 204 and writes nothing; otherwise it answers 200 (parameter, method and permission failures use 400/403/405/413/415; write and internal failures use 500);
+- only loopback hosts (`localhost`, `127.0.0.1`, `[::1]`) are accepted, and any Origin must match the Host — this blocks DNS rebinding and cross-site prompt injection; requests without a Host header (HTTP/1.0) bypass the Host allowlist;
 - responses carry `Cache-Control: no-store`; style is personal data and is never cached.
 
 When a tool fails, the returned text ends with a machine-readable `[err:CODE]` suffix (for example `[err:E_NOT_FOUND]` or `[err:E_GUARD]`). The host still reports these results as successful (`isError` stays false), so callers must inspect the suffix to branch on failures.
