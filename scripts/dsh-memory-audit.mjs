@@ -431,7 +431,7 @@ await t.test('snapshotGraph 用 VACUUM INTO 把图谱库写进当天快照', asy
   assert.equal(res.skipped, false);
   assert.equal(written.length, 1);
   // 0.3.15 起先写 .tmp-<pid> 再 rename；检查最终文件而不是中间路径。
-  assert.match(written[0], /\.snapshots[\\/][^\\/]+[\\/]evolve\.sqlite\.tmp-\d+$/);
+  assert.match(written[0], /\.snapshots[\\/][^\\/]+[\\/]evolve\.sqlite\.tmp-\d+-[a-z0-9]+$/);
   assert.equal(await readFile(join(res.dir, 'evolve.sqlite'), 'utf8'), 'sqlite-bytes');
 });
 
@@ -650,6 +650,12 @@ await t.test('expandRange 首条超预算时返回 resume 游标', async () => {
   assert.equal(out.truncated, true)
   assert.ok(out.resume && out.resume.seq === 1 && out.resume.offset > 0, '缺 resume 游标')
 })
+
+await t.test('persona 显式空白 preset 报 E_ARG 而不是静默成功', async () => {
+  const out = await callTool(tools1, 'persona', { action: 'set', preset: '   ', enabled: true });
+  assert.match(String(out), /preset 不能为空/);
+  assert.match(String(out), /\[err:E_ARG\]/);
+});
 
 const result = t.finish();
 await home.cleanup();

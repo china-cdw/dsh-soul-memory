@@ -207,7 +207,7 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
   // 旧实现按目录名前缀判断，会把文件记忆的备份整个跳过去。
   const todayDirs = names.filter((n) => n.startsWith(today)).sort();
   for (const name of todayDirs) {
-    try { await stat(join(dir, name, '.complete')); return { skipped: true, dir: join(dir, name), count: names.length }; } catch { /* 未完成，继续补 */ }
+    try { await stat(join(dir, name, '.complete')); return { skipped: true, dir: join(dir, name), count: names.filter((n) => !n.startsWith('.')).length }; } catch { /* 未完成，继续补 */ }
   }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const createdNew = todayDirs.length === 0;
@@ -273,6 +273,15 @@ export async function snapshotGraph(db, { keep = 7 } = {}) {
   if (!db || typeof db.exec !== 'function') return { skipped: true };
   const dir = memoryPath('.snapshots');
   await mkdir(dir, { recursive: true });
+  // 与文件快照共用同一把锁：两者写同一天的目录，不锁会出现两个当天目录、各占一份 keep。
+  try {
+    return await withFileLock(join(dir, '.snapshot.lock'), () => snapshotGraphLocked(db, keep, dir));
+  } catch (e) {
+    return { skipped: true, error: e && e.message ? e.message : String(e) };
+  }
+}
+
+async function snapshotGraphLocked(db, keep, dir) {
   const today = new Date().toISOString().slice(0, 10);
   const names = (await readdir(dir).catch(() => [])).filter((n) => !n.startsWith('.'));
   let target = names.filter((n) => n.startsWith(today)).sort().pop();
@@ -300,7 +309,7 @@ export async function snapshotGraph(db, { keep = 7 } = {}) {
       if (st && Date.now() - st.mtimeMs > 10 * 60 * 1000) await rm(p, { force: true }).catch(() => {});
     }
   } catch { /* 目录读不到就跳过清理 */ }
-  const tmp = dest + '.tmp-' + process.pid;
+  const tmp = dest + '.tmp-' + process.pid + '-' + Math.random().toString(36).slice(2, 8);
   try {
     db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
     const st = await stat(tmp);
@@ -380,6 +389,7 @@ export async function latestSnapshot() {
   const names = (await readdir(dir).catch(() => [])).filter((n) => !n.startsWith('.'));
   const complete = [];
   const legacy = [];
+  const graphs = [];
   for (const name of names) {
     try {
       const st = await stat(join(dir, name));
@@ -391,6 +401,9 @@ export async function latestSnapshot() {
         complete.push({ name, mtimeMs: Number.isFinite(stamp) ? stamp : st.mtimeMs });
         continue;
       } catch { /* 可能是 0.3.11 之前的快照，或写失败的在途目录 */ }
+      // 只有图谱的目录（snapshotGraph 会先写 .started 再写 evolve.sqlite）：它仍是一份可用备份，
+      // 必须在「有 .started 就跳过」之前判定，否则 memory_brief 永远看不到图谱备份。
+      if (await isSqliteFile(join(dir, name, 'evolve.sqlite'))) { graphs.push({ name, mtimeMs: st.mtimeMs, graph: true }); continue; }
       if (hasStarted) continue; // 残片/在途：不能当作最近一次可用快照
       // 兼容旧快照：没有完成标记、但确实有记忆文件，仍算一份可用备份。
       const hasCore = await stat(join(dir, name, 'MEMORY.md')).then(() => true).catch(() => false);
@@ -398,7 +411,7 @@ export async function latestSnapshot() {
       if (hasIndex) legacy.push({ name, mtimeMs: st.mtimeMs });
     } catch { /* 忽略：不是目录或不可读 */ }
   }
-  const all = complete.concat(legacy);
+  const all = complete.concat(legacy, graphs);
   if (!all.length) return null;
   all.sort((a, b) => a.mtimeMs - b.mtimeMs);
   const last = all[all.length - 1];

@@ -190,9 +190,30 @@ export function searchSession(session, query, options) {
  * This is the other half of a directory card: the card says `[97-210]`, this returns exactly
  * those events, bounded, so a pointer costs one call and a known number of bytes.
  */
-export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 } = {}) {
-  const budget = limit == null ? 2000 : (Number.isFinite(Number(limit)) ? Math.floor(Number(limit)) : 2000)
-  const cap = maxEvents == null ? 200 : (Number.isFinite(Number(maxEvents)) ? Math.floor(Number(maxEvents)) : 200)
+const MAX_EXPAND_BYTES = 20000
+const MAX_EXPAND_EVENTS = 1000
+
+/** 从第 n 个字节起取剩余文本；不切断多字节字符。 */
+function skipBytesSafe(text, n) {
+  if (!text || n <= 0) return text
+  let used = 0
+  let i = 0
+  for (const ch of text) {
+    const size = Buffer.byteLength(ch)
+    if (used + size > n) break
+    used += size
+    i += ch.length
+  }
+  return text.slice(i)
+}
+
+export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, offset = 0 } = {}) {
+  const budgetRaw = limit == null ? 2000 : (Number.isFinite(Number(limit)) ? Math.floor(Number(limit)) : 2000)
+  const capRaw = maxEvents == null ? 200 : (Number.isFinite(Number(maxEvents)) ? Math.floor(Number(maxEvents)) : 200)
+  // 硬闸门：调用方可以缩小预算，但不能突破单次工具结果的体积/条数上限。
+  const budget = Math.min(MAX_EXPAND_BYTES, budgetRaw)
+  const cap = Math.min(MAX_EXPAND_EVENTS, capRaw)
+  const skipBytes = Number.isFinite(Number(offset)) ? Math.max(0, Math.floor(Number(offset))) : 0
   const rawFrom = Number(from)
   const rawTo = Number(to)
   // 逐端归一：一个端点坏掉不该把另一个有效端点一起丢掉。
@@ -200,8 +221,8 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
   const toNum = Number.isFinite(rawTo) ? Math.max(0, Math.floor(rawTo)) : fromNum
   const start = Math.max(0, Math.min(fromNum, toNum))
   const end = Math.max(0, Math.max(fromNum, toNum))
-  if (budget <= 0) return { from: start, to: start, bytes: 0, text: '', events: 0, truncated: false, note: 'limit 为 0 或负数：按约定不返回内容' }
-  if (cap <= 0) return { from: start, to: start, bytes: 0, text: '', events: 0, truncated: false, note: 'maxEvents 为 0：按约定不返回内容' }
+  if (budget <= 0) return { from: start, to: Math.max(0, start - 1), bytes: 0, text: '', events: 0, truncated: false, processed: 0, note: 'limit 为 0 或负数：未处理任何事件（to 停在 start 前一位）' }
+  if (cap <= 0) return { from: start, to: Math.max(0, start - 1), bytes: 0, text: '', events: 0, truncated: false, processed: 0, note: 'maxEvents 为 0：未处理任何事件（to 停在 start 前一位）' }
   if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0, truncated: false, note: '会话没有可读的原文接口' }
   const parts = []
   let events = 0
@@ -216,14 +237,17 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
     if (!event) continue
     const text = textOfEvent(event).trim()
     if (!text) continue
-    const size = Buffer.byteLength(text) + (parts.length ? 1 : 0)
+    // offset：从上次 resume.offset 处继续读首条事件，而不是把它整条重读一遍。
+    const body = (!parts.length && skipBytes > 0) ? skipBytesSafe(text, skipBytes) : text
+    if (!body) continue
+    const size = Buffer.byteLength(body) + (parts.length ? 1 : 0)
     // 预算按字节算：对外承诺的是“不超过 2KB”，不能再按字符截。
     if (bytes + size > budget) {
       hitBytes = true
       // 单条事件本身就超预算：不能直接 break，否则 to 不前进、这条永远读不到。
       // 退化为保留该条的前若干字节（严格不超过 budget），并把 to 前进到它。
       if (!parts.length) {
-        const cut = sliceAround(text, 0, 0, budget)
+        const cut = sliceAround(body, 0, 0, budget)
         if (cut) {
           parts.push(cut)
           bytes = Buffer.byteLength(cut)
@@ -235,7 +259,7 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
       }
       break
     }
-    parts.push(text)
+    parts.push(body)
     bytes += size
     events++
     last = seq
@@ -265,6 +289,6 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
     events,
     truncated,
     ...(resume ? { resume } : {}),
-    ...(truncated ? { note: '已截断：仅返回 ' + events + ' 条事件 / ' + Buffer.byteLength(text) + ' 字节' + (clipped ? '（首条事件超出预算，已裁剪；续读用 resume.seq / resume.offset）' : '') + '。' } : {}),
+    ...(truncated ? { note: '已截断：仅返回 ' + events + ' 条事件 / ' + Buffer.byteLength(text) + ' 字节' + (clipped ? '（首条事件超出预算，已裁剪；续读用 from=resume.seq 并传 offset=resume.offset）' : '') + '。' } : {}),
   }
 }

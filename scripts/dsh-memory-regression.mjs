@@ -151,5 +151,26 @@ await t.test('P2 轮转不把文本 evolve.sqlite 当图谱完成', async () => 
   assert.equal(left.includes(name), false, '半截/文本图谱不算完成，超过 2 天应清掉');
 })
 
+await t.test('P2 单次返回受硬上限约束（limit 不能无限放大）', async () => {
+  const { expandRange } = await import('../src/session-search.js');
+  const events = [{ seq: 1, data: { text: 'x'.repeat(30000) } }];
+  const session = { eventAt: (seq) => events.find((e) => e.seq === seq) ?? null };
+  const out = expandRange(session, 1, 1, { limit: 1e9 });
+  assert.equal(out.bytes <= 20000, true, 'bytes=' + out.bytes);
+  assert.equal(out.truncated, true);
+});
+
+await t.test('P2 resume.offset 可以续读首条被裁剪的事件', async () => {
+  const { expandRange } = await import('../src/session-search.js');
+  const text = 'A'.repeat(5000);
+  const events = [{ seq: 1, data: { text } }];
+  const session = { eventAt: (seq) => events.find((e) => e.seq === seq) ?? null };
+  const first = expandRange(session, 1, 1, { limit: 100 });
+  assert.equal(Boolean(first.resume && first.resume.offset > 0), true, JSON.stringify(first.resume));
+  const next = expandRange(session, first.resume.seq, first.resume.seq, { limit: 200, offset: first.resume.offset });
+  assert.equal(next.bytes > 0, true);
+  assert.equal(next.text.length > 0, true);
+});
+
 const result = t.finish();
 process.exit(result.fail ? 1 : 0);

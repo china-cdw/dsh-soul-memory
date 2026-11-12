@@ -1073,6 +1073,10 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             return '设置失败：action 必须是 get / set / custom / disable。\n[err:E_ARG]';
           }
           const wantPreset = action === 'custom' ? 'custom' : (typeof args.preset === 'string' ? args.preset.trim() : '');
+          // 显式传了 preset 却是空白：这是参数错误，不能当成「只改 enabled」静默成功。
+          if (action === 'set' && typeof args.preset === 'string' && !wantPreset) {
+            return failMessage('E_ARG', '设置失败：preset 不能为空。可用预设：' + PRESETS.map((p) => p.id).join(' / '));
+          }
           // set 允许只改启用状态（preset 继承当前值）；既没 preset 也没 enabled 才是参数错误。
           if (action === 'set' && !wantPreset && typeof args.enabled !== 'boolean') {
             return failMessage('E_ARG', '设置失败：action=set 需要提供 preset 或 enabled。可用预设：' + PRESETS.map((p) => p.id).join(' / '));

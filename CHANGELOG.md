@@ -1,5 +1,15 @@
 # 变更日志
 
+## 0.3.18
+
+- 修复 `soul_expand` 的 `limit` 没有上限：硬钳制 20KB / 1000 事件，避免一次拉回整个大事件。
+- 新增 `offset` 参数：`resume.offset` 现在真的能续读，不再同 seq 重读同一段。
+- 快照：`snapshotGraph` 进入 `.snapshot.lock`，临时文件改 `<pid>-<rand>`，避免并发分裂与 pid 复用撞名。
+- 快照轮转：`count` 过滤点文件；`latestSnapshot` 也认只有图谱的目录，不再把有图无文的备份当「尚未生成」。
+- persona：`preset` 显式空白现在返回 `E_ARG`，不再静默成功。
+- 测试增至 118 断言。
+
+
 ## 0.3.17
 
 - 快照图谱完成改用独立 `.graph` 标记 + SQLite magic 校验：半截文件、纯文本 `evolve.sqlite` 不再被当成完成，也不会占 keep 名额。
