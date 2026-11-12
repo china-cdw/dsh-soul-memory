@@ -97,12 +97,14 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 
 ## 闲时整理（dreaming，可选）
 
-默认关闭。开启后，每次 turn 结束、空闲若干秒，插件会把最近会话图谱里的决策、约束和重复进度聚成 digest 笔记写进 `notes/`——只新增，不删改既有记忆。
+默认关闭。开启后，每次 turn 结束、空闲若干秒，插件会把最近会话图谱里的决策、约束和重复进度聚成 digest 笔记写进 `notes/`（只新增，不删改既有记忆）；开了 `dreaming.ai` 时还会先让模型判一遍垃圾（寒暄、断网重发的重复对话、明显错乱的内容），判定为 noise/duplicate 的节点只 retire——可逆、从投影消失，`soul_recall` 仍能找回，原始会话日志不删。
 
 - 开关：`memory_dreaming` 的 `action=status/on/off`（运行态写入 `$DSH_HOME/memory/DREAMING.json`，立即生效），或在设置里给 `dreaming.enabled: true`；
 - 手动跑：`action=run` 默认 dry-run 只列候选，`apply: true` 才写盘，`force: true` 忽略冷却；
 - 边界：每次最多 `dreaming.maxNotes` 条（默认 3）；两次自动整理至少间隔 `dreaming.minIntervalMinutes`（默认 180 分钟）；digest 带 `dream` 标签和来源 seq，走与 `memory_write` 相同的查重；
-- 空闲触发延迟由 `dreaming.idleDelaySeconds` 控制（默认 120 秒，最小 10）。
+- 空闲触发延迟由 `dreaming.idleDelaySeconds` 控制（默认 120 秒，最小 10）；
+- AI 清理（默认开）：模型只做裁决，必须返回严格 JSON；判 `noise`/`duplicate` 的节点 retire（可逆），`keep` 与编造 id 一律不动；模型不可用、超时或返回不合法 JSON 时跳过清理、照常整理，不会擅自删任何东西；
+- AI 路由：`dreaming.provider` / `dreaming.model`，留空用全局默认模型；扫描上限 `dreaming.maxScanNodes`（默认 60，范围 10–300），单次最多 retire `dreaming.maxRetirePerRun`（默认 20，范围 1–100）。
 
 ---
 
@@ -144,7 +146,7 @@ dsh plugin --profile desktop add "$PWD"
 | `memory_delete` | 删除（写墓碑，不复活） | `id` |
 | `memory_core` | 改核心记忆分节 | `action`（append/replace/remove）、`section`、`text?` |
 | `memory_brief` | 记忆库体检 | — |
-| `memory_dreaming` | 闲时整理开关与手动执行 | `action`（status/on/off/run）、`apply?`、`force?` |
+| `memory_dreaming` | 闲时整理开关与手动执行（含 AI 垃圾清理） | `action`（status/on/off/run）、`apply?`、`force?` |
 | `persona` | 回复风格 | `action`（get/set/custom/disable）、`preset?`、`text?` |
 | `coding_rules` | 编码规范 | `action`（show/list/add/forget）、`text?` |
 | `lessons` | 踩坑记录 | `action`（list/forget/clear）、`text?`、`limit?`（默认 50，上限 200） |
@@ -197,6 +199,11 @@ config:
     idleDelaySeconds: 120   # turn 结束后等多少秒再跑（10–3600）
     minIntervalMinutes: 180 # 两次自动整理的最小间隔（0–10080）
     maxNotes: 3             # 单次最多写几条（1–10）
+    ai: true                # 让模型判垃圾（noise/duplicate → retire，可逆）
+    provider: ''            # 留空用全局默认模型
+    model: ''
+    maxScanNodes: 60        # 单次送模型判定的节点上限（10–300）
+    maxRetirePerRun: 20     # 单次最多 retire 多少节点（1–100）
 ```
 
 `bridge.sessionsDir` 留空时依次找：环境变量 `BILI_SESSIONS_DIR` → `%USERPROFILE%\.local\share\billion-context\sessions`（Linux/macOS 为 `~/.local/share/billion-context/sessions`）。
@@ -298,7 +305,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 66 项、编码层 10 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项，共 142 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 69 项、编码层 10 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项，共 145 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

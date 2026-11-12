@@ -19,7 +19,7 @@ import { sizeReport, COMPONENTS } from './src/tree.js'
 import { createComponents, cwdForAgent } from './src/components.js'
 import { assertVerifier, validationSettings } from './src/validation.js'
 import { runChecks } from './src/probe.js'
-import { registerCoreMemory, runDreaming, setDreamNodeProvider, setSessionSeqProvider } from './src/core-memory.js'
+import { registerCoreMemory, runDreaming, setDreamGenerator, setDreamNodeProvider, setDreamRetireProvider, setSessionSeqProvider } from './src/core-memory.js'
 import { snapshotGraph } from './src/memory/util.js'
 
 export const name = 'dsh-x-memory'
@@ -76,6 +76,12 @@ export function settings(input = {}) {
       idleDelaySeconds: integer(input.dreaming?.idleDelaySeconds, 120, 10, 3600, 'dreaming.idleDelaySeconds'),
       minIntervalMinutes: integer(input.dreaming?.minIntervalMinutes, 180, 0, 10080, 'dreaming.minIntervalMinutes'),
       maxNotes: integer(input.dreaming?.maxNotes, 3, 1, 10, 'dreaming.maxNotes'),
+      // AI 清理：默认开。没有模型路由时只出候选、拒绝 apply 删除，不会静默降级成乱删。
+      ai: boolean(input.dreaming?.ai, true, 'dreaming.ai'),
+      provider: input.dreaming?.provider ?? '',
+      model: input.dreaming?.model ?? '',
+      maxScanNodes: integer(input.dreaming?.maxScanNodes, 60, 10, 300, 'dreaming.maxScanNodes'),
+      maxRetirePerRun: integer(input.dreaming?.maxRetirePerRun, 20, 1, 100, 'dreaming.maxRetirePerRun'),
     },
     memory: {
       // On by default: the projection emits nothing until the graph has nodes, so a fresh
@@ -206,12 +212,46 @@ export function apply(ctx, input = {}) {
     const cwd = cwdForAgent(ctx, agent) ?? session.header?.cwd
     return projectScope({ id: session.id, header: { cwd } })
   }
+  // AI 清理的模型调用：路由优先级 dreaming.provider/model → 顶层 provider/model → 宿主默认。
+  // 与演化不同，这里不强制配置：没配时 runDreaming 只出候选，apply 会被拒绝。
+  const dreamLLM = typeof ctx.get === 'function' ? ctx.get('llm') : ctx.llm
+  const dreamGenerate = async (request) => {
+    if (!dreamLLM?.stream) return null
+    const provider = config.dreaming.provider || config.provider || undefined
+    const model = config.dreaming.model || config.model || undefined
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 60000)
+    timer.unref?.()
+    let body = ''
+    let finish
+    try {
+      for await (const chunk of dreamLLM.stream({
+        provider, model,
+        system: request.system,
+        messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(request.data) }] }],
+        tools: [], maxTokens: 2000, signal: controller.signal,
+      })) {
+        if (chunk.type === 'text-delta') body += chunk.text
+        if (chunk.type === 'finish') finish = chunk.reason?.kind
+        if (Buffer.byteLength(body) > 60000) throw new Error('output_limit')
+      }
+    } finally {
+      clearTimeout(timer)
+    }
+    if (finish && finish !== 'stop') throw new Error('模型未正常结束：' + finish)
+    const cleaned = body.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')
+    return JSON.parse(cleaned)
+  }
+  setDreamGenerator(dreamGenerate)
+
   registerCoreMemory(ctx, {
     core: config.memory.enabled,
     coding: config.coding,
     lessons: config.lessons,
     bridge: config.bridge,
     dreaming: config.dreaming,
+    generate: dreamGenerate,
+    retireNodes: (agent, ids) => retireDreamNodes(agent, ids),
     graphSearch: async (agent, query) => {
       if (!config.memory.enabled || !store) return []
       const scope = scopeForAgent(agent)
@@ -251,6 +291,25 @@ export function apply(ctx, input = {}) {
       }))
     } catch { return [] }
   })
+
+  // AI 清理的落点：只把节点标记为 retired（可逆；soul_recall 仍能找到），绝不硬删。
+  const retireDreamNodes = (agent, ids) => {
+    if (!store || !Array.isArray(ids) || !ids.length) return 0
+    const scope = scopeForAgent(agent)
+    if (!scope) return 0
+    let changed = 0
+    try {
+      const stmt = store.db.prepare("UPDATE node SET state='retired', seen=? WHERE id=? AND pin=0")
+      const now = Date.now()
+      for (const id of ids) changed += stmt.run(now, id).changes
+      if (changed) store.log({ scope, action: 'dream_retire', actor: 'system', detail: { count: changed, ids: ids.slice(0, 20) } })
+    } catch (e) {
+      console.error('dsh-x-memory: dreaming retire 失败：' + (e?.message ?? e))
+      return 0
+    }
+    return changed
+  }
+  setDreamRetireProvider((agent, ids) => retireDreamNodes(agent, ids))
 
   const recorder = new Recorder()
   const disposers = []

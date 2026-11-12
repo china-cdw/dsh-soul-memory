@@ -16,6 +16,10 @@ export const DREAMING_DEFAULTS = {
   minIntervalMinutes: 180,
   maxNotes: 3,
   minCluster: 2,
+  // AI 清理：让宿主模型裁决哪些节点是废话/重复/被纠正的错误结论（只 retire，不删）。
+  ai: true,
+  maxScanNodes: 60,
+  maxRetirePerRun: 20,
 }
 
 /** <memory>/DREAMING.json：运行态（用户开关、上次整理时间与结果）。 */
@@ -154,4 +158,52 @@ export function pickDigests(nodes, { maxNotes = 3, minCluster = 2 } = {}) {
   }
   drafts.sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0))
   return drafts.slice(0, Math.max(1, maxNotes))
+}
+
+
+// ---- AI 清理：让宿主模型判断哪些记忆是垃圾（废话 / 断网重复 / 被纠正的错误） -----------------
+// 只输出裁决，不在这里执行删除：retire 由 core-memory 注入的执行器完成，保持可测试、可回滚。
+
+export function buildCleanupRequest(items) {
+  const list = (Array.isArray(items) ? items : []).map((it) => ({
+    id: String(it.id),
+    kind: String(it.kind ?? ''),
+    text: String(it.text ?? '').slice(0, 300),
+    seq: Number.isFinite(it.seq) ? it.seq : null,
+  }))
+  const system = [
+    '你是记忆库的清理员。下面是一组从对话中抽取的记忆节点（id/kind/text/seq）。',
+    '判断每一条是否属于垃圾信息：用户的寒暄与废话、断网或重试造成的重复对话、已经被后续纠正的错误结论。',
+    '只输出 JSON，不要解释：{"items":[{"id":"<原 id>","verdict":"keep|noise|duplicate","reason":"<20 字内>"}]}',
+    '规则：不确定就 keep；约束/决策/产物只在明显重复或明确被纠正时标记；每个 id 都要出现一次。',
+    '不要编造 id，不要输出没有给出的 id。',
+  ].join('\n')
+  return { system, data: { items: list } }
+}
+
+function safeParse(text) {
+  const raw = String(text ?? '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim()
+  try { return JSON.parse(raw) } catch { return null }
+}
+
+export function parseCleanupVerdicts(reply, items) {
+  const list = Array.isArray(items) ? items : []
+  const allowed = new Set(list.map((it) => String(it.id)))
+  const parsed = typeof reply === 'string' ? safeParse(reply) : reply
+  const out = { retire: [], keep: 0, invalid: 0 }
+  const entries = Array.isArray(parsed && parsed.items) ? parsed.items : []
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') { out.invalid++; continue }
+    const id = String(entry.id ?? '')
+    if (!allowed.has(id)) { out.invalid++; continue }
+    const verdict = String(entry.verdict ?? '').toLowerCase()
+    if (verdict === 'noise' || verdict === 'duplicate') {
+      out.retire.push({ id, verdict, reason: String(entry.reason ?? '').slice(0, 80) })
+    } else if (verdict === 'keep') {
+      out.keep++
+    } else {
+      out.invalid++
+    }
+  }
+  return out
 }

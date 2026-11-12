@@ -1,4 +1,11 @@
 # 变更日志
+## 0.3.34
+
+- dreaming 加 AI 清理：把用户废话、断网重发的重复对话、明显错乱内容判为 noise/duplicate，只 retire（可逆、从投影消失，soul_recall 仍可找回），不删原始会话日志、不删笔记；
+- AI 只做裁决：严格 JSON 白名单 id，keep 与编造 id 不动；模型不可用/超时/返回不合法 JSON 时跳过清理、照常整理，绝不静默删除；
+- 配置 `dreaming.ai`（默认开）、`provider`/`model`（留空用全局默认）、`maxScanNodes`（默认 60）、`maxRetirePerRun`（默认 20）；
+- 新增 3 条回归（只 retire 判定项、AI 不可用不 retire、模型报错中止且不 retire），共 145 项断言。
+
 ## 0.3.33
 
 ### 可选：闲时整理（dreaming）

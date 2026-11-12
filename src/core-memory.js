@@ -31,7 +31,7 @@ import {
 import { registerCodingRules } from './coding.js';
 import { registerLessons } from './lessons.js';
 import { biliStatus, searchBili } from './memory/bili.js'
-import { DREAMING_DEFAULTS, pickDigests, readDreamingState, writeDreamingState } from './dreaming.js';
+import { DREAMING_DEFAULTS, buildCleanupRequest, dreamCandidates, parseCleanupVerdicts, pickDigests, readDreamingState, writeDreamingState } from './dreaming.js';
 
 // 当前会话的事件序号提供者：index.js 启动时注入（读 MemoryBuffer 的最新 seq）。
 // 抽出来是为了让 writeNote 不依赖 index.js，测试也能直接喂一个假的。
@@ -46,6 +46,17 @@ let dreamingNodesOf = () => [];
 let dreamingCfg = { ...DREAMING_DEFAULTS };
 export function setDreamNodeProvider(fn) {
   dreamingNodesOf = typeof fn === 'function' ? fn : () => [];
+}
+
+// AI 清理用的生成器与退休执行器：由 index.js 注入，测试也能直接喂假的。
+// 两者都为 null 时 dreaming 仍可出 digest，但绝不做任何删除。
+let dreamGenerate = null;
+export function setDreamGenerator(fn) {
+  dreamGenerate = typeof fn === 'function' ? fn : null;
+}
+let dreamRetire = null;
+export function setDreamRetireProvider(fn) {
+  dreamRetire = typeof fn === 'function' ? fn : null;
 }
 
 const corePath = () => memoryPath('MEMORY.md');
@@ -1024,13 +1035,36 @@ export async function runDreaming({ apply = false, force = false, trigger = 'man
     }
   }
   const nodes = await Promise.resolve(dreamingNodesOf(agent))
+  const scanLimit = Math.max(1, Number(dreamingCfg.maxScanNodes) || 60)
+  const scan = dreamCandidates(nodes).slice(0, scanLimit)
+  const maxRetire = Math.max(1, Number(dreamingCfg.maxRetirePerRun) || 20)
+  let cleanup = { ai: dreamingCfg.ai !== false, scanned: scan.length, planned: 0, retired: 0 }
+  if (dreamingCfg.ai !== false && scan.length) {
+    if (!dreamGenerate) {
+      cleanup = { ...cleanup, available: false, hint: '未配置模型路由，跳过 AI 清理（不会删除任何记忆）；要启用请设置 dreaming.provider/model 或顶层 provider/model。' }
+    } else {
+      let verdicts = null
+      try {
+        verdicts = parseCleanupVerdicts(await dreamGenerate(buildCleanupRequest(scan)), scan)
+      } catch (e) {
+        if (apply) return failMessage('E_INTERNAL', '整理模型调用失败，未做任何修改：' + errText(e))
+        cleanup = { ...cleanup, available: false, error: errText(e) }
+      }
+      if (verdicts) {
+        const planned = verdicts.retire.slice(0, maxRetire)
+        const ids = planned.map(p => p.id)
+        const retired = apply && dreamRetire && ids.length ? Number(dreamRetire(agent, ids)) || 0 : 0
+        cleanup = { ...cleanup, available: true, planned: planned.length, retired, keep: verdicts.keep, invalid: verdicts.invalid, details: planned }
+      }
+    }
+  }
   const drafts = pickDigests(nodes, {
     maxNotes: Math.max(1, Number(dreamingCfg.maxNotes) || 3),
     minCluster: Math.max(2, Number(dreamingCfg.minCluster) || 2),
   })
   const candidates = drafts.map(d => ({ title: d.title, events: d.events, tags: d.tags, seq: d.seq }))
   if (!apply) {
-    return { ok: true, enabled: true, dryRun: true, trigger, candidates: candidates.length, drafts: candidates }
+    return { ok: true, enabled: true, dryRun: true, trigger, cleanup, candidates: candidates.length, drafts: candidates }
   }
   const written = []
   const skipped = []
@@ -1049,10 +1083,10 @@ export async function runDreaming({ apply = false, force = false, trigger = 'man
   const at = new Date().toISOString()
   await writeDreamingState({
     lastRunAt: at,
-    lastResult: { at, trigger, candidates: drafts.length, written: written.length, skipped: skipped.length },
+    lastResult: { at, trigger, candidates: drafts.length, written: written.length, skipped: skipped.length, cleanup },
   })
   return {
-    ok: true, enabled: true, dryRun: false, trigger, candidates: drafts.length,
+    ok: true, enabled: true, dryRun: false, trigger, cleanup, candidates: drafts.length,
     written: written.length, skipped, at,
   }
 }
@@ -1071,6 +1105,7 @@ async function dreamingTool(args = {}, exec = null) {
         '闲时整理（dreaming）：' + (enabled ? '已开启' : '已关闭'),
         '开关来源：' + source,
         '触发：每次 turn/end 后空闲 ' + dreamingCfg.idleDelaySeconds + ' 秒；冷却 ' + dreamingCfg.minIntervalMinutes + ' 分钟；单次最多 ' + dreamingCfg.maxNotes + ' 条',
+        '清理：' + (dreamingCfg.ai === false ? '仅启发式（不做 AI 判断）' : (dreamGenerate ? 'AI 判断废话/断网重复/被纠正的错误结论后 retire（可逆，可 soul_recall 找回）' : 'AI 未就绪（未配置模型路由）')) + '；扫描上限 ' + (dreamingCfg.maxScanNodes ?? 60) + ' 条、单次最多 retire ' + (dreamingCfg.maxRetirePerRun ?? 20) + ' 条',
         '上次整理：' + (state.lastRunAt || '从未') + (remain ? '（冷却中，约 ' + Math.ceil(remain / 60000) + ' 分钟后可再跑）' : ''),
         '上次结果：' + (state.lastResult ? JSON.stringify(state.lastResult) : '从未执行'),
         '只新增 digest 笔记，不删改既有记忆；action=run 默认 dry-run，apply=true 才写盘。',
@@ -1091,9 +1126,11 @@ async function dreamingTool(args = {}, exec = null) {
   }
 }
 
-export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, coding = null, lessons = null, bridge = null, dreaming = null, core = true } = {}) {
+export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, coding = null, lessons = null, bridge = null, dreaming = null, generate = null, retireNodes = null, core = true } = {}) {
   const bridgeCfg = bridge && typeof bridge === 'object' ? bridge : null
   dreamingCfg = { ...DREAMING_DEFAULTS, ...(dreaming && typeof dreaming === 'object' ? dreaming : {}) };
+  setDreamGenerator(generate);
+  setDreamRetireProvider(retireNodes);
   // 核心记忆层可单独关闭（memory.enabled=false）：工具、注入节、风格路由、bootstrap 一起停，
   // 编码规范与踩坑记录层各有独立开关，不受影响。
   if (core) enqueue(async () => {
@@ -1276,7 +1313,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     },
     {
       name: 'memory_dreaming',
-      description: '闲时整理（dreaming）开关：把近期决策/约束/重复进度聚成 digest 笔记。默认关闭；action=status 查看，on/off 切换，run 手动执行（默认只列候选，apply=true 才写盘，force=true 忽略冷却）。只新增笔记，不删改既有记忆。',
+      description: '闲时整理（dreaming）：可选开关。开启后把近期决策/约束/重复进度聚成 digest 笔记；配置了模型路由时，还会用 AI 判断哪些记忆是废话、断网重试造成的重复、已被纠正的错误结论，并把它们 retire（可逆，soul_recall 仍可找回；不删原始日志与笔记）。默认关闭；action=status 查看，on/off 切换，run 手动执行（默认只列候选，apply=true 才写盘，force=true 忽略冷却）。',
       parameters: {
         type: 'object', additionalProperties: false,
         properties: {

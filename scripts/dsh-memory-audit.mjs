@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { assert, callTool, makeCtx, makeHome, suite, waitFor } from './_testkit.mjs';
-import { registerCoreMemory, setDreamNodeProvider, setSessionSeqProvider } from '../src/core-memory.js';
+import { registerCoreMemory, setDreamGenerator, setDreamNodeProvider, setDreamRetireProvider, setSessionSeqProvider } from '../src/core-memory.js';
 import { latestSnapshot, snapshotGraph, snapshotMemory } from '../src/memory/util.js';
 import { readPersona } from '../src/persona.js';
 import { normalize, extract } from '../src/skeleton.js';
@@ -824,6 +824,58 @@ await t.test('P0 闲时整理 dry-run 不写盘、apply 写不超过上限且带
 
   await callTool(tools1, 'memory_dreaming', { action: 'off' });
   setDreamNodeProvider(null);
+});
+
+
+await t.test('P0 AI 清理：只 retire 模型判定的垃圾节点，keep 与编造 id 不动', async () => {
+  await callTool(tools1, 'memory_dreaming', { action: 'on' });
+  setDreamNodeProvider(() => ([
+    { id: 'g1', kind: 'progress', text: '用户说好的那我们继续下一步吧', seq: 21 },
+    { id: 'g2', kind: 'progress', text: '网络断开重试网络断开重试网络断开', seq: 22 },
+    { id: 'g3', kind: 'decision', text: '缓存失效采用事件驱动而不是轮询', why: '轮询延迟高且浪费 CPU', seq: 23 },
+  ]));
+  const retired = [];
+  setDreamRetireProvider((agent, ids) => { retired.push(...ids); return ids.length });
+  setDreamGenerator(async () => ({ items: [
+    { id: 'g1', verdict: 'noise', reason: '寒暄' },
+    { id: 'g2', verdict: 'duplicate', reason: '断网重复' },
+    { id: 'g3', verdict: 'keep', reason: '决策' },
+    { id: 'not-a-node', verdict: 'noise', reason: '编造 id' },
+  ] }));
+  const out = JSON.parse(await callTool(tools1, 'memory_dreaming', { action: 'run', apply: true, force: true }));
+  assert.equal(out.cleanup.available, true);
+  assert.equal(out.cleanup.planned, 2);
+  assert.equal(out.cleanup.retired, 2);
+  assert.equal(out.cleanup.invalid, 1);
+  assert.deepEqual(retired.sort(), ['g1', 'g2']);
+  await callTool(tools1, 'memory_dreaming', { action: 'off' });
+});
+
+await t.test('P0 AI 不可用时 apply 不 retire 任何节点', async () => {
+  await callTool(tools1, 'memory_dreaming', { action: 'on' });
+  setDreamNodeProvider(() => ([{ id: 'g9', kind: 'progress', text: '网络断开重试网络断开重试网络断开', seq: 31 }]));
+  const retired = [];
+  setDreamRetireProvider((agent, ids) => { retired.push(...ids); return ids.length });
+  setDreamGenerator(null);
+  const out = JSON.parse(await callTool(tools1, 'memory_dreaming', { action: 'run', apply: true, force: true }));
+  assert.equal(out.cleanup.available, false);
+  assert.equal(out.cleanup.retired, 0);
+  assert.equal(retired.length, 0);
+  await callTool(tools1, 'memory_dreaming', { action: 'off' });
+});
+
+await t.test('P0 整理模型报错时 apply 中止且不 retire', async () => {
+  await callTool(tools1, 'memory_dreaming', { action: 'on' });
+  setDreamNodeProvider(() => ([{ id: 'g10', kind: 'progress', text: '网络断开重试网络断开重试网络断开', seq: 41 }]));
+  const retired = [];
+  setDreamRetireProvider((agent, ids) => { retired.push(...ids); return ids.length });
+  setDreamGenerator(async () => { throw new Error('provider down') });
+  const text = await callTool(tools1, 'memory_dreaming', { action: 'run', apply: true, force: true });
+  assert.match(text, /E_INTERNAL/);
+  assert.equal(retired.length, 0);
+  setDreamGenerator(null);
+  setDreamNodeProvider(null);
+  await callTool(tools1, 'memory_dreaming', { action: 'off' });
 });
 
 const result = t.finish();
