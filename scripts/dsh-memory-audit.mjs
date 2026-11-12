@@ -1019,6 +1019,35 @@ await t.test('P0 retired 列取失败要说原因，不能伪装成空列表', a
   setDreamRetiredListProvider(null);
 });
 
+await t.test('P0 同对象两个 id：verdict 按最近归属，不互相串位', async () => {
+  const items = [{ id: 'x1' }, { id: 'x2' }]
+  const reply = '{"items":[{"id":"x1","verdict":"noise","id":"x2","verdict":"keep"},'
+  const parsed = parseCleanupVerdicts(reply, items)
+  assert.deepEqual(parsed.retire.map((x) => x.id), ['x1'], '只该退役 x1：' + JSON.stringify(parsed))
+});
+
+await t.test('P0 reason 里含 { 时裁决不丢', async () => {
+  const items = [{ id: 'y1' }]
+  const reply = '{"items":[{"id":"y1","verdict":"noise","reason":"含 { 括号"},{"id":"y2",'
+  const parsed = parseCleanupVerdicts(reply, items)
+  assert.deepEqual(parsed.retire.map((x) => x.id), ['y1'], '应捞出 y1：' + JSON.stringify(parsed))
+});
+
+await t.test('P0 dry-run 不报 rejected，改为 wouldRetire', async () => {
+  await callTool(tools1, 'memory_dreaming', { action: 'on' });
+  setDreamNodeProvider(() => ([{ id: 'w1', kind: 'progress', text: '网络断开重试网络断开重试网络断开', seq: 71 }]));
+  setDreamGenerator(async () => '{"items":[{"id":"w1","verdict":"noise","reason":"重复"}]}');
+  setDreamRetireProvider((agent, ids) => ids.length);
+  const out = JSON.parse(await callTool(tools1, 'memory_dreaming', { action: 'run', force: true }));
+  assert.equal(out.cleanup.rejected, 0, 'dry-run 不该有 rejected');
+  assert.equal(out.cleanup.wouldRetire, 1, 'dry-run 应给出 wouldRetire');
+  assert.equal(out.cleanup.retired, 0);
+  setDreamGenerator(null);
+  setDreamRetireProvider(null);
+  setDreamNodeProvider(() => []);
+  await callTool(tools1, 'memory_dreaming', { action: 'off' });
+});
+
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('核心记忆自检通过。');

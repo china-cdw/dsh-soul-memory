@@ -644,7 +644,8 @@ export class Store {
       const insert = this.db.prepare(`INSERT INTO node(
         id,scope,kind,claim,terms,anchor,hash,source,seq,pin,valid_from,valid_to,recorded_at,
         weight,support,hits,state,created,seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(id) DO UPDATE SET support=support+1, seen=excluded.seen, claim=excluded.claim`)
+        ON CONFLICT(id) DO UPDATE SET support=support+1, claim=excluded.claim,
+        seen=CASE WHEN node.state='active' THEN excluded.seen ELSE node.seen END`)
       for (const node of nodes) {
         const claim = bounded(redactText(String(node.claim ?? '')), 400)
         insert.run(node.id, scope, String(node.kind), claim, JSON.stringify(termSet(claim)),
@@ -800,7 +801,9 @@ export class Store {
     const byState = Object.fromEntries(this.db.prepare(
       'SELECT state, COUNT(*) n FROM node WHERE scope=? GROUP BY state').all(scope)
       .map(row => [row.state, row.n]))
-    const edges = this.db.prepare('SELECT COUNT(*) n FROM edge WHERE scope=?').get(scope)?.n ?? 0
+    const edges = this.db.prepare(`SELECT COUNT(*) n FROM edge WHERE scope=? AND
+      src IN (SELECT id FROM node WHERE scope=? AND state='active')
+      AND dst IN (SELECT id FROM node WHERE scope=? AND state='active')`).get(scope, scope, scope)?.n ?? 0
     const bytes = this.db.prepare("SELECT COALESCE(SUM(LENGTH(claim)),0) b FROM node WHERE scope=? AND state='active'")
       .get(scope)?.b ?? 0
     const pinned = this.db.prepare("SELECT COUNT(*) n FROM node WHERE scope=? AND pin=1 AND state='active'")
@@ -852,12 +855,17 @@ export class Store {
 
   graphStats(scope) {
     const byRel = Object.fromEntries(this.db.prepare(
-      'SELECT rel, COUNT(*) n, ROUND(AVG(w),2) avg FROM edge WHERE scope=? GROUP BY rel').all(scope)
+      `SELECT rel, COUNT(*) n, ROUND(AVG(w),2) avg FROM edge WHERE scope=? AND
+       src IN (SELECT id FROM node WHERE scope=? AND state='active')
+       AND dst IN (SELECT id FROM node WHERE scope=? AND state='active') GROUP BY rel`).all(scope, scope, scope)
       .map(row => [row.rel, { n: row.n, avg: row.avg }]))
     const hubs = this.db.prepare(`SELECT n.id, n.kind, n.claim, COUNT(e.id) degree, ROUND(MAX(e.w),2) peak
       FROM node n JOIN edge e ON (e.src = n.id OR e.dst = n.id)
       WHERE n.scope=? AND n.state='active' GROUP BY n.id ORDER BY degree DESC, peak DESC LIMIT 5`).all(scope)
-    return { edges: this.db.prepare('SELECT COUNT(*) n FROM edge WHERE scope=?').get(scope)?.n ?? 0, byRel, hubs }
+    const edges = this.db.prepare(`SELECT COUNT(*) n FROM edge WHERE scope=? AND
+      src IN (SELECT id FROM node WHERE scope=? AND state='active')
+      AND dst IN (SELECT id FROM node WHERE scope=? AND state='active')`).get(scope, scope, scope)?.n ?? 0
+    return { edges, byRel, hubs }
   }
 
   // -- span index ----------------------------------------------------------

@@ -35,9 +35,12 @@ export async function readDreamingState() {
     raw = await readFile(dreamingStatePath(), 'utf8')
   } catch (e) {
     if (e && e.code !== 'ENOENT') {
-      console.error('dsh-x-memory: 读取 DREAMING.json 失败，按默认值处理：' + ((e && e.message) || e))
+      // 读不出来（占用/权限/IO）也要留副本：否则下一轮写回会以默认值为底，静默重置用户开关。
+      await copyFile(dreamingStatePath(), dreamingStatePath() + '.bad-' + Date.now()).catch(() => {})
+      console.error('dsh-x-memory: 读取 DREAMING.json 失败，已备份并按默认值处理：' + ((e && e.message) || e))
+      return { ...DREAMING_DEFAULTS, configured: false, corrupt: true }
     }
-    return { ...DREAMING_DEFAULTS, configured: false }
+    return { ...DREAMING_DEFAULTS, configured: false, corrupt: false }
   }
   try {
     const parsed = JSON.parse(raw)
@@ -47,13 +50,20 @@ export async function readDreamingState() {
       ...parsed,
       // configured 区分「用户显式开/关」与「沿用设置项默认值」。
       configured: Object.prototype.hasOwnProperty.call(parsed, 'enabled'),
+      corrupt: false,
     }
   } catch (e) {
     // 文件损坏时先留副本：否则下一轮写回会以默认值为底，静默重置 enabled/lastRunAt/lastResult。
-    await copyFile(dreamingStatePath(), dreamingStatePath() + '.bad').catch(() => {})
+    await copyFile(dreamingStatePath(), dreamingStatePath() + '.bad-' + Date.now()).catch(() => {})
     console.error('dsh-x-memory: DREAMING.json 解析失败，已备份为 .bad 并按默认值处理：' + ((e && e.message) || e))
-    return { ...DREAMING_DEFAULTS, configured: false }
+    return { ...DREAMING_DEFAULTS, configured: false, corrupt: true }
   }
+}
+
+/** 跨进程互斥：on/off 写盘与 run 读改写同一份状态，两个进程同时整理会互相踩。 */
+export async function withDreamingRunLock(job) {
+  // 不能用 DREAMING.json 自己的锁：run 期间写 lastResult 会再抢同一把锁。
+  return withFileLock(dreamingStatePath() + '.run', job, { waitMs: 1, staleMs: 30 * 60 * 1000 })
 }
 
 export async function writeDreamingState(patch) {
@@ -188,20 +198,13 @@ export function chunkItems(items, size = 12) {
   return out
 }
 
-/**
- * 从 id 所在位置做花括号配对，取它所属的那个对象。
- * 不能按「下一个 id」切窗：verdict 写在 id 之前时，会把下一条的裁决判给当前条。
- */
-function objectAround(text, pos) {
-  let start = -1
-  for (let i = Math.min(pos, text.length - 1); i >= 0; i--) {
-    if (text[i] === '{') { start = i; break }
-  }
-  if (start < 0) return null
-  let depth = 0
+/** 一次前向扫描得到所有对象的 [start, end]，字符串/转义感知。 */
+function jsonObjectSpans(text) {
+  const spans = []
+  const stack = []
   let inStr = false
   let esc = false
-  for (let i = start; i < text.length; i++) {
+  for (let i = 0; i < text.length; i++) {
     const ch = text[i]
     if (inStr) {
       if (esc) esc = false
@@ -210,29 +213,50 @@ function objectAround(text, pos) {
       continue
     }
     if (ch === '"') { inStr = true; continue }
-    if (ch === '{') depth++
-    else if (ch === '}') { depth--; if (!depth) return text.slice(start, i + 1) }
+    if (ch === '{') { stack.push(i); continue }
+    if (ch === '}') {
+      const start = stack.pop()
+      // 顶层对象可能被 max-tokens 截断而永远不闭合；内层完整对象仍要能捞出。
+      if (start !== undefined) spans.push([start, i])
+    }
   }
-  return null
+  return spans
 }
 
-/** 从可能被截断的 JSON 文本里捞回完整对象：只认该 id 所在对象内的 verdict。 */
+/**
+ * 从可能被截断的 JSON 文本里捞回完整对象。
+ * 同一对象可能含多个 id：verdict 归「离该 id 最近」的那条（id 之后优先、之前兜底），
+ * 不能取对象里的第一个 verdict，否则两条裁决会互相串位。
+ */
 function recoverItems(raw) {
   const text = String(raw ?? '')
+  const spans = jsonObjectSpans(text)
+  const ids = []
   const idRe = /"id"\s*:\s*"([^"]{1,80})"/g
+  let m
+  while ((m = idRe.exec(text))) ids.push({ id: m[1], at: m.index })
   const out = []
   const seen = new Set()
-  let m
-  while ((m = idRe.exec(text))) {
-    const id = m[1]
+  for (const { id, at } of ids) {
     if (seen.has(id)) continue
-    const obj = objectAround(text, m.index)
-    if (!obj) continue
-    const v = obj.match(/"verdict"\s*:\s*"(keep|noise|duplicate)"/)
-    if (!v) continue
-    const r = obj.match(/"reason"\s*:\s*"([^"]{0,200})"/)
+    const span = spans.find(([s, e]) => s <= at && at <= e)
+    if (!span) continue
+    const body = text.slice(span[0], span[1] + 1)
+    const base = span[0]
+    const verdicts = []
+    const vre = /"verdict"\s*:\s*"(keep|noise|duplicate)"/g
+    let v
+    while ((v = vre.exec(body))) verdicts.push({ verdict: v[1], at: base + v.index })
+    if (!verdicts.length) continue
+    verdicts.sort((a, b) => {
+      const da = a.at >= at ? a.at - at : (at - a.at) * 2
+      const db = b.at >= at ? b.at - at : (at - b.at) * 2
+      return da - db
+    })
+    const rre = /"reason"\s*:\s*"([^"]{0,200})"/g
+    const r = rre.exec(body)
     seen.add(id)
-    out.push({ id, verdict: v[1], reason: r ? r[1] : '' })
+    out.push({ id, verdict: verdicts[0].verdict, reason: r ? r[1] : '' })
   }
   return out.length ? { items: out } : null
 }

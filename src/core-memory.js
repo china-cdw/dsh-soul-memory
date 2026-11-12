@@ -31,7 +31,7 @@ import {
 import { registerCodingRules } from './coding.js';
 import { registerLessons } from './lessons.js';
 import { biliStatus, searchBili } from './memory/bili.js'
-import { DREAMING_DEFAULTS, buildCleanupRequest, chunkItems, dreamCandidates, parseCleanupVerdicts, pickDigests, readDreamingState, writeDreamingState } from './dreaming.js';
+import { DREAMING_DEFAULTS, buildCleanupRequest, chunkItems, dreamCandidates, parseCleanupVerdicts, pickDigests, readDreamingState, withDreamingRunLock, writeDreamingState } from './dreaming.js';
 
 // 当前会话的事件序号提供者：index.js 启动时注入（读 MemoryBuffer 的最新 seq）。
 // 抽出来是为了让 writeNote 不依赖 index.js，测试也能直接喂一个假的。
@@ -1036,7 +1036,16 @@ export async function runDreaming(opts = {}) {
   if (dreamingInFlight) {
     return { ok: false, enabled: true, skipped: 'running', hint: '上一轮闲时整理仍在执行，稍后再试。' }
   }
-  dreamingInFlight = runDreamingLocked(opts)
+  dreamingInFlight = (async () => {
+    try {
+      return await withDreamingRunLock(() => runDreamingLocked(opts))
+    } catch (e) {
+      if (e && /占用|未释放/.test(String(e.message || ''))) {
+        return { ok: false, enabled: true, skipped: 'running', hint: '另一个进程正在整理，稍后再试。' }
+      }
+      throw e
+    }
+  })()
   try { return await dreamingInFlight } finally { dreamingInFlight = null }
 }
 
@@ -1099,8 +1108,10 @@ async function runDreamingLocked({ apply = false, force = false, trigger = 'manu
         const retired = apply && dreamRetire && ids.length ? Number(dreamRetire(agent, ids)) || 0 : 0
         cleanup = {
           ...cleanup, available: true, reason: null, planned: planned.length, retired,
+          wouldRetire: ids.length,
           keep: merged.keep, invalid: merged.invalid, details: planned,
-          rejected: Math.max(0, planned.length - retired),
+          // dry-run 没调用 retire，不能用 planned - 0 冒充被拒绝；只有 apply 才有拒绝语义。
+          rejected: apply ? Math.max(0, planned.length - retired) : 0,
           ...(errors.length ? { error: errors[0] } : {}),
         }
       }

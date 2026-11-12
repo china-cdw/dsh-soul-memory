@@ -218,7 +218,7 @@ function statements(store) {
     // 只翻 state，且只对"未被取代"的节点生效：valid_to 是 supersede 留下的有效性区间，
     // 抹掉它等于把已被取代的旧结论复活成 current。要恢复被取代的节点，
     // 应当显式重新确立新结论，而不是靠一条 restore 命令抹掉历史。
-    restore: store.db.prepare("UPDATE node SET state='active' WHERE id=? AND valid_to IS NULL"),
+    restore: store.db.prepare("UPDATE node SET state='active', seen=? WHERE id=? AND scope=? AND state='retired' AND valid_to IS NULL"),
   }
   PREPARED.set(store, set)
   return set
@@ -434,10 +434,11 @@ export function retire(store, scope, view, options) {
  * Restore a retired node. Retiring must be a decision a person can undo, or it is a delete with
  * extra steps.
  */
-export function restore(store, ids) {
+export function restore(store, scope, ids) {
   const stmt = statements(store).restore
   const out = []
-  for (const id of ids) if (stmt.run(id).changes) out.push(id)
+  const now = Date.now()
+  for (const id of ids) if (stmt.run(now, id, scope).changes) out.push(id)
   return out
 }
 

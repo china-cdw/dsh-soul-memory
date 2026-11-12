@@ -1,4 +1,16 @@
 # 变更日志
+
+## 0.3.39
+
+- **裁决配对**：`recoverItems` 改成按对象边界前向扫描，verdict 归「离该 id 最近」的对象——同一对象出现两个 id、或 `reason` 里带 `{` 时，不再把裁决判给相邻节点。
+- **dry-run 不虚报**：`cleanup.rejected` 只在 apply 时计算，新增 `wouldRetire` 用来预览「如果 apply 会退役几条」。
+- **恢复可跨项目**：`restore(store, scope, ids)` 现在带 scope 与 `state='retired'` 守卫，并刷新 `seen`，恢复后的节点不会立刻被裁掉。
+- **不再推迟清理**：`recordNodes` 只对 active 节点刷新 `seen`，重放同一批抽取不会再让 retired 节点的 30 天计时重新开始。
+- **跨进程互斥**：`memory_dreaming run` 用 `DREAMING.json.run` 文件锁串行化，抢不到返回 `skipped: 'running'`，冷却判断在锁内。
+- **配置损坏可见**：`DREAMING.json` 读取失败或 JSON 损坏都会备份成 `.bad-<时间戳>` 并返回 `corrupt: true`，不再静默回落默认值覆盖开关。
+- **退役守卫与统计**：retire 的 UPDATE 加 `state='active'` 守卫；边统计只计入 active 端点。
+- **文档**：README 中英补 `cleanup` 全部字段（含 `wouldRetire`/`details`）、`rejected` 的 apply/dry-run 语义、`retiredAt` 即 `seen`；自检数改为 158 项断言（核心 82）。
+
 ## 0.3.38
 
 - 修复：`recoverItems` 改为按 `id` 做花括号配对，模型把 `verdict` 写在 `id` 之前时不再把裁决串到下一条（此前可能退役 keep 的节点、放过 noise 节点）；

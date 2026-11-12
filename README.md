@@ -108,7 +108,7 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 - 路由兜底：`dreaming.provider/model` → 插件顶层 provider/model → 当前 agent → 宿主 `cordis.patch.yml` 的 `agent-default-model`，都没有才报错并给出配置指引；
 - AI 路由：`dreaming.provider` / `dreaming.model`，留空用全局默认模型；扫描上限 `dreaming.maxScanNodes`（默认 60，范围 10–300），单次最多 retire `dreaming.maxRetirePerRun`（默认 20，范围 1–100）；`action=retired` 列出库里当前仍为 retired 的节点（restore 后即消失），`action=restore` 配 `ids` 恢复。
 
-- `cleanup` 字段：`available`（模型是否可用）、`reason`（`disabled` / `no_candidates` / `no_generator` / `no_llm` / `llm_failed` / null）、`scanned`、`planned`（模型判为 noise/duplicate 的条数）、`retired`（真正退役的条数，受护栏与单次上限限制）、`keep`、`invalid`、`rejected`（planned 与 retired 的差额，被护栏或上限挡下）、`error`（部分批失败时的首个错误）。
+- `cleanup` 字段：`available`（模型是否可用）、`reason`（`disabled` / `no_candidates` / `no_generator` / `no_llm` / `llm_failed` / null）、`scanned`、`planned`（模型判为 noise/duplicate、去重并按单次上限截断后的条数）、`wouldRetire`（本批预计退役的条数，dry-run 时用来看「如果 apply 会 retire 几条」）、`retired`（真正退役的条数，受护栏与单次上限限制；dry-run 恒为 0）、`keep`、`invalid`、`rejected`（apply 时 planned 与 retired 的差额，被护栏挡下；dry-run 恒为 0）、`details`（每条裁决的 id/verdict/reason）、`error`（部分批失败时的首个错误）。`action=retired` 的 `retiredAt` 取节点的 `seen`（最近一次被抽取或退役的时间）。
 
 ---
 
@@ -310,7 +310,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 79 项、编码层 10 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项，共 155 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 82 项、编码层 10 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项，共 158 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

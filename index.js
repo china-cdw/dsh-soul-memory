@@ -355,7 +355,7 @@ export function apply(ctx, input = {}) {
     try {
       // 护栏：只动没人用过、未被取代、创建 ≥7 天、未 pin 的节点（比 periphery() 更窄，不做重要性推断）。
       const stmt = store.db.prepare(
-        "UPDATE node SET state='retired', seen=? WHERE id=? AND scope=? AND pin=0 AND hits=0 AND valid_to IS NULL AND created<?")
+        "UPDATE node SET state='retired', seen=? WHERE id=? AND scope=? AND state='active' AND pin=0 AND hits=0 AND valid_to IS NULL AND created<?")
       store.tx(() => {
         const now = Date.now()
         for (const id of ids) changed += stmt.run(now, id, scope, cutoff).changes
@@ -1046,7 +1046,7 @@ export function apply(ctx, input = {}) {
           }
           if (verb === 'restore') {
             if (!args.length) return { kind: 'error', text: '用法：/mem restore <节点 id…>' }
-            return { kind: 'success', text: JSON.stringify({ restored: restore(store, args) }, null, 2) }
+            return { kind: 'success', text: JSON.stringify({ restored: restore(store, scope, args) }, null, 2) }
           }
           if (verb === 'prune') {
             store.pruneNodes(scope, config.memory.maxNodes)
