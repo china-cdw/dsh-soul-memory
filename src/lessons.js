@@ -2,7 +2,7 @@
 // 下次遇到同类报错时注入系统提示，避免重犯。纯本地、无模型调用。
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { atomicWrite, createQueue, memoryHome, redactSecrets, sliceSafe } from './memory/util.js';
+import { atomicWrite, createQueue, memoryHome, redactSecrets, sliceSafe, withFileLock } from './memory/util.js';
 
 const DEFAULT_BUDGET = 600;
 const MAX_ROWS = 400;
@@ -57,12 +57,18 @@ async function readRows() {
       }
     }
     return rows;
-  } catch {
-    return [];
+  } catch (e) {
+    // 文件不存在才是「空」；占用/权限错误必须抛给调用方，否则 clear/forget 会把读失败当成空清单整份清空。
+    if (e && e.code === 'ENOENT') return [];
+    throw e;
   }
 }
 
 async function appendRow(row) {
+  return withFileLock(lessonsPath(), () => appendRowLocked(row));
+}
+
+async function appendRowLocked(row) {
   let rows = [];
   try {
     rows = (await readFile(lessonsPath(), 'utf8'))

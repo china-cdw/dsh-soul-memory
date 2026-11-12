@@ -256,6 +256,8 @@ await t.test('索引损坏 → 读取时重建并写回合法 JSON', async () =>
 
 await t.test('index.json.lock 被占用时写入失败，超时锁会被清理', async () => {
   const lock = indexPath + '.lock';
+  // 用「仍活着」的锁测占用：stale 拉长到 60s，等待 300ms 必须报占用而不是把锁当过期删掉。
+  process.env.DSH_X_MEMORY_LOCK_STALE_MS = '60000';
   await writeFile(lock, '999999');
   const blocked = await callTool(tools1, 'memory_write', {
     title: '锁测试', content: '锁占用时不应写入。', force: true,
@@ -263,6 +265,7 @@ await t.test('index.json.lock 被占用时写入失败，超时锁会被清理',
   assert.match(blocked, /索引写入被占用/);
   assert.ok(!(await noteFiles()).some((n) => n.includes('锁测试') || n.includes('lock')), '锁占用时仍写了文件');
   // 把锁改成 20 秒前的残留，下一次写入应自动清理并成功。
+  process.env.DSH_X_MEMORY_LOCK_STALE_MS = '500';
   const old = new Date(Date.now() - 20000);
   await utimes(lock, old, old);
   const ok = await callTool(tools1, 'memory_write', { title: '锁恢复', content: '旧锁被清理后写入成功。', force: true });
@@ -453,6 +456,32 @@ await t.test('快照以 .complete 标记为准：图谱先建当天目录不会�
   assert.equal(r2.skipped, true, '有完成标记后当天应跳过');
 });
 
+await t.test("memory_delete 的空引用（'[]'）不会删掉任何记忆", async () => {
+  const before = (await readIndex()).notes.length;
+  const out = await callTool(tools1, 'memory_delete', { id: '[]' });
+  assert.match(out, /E_ARG/);
+  assert.equal((await readIndex()).notes.length, before);
+});
+
+await t.test('当天已有图谱快照、copied=0 时不会删掉 evolve.sqlite', async () => {
+  const other = await makeHome('dsh-mem-snap-');
+  const savedHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = other.dir;
+  try {
+    const snaps = join(other.dir, 'memory', '.snapshots');
+    const today = new Date().toISOString().slice(0, 10);
+    const dir = join(snaps, today + 'T00-00-02');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'evolve.sqlite'), 'graph');
+    const r = await snapshotMemory();
+    assert.equal(r.copied, 0);
+    assert.equal(await readFile(join(dir, 'evolve.sqlite'), 'utf8'), 'graph');
+    assert.equal(await stat(join(dir, '.complete')).then(() => true, () => false), false);
+  } finally {
+    process.env.DSH_HOME = savedHome;
+    await other.cleanup();
+  }
+});
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('核心记忆自检通过。');

@@ -42,13 +42,15 @@ export async function withFileLock(file, job, { waitMs = 15000, staleMs = 10000 
   await mkdir(dirname(lock), { recursive: true });
   const token = process.pid + '-' + Date.now() + '-' + Math.random().toString(16).slice(2);
   const started = Date.now();
+  // 等待窗口必须大于过期阈值，否则两个进程会同时判定对方过期并互相拆锁。
+  const effectiveWait = Math.max(waitMs, Math.ceil(staleMs * 1.2));
   for (;;) {
     try {
       await writeFile(lock, token, { flag: 'wx' });
       break;
     } catch (e) {
       if (!e || e.code !== 'EEXIST') throw e;
-      if (Date.now() - started > waitMs) throw new Error('文件写入被占用（' + lock + ' 超过 ' + waitMs + 'ms 未释放）');
+      if (Date.now() - started > effectiveWait) throw new Error('文件写入被占用（' + lock + ' 超过 ' + effectiveWait + 'ms 未释放）');
       try {
         const st = await stat(lock);
         if (Date.now() - st.mtimeMs > staleMs) await rm(lock, { force: true });
@@ -58,9 +60,14 @@ export async function withFileLock(file, job, { waitMs = 15000, staleMs = 10000 
   }
   // 心跳：读-改-写可能远超 staleMs（大文件查重），不刷新 mtime 会被别人当成过期锁删掉。
   const beat = setInterval(() => {
-    const now = new Date();
-    utimes(lock, now, now).catch(() => {});
-  }, Math.max(500, Math.floor(staleMs / 3)));
+    readFile(lock, 'utf8')
+      .then((held) => {
+        if (held !== token) return undefined;
+        const now = new Date();
+        return utimes(lock, now, now);
+      })
+      .catch(() => {});
+  }, Math.max(200, Math.floor(staleMs / 4)));
   beat.unref?.();
   try {
     return await job();
@@ -164,7 +171,8 @@ export async function snapshotMemory({ keep = 7 } = {}) {
     try { await stat(join(dir, name, '.complete')); return { skipped: true, dir: join(dir, name), count: names.length }; } catch { /* 未完成，继续补 */ }
   }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const dest = todayDirs.length ? join(dir, todayDirs[todayDirs.length - 1]) : join(dir, stamp);
+  const createdNew = todayDirs.length === 0;
+  const dest = createdNew ? join(dir, stamp) : join(dir, todayDirs[todayDirs.length - 1]);
   await mkdir(dest, { recursive: true });
   let copied = 0;
   for (const name of SNAPSHOT_FILES) {
@@ -175,7 +183,9 @@ export async function snapshotMemory({ keep = 7 } = {}) {
     copied++;
   } catch { /* 没有 notes 目录就跳过 */ }
   if (copied === 0) {
-    await rm(dest, { recursive: true, force: true }).catch(() => {});
+    // 只删自己刚建的目录：复用当天已有目录时，里面可能有 snapshotGraph 写进的 evolve.sqlite，
+    // 连带 rm 会把刚做好的图谱快照一起删掉。
+    if (createdNew) await rm(dest, { recursive: true, force: true }).catch(() => {});
     return { skipped: false, dir: dest, copied: 0, error: '没有可快照的记忆文件（记忆目录为空或不可读）' };
   }
   // 完成标记：只有它存在才表示这一天的文件记忆真的备完了。

@@ -257,21 +257,32 @@ async function withIndexLock(job) {
     } catch (e) {
       if (e && e.code !== 'EEXIST') throw e;
       // 超时判断放在所有分支之前：stat 本身持续失败（EPERM/EBUSY）时也必须退出，不能空转。
-      const waitMs = Number(process.env.DSH_X_MEMORY_LOCK_WAIT_MS) || INDEX_LOCK_WAIT_MS;
+      const staleMs = Number(process.env.DSH_X_MEMORY_LOCK_STALE_MS) || INDEX_LOCK_STALE_MS;
+      // 等待必须严格大于过期：否则本进程先判别人过期、别人也判本进程过期，两个写者会互相拆锁。
+      // 显式配置的等待时间优先（测试与快速失败场景需要短等待）；
+      // 默认值必须大于过期阈值，否则两个进程会同时判对方过期并互相拆锁。
+      const waitEnv = Number(process.env.DSH_X_MEMORY_LOCK_WAIT_MS);
+      const waitMs = waitEnv || Math.max(INDEX_LOCK_WAIT_MS, Math.ceil(staleMs * 1.2));
       if (Date.now() - started > waitMs) throw new Error('索引写入被占用（index.json.lock 超过 ' + (waitMs / 1000) + ' 秒未释放）');
       try {
         const st = await stat(lock);
-        const staleMs = Number(process.env.DSH_X_MEMORY_LOCK_STALE_MS) || INDEX_LOCK_STALE_MS;
         if (Date.now() - st.mtimeMs > staleMs) await rm(lock, { force: true });
       } catch { /* 锁刚好被持有者删掉，睡一下再试 */ }
       await new Promise((r) => setTimeout(r, 25));
     }
   }
   // 心跳：慢查询/大库重建超过 STALE 时，避免被其他进程当成死锁清掉。
+  const beatStale = Number(process.env.DSH_X_MEMORY_LOCK_STALE_MS) || INDEX_LOCK_STALE_MS;
   const beat = setInterval(() => {
-    const now = new Date();
-    utimes(lock, now, now).catch(() => {});
-  }, Math.max(500, Math.floor(INDEX_LOCK_STALE_MS / 3)));
+    // 只给自己持有的锁续命：锁被当成过期清掉又被别人抢到时，替对方刷新 mtime 会掩盖真实死锁。
+    readFile(lock, 'utf8')
+      .then((held) => {
+        if (held !== token) return undefined;
+        const now = new Date();
+        return utimes(lock, now, now);
+      })
+      .catch(() => {});
+  }, Math.max(200, Math.floor(beatStale / 4)));
   beat.unref?.();
   try {
     indexLockDepth += 1;
@@ -712,9 +723,12 @@ function normalizeRef(ref) {
 
 async function readNote(ref) {
   if (!ref) return failMessage('E_ARG', '读取失败：id 不能为空。可用 memory_list 获取 id。');
+  const refClean = normalizeRef(ref);
+  // '[]' / '[' / '.md' 归一化后是空串：空串做前缀匹配会命中全部条目，必须当场拒绝。
+  if (!refClean) return failMessage('E_ARG', '读取失败：id 不能为空。可用 memory_list 获取 id。');
   try {
     const notes = await loadIndex();
-    const clean = normalizeRef(ref);
+    const clean = refClean;
     let matches = notes.filter((n) => n.id === clean);
     if (matches.length === 0) matches = notes.filter((n) => n.id.indexOf(clean) === 0);
     if (matches.length === 0) return failMessage('E_NOT_FOUND', '未找到记忆「' + ref + '」。可用 memory_list 浏览全部 ' + notes.length + ' 条归档记忆。');
@@ -757,9 +771,11 @@ async function listNotes(args) {
 
 async function deleteNote(ref) {
   if (!ref) return failMessage('E_ARG', '删除失败：id 不能为空。');
+  const refClean = normalizeRef(ref);
+  if (!refClean) return failMessage('E_ARG', '删除失败：id 不能为空。');
   try {
     return await enqueue(() => withLockedIndex(async (notes) => {
-      const clean = normalizeRef(ref);
+      const clean = refClean;
       const matches = notes.filter((n) => n.id === clean || n.id.indexOf(clean) === 0);
       if (matches.length === 0) return { value: failMessage('E_NOT_FOUND', '删除失败：未找到「' + ref + '」。可用 memory_list 浏览全部。') };
       if (matches.length > 1) return { value: failMessage('E_AMBIGUOUS', 'id 有歧义，请精确指定：\n' + matches.map((n) => '- [' + n.id + '] ' + n.title).join('\n')) };
@@ -1109,6 +1125,14 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             if (bodyRes.tooLarge) { sendJson(413, { error: '请求体过大（上限 16KB）' }); return; }
             const patch = safeJson(bodyRes.body || '{}', null);
             if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('请求体必须是对象');
+            // 只接受已知字段且类型正确：拼错的字段名（presett）静默 200 会让调用方以为生效了。
+            const ALLOWED_FIELDS = new Set(['preset', 'custom', 'enabled']);
+            for (const [key, value] of Object.entries(patch)) {
+              if (!ALLOWED_FIELDS.has(key)) { sendJson(400, { error: '不支持的字段：' + key }); return; }
+              if (key === 'custom' && typeof value !== 'string') { sendJson(400, { error: 'custom 必须是字符串' }); return; }
+              if (key === 'preset' && typeof value !== 'string') { sendJson(400, { error: 'preset 必须是字符串' }); return; }
+              if (key === 'enabled' && typeof value !== 'boolean') { sendJson(400, { error: 'enabled 必须是布尔值' }); return; }
+            }
             if (Object.keys(patch).length === 0) {
               res.setHeader('cache-control', 'no-store');
               res.statusCode = 204;

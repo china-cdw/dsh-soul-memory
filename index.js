@@ -27,9 +27,11 @@ export const inject = ['tools', 'systemPrompt', 'commands']
 
 export function settings(input = {}) {
   const profileMatch = fileURLToPath(import.meta.url).replaceAll('\\', '/').match(/\/profiles\/([^/]+)\/node_modules\//)
-  const profile = input.profile ?? process.env.DSH_PROFILE ?? profileMatch?.[1] ?? (input.database ? 'explicit-database' : null)
-  if (!profile) throw new Error('无法确定 profile；请显式配置 profile、设置 DSH_PROFILE 环境变量，或给独立 database 路径，拒绝回落到共享库')
-  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(profile)) throw new Error('profile 标识无效')
+  const profileRaw = input.profile ?? process.env.DSH_PROFILE ?? profileMatch?.[1] ?? 'desktop'
+  const profile = /^[a-zA-Z0-9_-]{1,80}$/.test(String(profileRaw)) ? String(profileRaw) : 'desktop'
+  if (profile !== String(profileRaw)) {
+    console.error('[dsh-x-memory] profile 标识无效：' + String(profileRaw) + '，已回落 desktop；如需隔离请显式设置 profile 或 DSH_PROFILE')
+  }
 
   // `enabled` remains the legacy evolution switch; the explicit switch wins.
   const legacyEnabled = boolean(input.enabled, false, 'enabled')
@@ -527,6 +529,18 @@ export function apply(ctx, input = {}) {
           for (const key of definition.required) {
             const v = args?.[key]
             if (typeof v !== 'string' && !Number.isFinite(v)) throw new Error(`缺少参数 ${key}`)
+          }
+          if (definition.name === 'soul_recall' && args.k !== undefined) {
+            const k = Number(args.k)
+            if (!Number.isInteger(k) || k < 1 || k > 5) throw new Error('参数 k 必须是 1-5 的整数')
+          }
+          if (definition.name === 'soul_expand') {
+            if (args.from === '' || args.to === '') throw new Error('参数 from/to 不能为空')
+            const from = Number(args.from)
+            const to = Number(args.to)
+            if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > 1000000) {
+              throw new Error('参数 from/to 必须是 0-1000000 内、from ≤ to 的整数')
+            }
           }
           const { session, scope } = describe(exec.agent)
           const current = evolve?.current(scope)
