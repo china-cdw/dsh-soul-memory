@@ -135,7 +135,7 @@ dsh plugin --profile desktop add "$PWD"
 | `memory_brief` | 记忆库体检 | — |
 | `persona` | 回复风格 | `action`（get/set/custom/disable）、`preset?`、`text?` |
 | `coding_rules` | 编码规范 | `action`（show/list/add/forget）、`text?` |
-| `lessons` | 踩坑记录 | `action`（list/forget/clear）、`text?` |
+| `lessons` | 踩坑记录 | `action`（list/forget/clear）、`text?`、`limit?`（默认 50，上限 200） |
 | `soul_recall` | 从会话图谱/历史原文回捞 | `query`、`k?` |
 | `soul_expand` | 按 seq 区间展开原文 | `from`、`to` |
 

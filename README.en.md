@@ -135,7 +135,7 @@ The table below lists the 12 tools registered by default. With evolution enabled
 | `memory_brief` | Memory health report | — |
 | `persona` | Reply style | `action` (get/set/custom/disable), `preset?`, `text?` |
 | `coding_rules` | Coding conventions | `action` (show/list/add/forget), `text?` |
-| `lessons` | Mistake notes | `action` (list/forget/clear), `text?` |
+| `lessons` | Mistake notes | `action` (list/forget/clear), `text?`, `limit?` (default 50, max 200) |
 | `soul_recall` | Recall from the session graph / raw history | `query`, `k?` |
 | `soul_expand` | Expand raw text by seq range | `from`, `to` |
 

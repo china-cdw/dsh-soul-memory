@@ -10,6 +10,7 @@ import { assert, callTool, makeCtx, makeHome, suite, waitFor } from './_testkit.
 import { registerCoreMemory } from '../src/core-memory.js';
 import { snapshotGraph, snapshotMemory } from '../src/memory/util.js';
 import { readPersona } from '../src/persona.js';
+import { expandRange } from '../src/session-search.js';
 
 // 锁测试要快：默认等待 35s，这里压到 300ms（withIndexLock 每次调用时读取）。
 process.env.DSH_X_MEMORY_LOCK_WAIT_MS = '300';
@@ -464,8 +465,8 @@ await t.test("memory_delete 的空引用（'[]'）不会删掉任何记忆", asy
 });
 
 await t.test('当天已有图谱快照、copied=0 时不会删掉 evolve.sqlite', async () => {
-  const other = await makeHome('dsh-mem-snap-');
   const savedHome = process.env.DSH_HOME;
+  const other = await makeHome('dsh-mem-snap-');
   process.env.DSH_HOME = other.dir;
   try {
     const snaps = join(other.dir, 'memory', '.snapshots');
@@ -510,6 +511,28 @@ await t.test('persona 路由：坏 JSON 返回 400 而不是 500', async () => {
   assert.equal(res.statusCode, 400);
   assert.ok(!/Error/.test(String(res.body || '')), '不应回显异常');
 });
+await t.test('persona 超长自定义正文在 disable 后不被截断', async () => {
+  const big = 'x'.repeat(6000);
+  const personaPath = join(memoryDir, 'PERSONA.md');
+  const raw = ['---', 'enabled: true', 'preset: custom', "updated: '2026-01-01T00:00:00.000Z'", '---', '', '<!-- custom -->', big, ''].join('\n');
+  await writeFile(personaPath, raw, 'utf8');
+  const before = await readPersona();
+  assert.equal(before.custom.length, 6000);
+  await callTool(tools1, 'persona', { action: 'disable' });
+  const after = await readPersona();
+  assert.equal(after.custom.length, 6000, '停用风格不得截断用户正文');
+});
+
+await t.test('soul_expand 单条大事件保留部分内容且 to 前进', async () => {
+  const long = 'y'.repeat(5000);
+  const session = { seq: 2, eventAt: (n) => n === 1 ? { data: { text: long } } : n === 2 ? { data: { text: 'short tail' } } : null };
+  const out = expandRange(session, 1, 2, { limit: 2000 });
+  assert.ok(out.text.length > 0, '不能返回空内容');
+  assert.equal(out.to, 1);
+  assert.equal(out.truncated, true);
+  assert.ok(String(out.note || '').includes('裁剪'));
+});
+
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('核心记忆自检通过。');

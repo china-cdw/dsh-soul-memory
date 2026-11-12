@@ -261,9 +261,8 @@ export function readPersona() {
     const raw = readFileSync(personaPath(), 'utf8');
     const parsed = parsePersonaFile(raw);
     if (!PRESET_BY_ID.has(parsed.preset)) parsed.preset = 'default';
-    if (typeof parsed.custom === 'string' && parsed.custom.length > MAX_CUSTOM_TEXT) {
-      parsed.custom = sliceSafe(parsed.custom, MAX_CUSTOM_TEXT);
-    }
+    // 读侧不截断：custom 会被 disable / 切预设等写回路径继承并落盘，
+    // 这里截断等于静默丢用户手改过的内容。注入文本由 buildPersonaText 按预算裁剪。
     return parsed;
   } catch {
     return { ...DEFAULTS };
@@ -278,7 +277,7 @@ export function buildPersonaText() {
     if (!state.enabled) return '';
     if (state.preset === 'custom') {
       const text = (state.custom || '').trim();
-      return text;
+      return sliceSafe(text, MAX_CUSTOM_TEXT);
     }
     const preset = PRESET_BY_ID.get(state.preset);
     if (!preset) return '';
@@ -304,7 +303,8 @@ export function normalizePersonaInput(patch, current) {
   if (typeof patch.custom === 'string' && patch.custom.length > MAX_CUSTOM_TEXT) {
     return { ok: false, error: '自定义风格正文过长（' + patch.custom.length + ' 字符，上限 ' + MAX_CUSTOM_TEXT + '）。' };
   }
-  if (next.custom.length > MAX_CUSTOM_TEXT) next.custom = sliceSafe(next.custom, MAX_CUSTOM_TEXT);
+  // 继承来的旧正文可能超过上限（旧版本写入或手改文件）：保留全文，只在注入时裁剪，
+  // 免得「停用风格」这类只改 enabled 的操作把尾部悄悄写没。
   if (next.preset === 'custom' && !next.custom.trim()) {
     return { ok: false, error: '自定义风格正文不能为空。' };
   }

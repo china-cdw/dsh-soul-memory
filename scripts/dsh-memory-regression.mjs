@@ -49,14 +49,22 @@ await t.test('P1-11 轮转按 mtime 而非目录名', async () => {
   const middle = 'mmm-middle';
   for (const [name, days] of [[oldest, 3], [middle, 2], [newest, 1]]) {
     await mkdir(join(root, name), { recursive: true });
+    // 只有完整备份才算有效快照；残缺目录会被优先清掉（见下一条断言）。
+    await writeFile(join(root, name, '.complete'), 'done', 'utf8');
     const when = new Date(Date.now() - days * 86400000);
     await utimes(join(root, name), when, when);
   }
+  // 额外放一个残缺目录：它必须被优先淘汰，不占 keep 名额。
+  await mkdir(join(root, 'broken'), { recursive: true });
+  await writeFile(join(root, 'broken', 'MEMORY.md'), 'partial', 'utf8');
+  const brokenWhen = new Date(Date.now() - 10 * 86400000);
+  await utimes(join(root, 'broken'), brokenWhen, brokenWhen);
   await writeFile(memoryPath('CODING.md'), '# 规则\n', 'utf8');
   await snapshotMemory({ keep: 2 });
   const left = await sortedDirs(root);
   assert.equal(left.length, 2);
   assert.equal(left.includes(oldest), false);
+  assert.equal(left.includes('broken'), false, '残缺备份必须被优先清掉');
   assert.equal(left.includes(newest), true);
   const latest = await latestSnapshot();
   assert.ok(latest, 'latestSnapshot 不应为空');

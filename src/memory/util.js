@@ -214,7 +214,14 @@ export async function snapshotMemory({ keep = 7 } = {}) {
   }
   // 完成标记：只有它存在才表示这一天的文件记忆真的备完了；有文件没拷成就先不写，
   // 下次启动会重试，轮转也不会把残缺备份当成好备份。
-  if (!failed.length) await writeFile(join(dest, '.complete'), new Date().toISOString(), 'utf8').catch(() => {});
+  if (!failed.length) {
+    try {
+      await writeFile(join(dest, '.complete'), new Date().toISOString(), 'utf8');
+    } catch {
+      failed.push('.complete');
+      console.error('dsh-x-memory: 完成标记写入失败，本次快照按不完整处理。');
+    }
+  }
   else console.error('dsh-x-memory: 快照不完整，未写完成标记：' + failed.join(', '));
   await rotateSnapshots(dir, keep);
   return { skipped: false, dir: dest, copied, incomplete: failed };
@@ -253,15 +260,27 @@ export async function snapshotGraph(db, { keep = 7 } = {}) {
 /** 按目录 mtime 轮转：时间戳目录名在跨时区/手工改名时不一定有序，mtime 更可靠。 */
 async function rotateSnapshots(dir, keep) {
   const names = (await readdir(dir).catch(() => [])).filter((n) => !n.startsWith('.'));
-  const dirs = [];
+  const complete = [];
+  const incomplete = [];
   for (const name of names) {
     try {
       const st = await stat(join(dir, name));
-      if (st.isDirectory()) dirs.push({ name, mtimeMs: st.mtimeMs });
+      if (!st.isDirectory()) continue;
+      try {
+        await stat(join(dir, name, '.complete'));
+        complete.push({ name, mtimeMs: st.mtimeMs });
+      } catch {
+        incomplete.push({ name, mtimeMs: st.mtimeMs });
+      }
     } catch { /* 读不到就不参与轮转 */ }
   }
-  dirs.sort((a, b) => a.mtimeMs - b.mtimeMs);
-  for (const old of dirs.slice(0, Math.max(0, dirs.length - keep))) {
+  // 残缺备份优先淘汰：它们不能作为「最近一次快照」，留着只会占 keep 名额、
+  // 把完整备份挤出去。当天失败的那份由下次启动重试。
+  for (const old of incomplete) {
+    await rm(join(dir, old.name), { recursive: true, force: true }).catch(() => {});
+  }
+  complete.sort((a, b) => a.mtimeMs - b.mtimeMs);
+  for (const old of complete.slice(0, Math.max(0, complete.length - keep))) {
     await rm(join(dir, old.name), { recursive: true, force: true }).catch(() => {});
   }
 }
@@ -270,18 +289,26 @@ async function rotateSnapshots(dir, keep) {
 export async function latestSnapshot() {
   const dir = memoryPath('.snapshots');
   const names = (await readdir(dir).catch(() => [])).filter((n) => !n.startsWith('.'));
-  const dirs = [];
+  const complete = [];
+  const legacy = [];
   for (const name of names) {
     try {
       const st = await stat(join(dir, name));
       if (!st.isDirectory()) continue;
-      // 残缺备份（没有 .complete）不能当“最近一次快照”。
-      await stat(join(dir, name, '.complete'));
-      dirs.push({ name, mtimeMs: st.mtimeMs });
-    } catch { /* 忽略：不是目录或未完成 */ }
+      try {
+        await stat(join(dir, name, '.complete'));
+        complete.push({ name, mtimeMs: st.mtimeMs });
+        continue;
+      } catch { /* 可能是 0.3.11 之前的快照 */ }
+      // 兼容旧快照：没有完成标记、但确实有记忆文件，仍算一份可用备份。
+      const hasCore = await stat(join(dir, name, 'MEMORY.md')).then(() => true).catch(() => false);
+      const hasIndex = hasCore ? true : await stat(join(dir, name, 'index.json')).then(() => true).catch(() => false);
+      if (hasIndex) legacy.push({ name, mtimeMs: st.mtimeMs });
+    } catch { /* 忽略：不是目录或不可读 */ }
   }
-  if (!dirs.length) return null;
-  dirs.sort((a, b) => a.mtimeMs - b.mtimeMs);
-  const last = dirs[dirs.length - 1];
-  return { name: last.name, count: dirs.length };
+  const all = complete.concat(legacy);
+  if (!all.length) return null;
+  all.sort((a, b) => a.mtimeMs - b.mtimeMs);
+  const last = all[all.length - 1];
+  return { name: last.name, count: all.length };
 }

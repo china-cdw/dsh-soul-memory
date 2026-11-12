@@ -172,7 +172,8 @@ export async function addRule(text) {
   const rule = normalizeRule(text);
   if (!rule) return { ok: false, code: 'E_ARG', error: '规则内容不能为空。' };
   if (rule.length > MAX_RULE_TEXT) return { ok: false, code: 'E_ARG', error: `规则太长（${rule.length} 字），上限 ${MAX_RULE_TEXT} 字。` };
-  return enqueue(() => withFileLock(codingPath(), async () => {
+  try {
+    return await enqueue(() => withFileLock(codingPath(), async () => {
     const path = codingPath();
     // 写回必须基于完整文件：readCapped 的默认 cap 只用于注入，不能用来改文件。
     // strict：读失败（非 ENOENT）必须放弃写入，否则会用模板覆盖掉整份规则。
@@ -200,13 +201,17 @@ export async function addRule(text) {
       return { ok: false, code: 'E_IO', error: '写入编码规范失败：' + (e && e.message ? e.message : e) };
     }
     return { ok: true, rule };
-  }));
+    }));
+  } catch (e) {
+    return { ok: false, code: 'E_IO', error: '写入编码规范失败（文件被占用或不可写）：' + (e && e.message ? e.message : e) };
+  }
 }
 
 export async function forgetRule(text) {
   const rule = normalizeRule(text);
   if (!rule) return { ok: false, code: 'E_ARG', error: '要删除的规则内容不能为空。' };
-  return enqueue(() => withFileLock(codingPath(), async () => {
+  try {
+    return await enqueue(() => withFileLock(codingPath(), async () => {
     const path = codingPath();
     let existing;
     try {
@@ -229,7 +234,10 @@ export async function forgetRule(text) {
       return { ok: false, code: 'E_IO', error: '写入编码规范失败：' + (e && e.message ? e.message : e) };
     }
     return { ok: true, removed };
-  }));
+    }));
+  } catch (e) {
+    return { ok: false, code: 'E_IO', error: '写入编码规范失败（文件被占用或不可写）：' + (e && e.message ? e.message : e) };
+  }
 }
 
 // ---------- 注册 ----------

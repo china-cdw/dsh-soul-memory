@@ -195,14 +195,26 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
     if (!text) continue
     const size = Buffer.byteLength(text) + (parts.length ? 1 : 0)
     // 预算按字节算：对外承诺的是“不超过 2KB”，不能再按字符截。
-    if (bytes + size > limit) { hitBytes = true; break }
+    if (bytes + size > limit) {
+      hitBytes = true
+      // 单条事件本身就超预算：不能直接 break，否则 to 不前进、这条永远读不到。
+      // 退化为保留该条的前若干字节，并把 to 前进到它。
+      if (!parts.length) {
+        const clipped = sliceAround(text, 0, 0, Math.max(40, limit))
+        parts.push(clipped)
+        bytes = Buffer.byteLength(clipped)
+        events = 1
+        last = seq
+      }
+      break
+    }
     parts.push(text)
     bytes += size
     events++
     last = seq
   }
   const text = parts.join('\n')
-  const truncated = hitCap || hitBytes
+  const truncated = hitCap || hitBytes || last < end
   return {
     from: start,
     to: last >= start ? last : start,
@@ -210,6 +222,6 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
     text,
     events,
     truncated,
-    ...(truncated ? { note: '已截断：仅返回 ' + events + ' 条事件 / ' + Buffer.byteLength(text) + ' 字节，用更小的 from–to 继续。' } : {}),
+    ...(truncated ? { note: '已截断：仅返回 ' + events + ' 条事件 / ' + Buffer.byteLength(text) + ' 字节' + (hitBytes && events === 1 ? '（首条事件超出预算，已裁剪）' : '') + '。' } : {}),
   }
 }

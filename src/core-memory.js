@@ -325,6 +325,13 @@ async function withLockedIndex(job) {
 }
 
 async function rebuildIndex({ persist = true } = {}) {
+  // 读目录与写索引必须同锁：否则扫描窗口内并发新增的条目不进索引，
+  // 已删除的条目会被这份旧结果写回。锁内重建不再二次加锁。
+  if (indexLockDepth > 0) return rebuildIndexLocked({ persist: false });
+  return withIndexLock(() => rebuildIndexLocked({ persist }));
+}
+
+async function rebuildIndexLocked({ persist = true } = {}) {
   bodyCache.clear();
   const out = [];
   let entries = [];
@@ -351,8 +358,8 @@ async function rebuildIndex({ persist = true } = {}) {
   }
   const sorted = out.sort(noteSort);
   if (persist) {
-    // 重建结果写回索引（原子写 + 锁）；写不进去也返回内存结果，下一次再试。
-    try { await persistIndex(sorted); } catch { /* 索引暂时不可写 */ }
+    // 已在索引锁内：直接原子写，不能再调 persistIndex（它会二次加锁导致自锁）。
+    try { await atomicWrite(indexPath(), JSON.stringify({ version: 1, notes: sorted }, null, 2)); } catch { /* 索引暂时不可写 */ }
   }
   return sorted;
 }
@@ -925,7 +932,13 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
   if (core) enqueue(async () => {
     await mkdir(notesDir(), { recursive: true });
     if (readFileSyncOrNull(corePath()) === null) await atomicWrite(corePath(), TEMPLATE);
-    if (readFileSyncOrNull(indexPath()) === null) await atomicWrite(indexPath(), JSON.stringify({ version: 1, notes: [] }, null, 2));
+    // 索引必须存在：没有索引时注入/检索都读不到归档。创建动作放进索引锁内，
+    // 避免并发写被这份空索引覆盖。
+    await withIndexLock(async () => {
+      if (readFileSyncOrNull(indexPath()) === null) {
+        await atomicWrite(indexPath(), JSON.stringify({ version: 1, notes: [] }, null, 2));
+      }
+    });
     // 索引与 notes/ 对账：补齐外部新增、标记文件缺失、收口墓碑。
     try { await reconcileIndex(); } catch { /* 对账失败不阻塞启动 */ }
     try { await snapshotMemory(); } catch { /* 快照失败不影响启动 */ }
@@ -1114,18 +1127,18 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
               return;
             }
           }
+          // 方法先判：浏览器预检必带跨源 Origin，若先查 Origin，405 + Allow 永远不可达。
+          if (req.method !== 'GET' && req.method !== 'POST') {
+            res.setHeader('Allow', 'GET, POST');
+            sendJson(405, { error: '仅支持 GET / POST' });
+            return;
+          }
           // 只接受同源页面调用：带 Origin 时必须与 Host 一致（跨站请求一律拒绝）。
           const origin = req.headers.origin;
           if (origin) {
             let sameOrigin = false;
             try { sameOrigin = new URL(origin).host === req.headers.host; } catch { sameOrigin = false; }
             if (!sameOrigin) { sendJson(403, { error: '跨源请求被拒绝' }); return; }
-          }
-          // 方法先判：OPTIONS 预检应拿到 405 + Allow，而不是被头检查挡成 403。
-          if (req.method !== 'GET' && req.method !== 'POST') {
-            res.setHeader('Allow', 'GET, POST');
-            sendJson(405, { error: '仅支持 GET / POST' });
-            return;
           }
           // 同源页面必须带自定义请求头：跨站表单/链接无法伪造，且会触发 CORS 预检，挡住跨源读取。
           if (String(req.headers['x-dsh-x-memory'] || '') !== '1') {
