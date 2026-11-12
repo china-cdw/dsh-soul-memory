@@ -104,6 +104,8 @@ Off by default. When enabled, a few seconds after a turn ends the plugin cluster
 - Bounds: at most `dreaming.maxNotes` notes per run (default 3); automatic runs need `dreaming.minIntervalMinutes` between them (default 180); digests carry a `dream` tag and source seq and go through the same dedupe as `memory_write`;
 - The idle delay is `dreaming.idleDelaySeconds` (default 120, minimum 10);
 - AI cleanup (on by default): the model only votes, and must return strict JSON; `noise`/`duplicate` nodes are retired (reversible), `keep` and fabricated ids are ignored; if the model is unavailable, times out, or returns invalid JSON the cleanup is skipped and the digest pass still runs — nothing is deleted;
+- Batching and tolerance: candidates go out in batches of 12; when the reply is cut off by the token limit, complete verdicts are recovered from the partial JSON, and a failed batch does not discard the successful ones;
+- Route fallback: `dreaming.provider/model` → plugin-level provider/model → current agent → the host `cordis.patch.yml` `agent-default-model`; only when none exists does it fail with configuration guidance;
 - AI routing: `dreaming.provider` / `dreaming.model`, empty means the global default; scan cap `dreaming.maxScanNodes` (default 60, 10–300), at most `dreaming.maxRetirePerRun` retirements per run (default 20, 1–100).
 
 ---
@@ -305,7 +307,7 @@ npm run preflight
 npm test          # every self-check script; any failure exits non-zero
 ```
 
-The checks ship in `scripts/`: 69 core assertions, 10 coding, 15 mistake notes, 11 event-replay, 14 billion-context bridge and 26 regression assertions — 145 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
+The checks ship in `scripts/`: 72 core assertions, 10 coding, 15 mistake notes, 11 event-replay, 14 billion-context bridge and 26 regression assertions — 148 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
 
 ---
 

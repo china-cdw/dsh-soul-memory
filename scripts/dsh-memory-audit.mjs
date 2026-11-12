@@ -12,6 +12,7 @@ import { latestSnapshot, snapshotGraph, snapshotMemory } from '../src/memory/uti
 import { readPersona } from '../src/persona.js';
 import { normalize, extract } from '../src/skeleton.js';
 import { expandRange, MAX_SEQ, validateExpandArgs } from '../src/session-search.js';
+import { chunkItems, parseCleanupVerdicts } from '../src/dreaming.js';
 
 // 锁测试要快：默认等待 35s，这里压到 300ms（withIndexLock 每次调用时读取）。
 process.env.DSH_X_MEMORY_LOCK_WAIT_MS = '300';
@@ -876,6 +877,48 @@ await t.test('P0 整理模型报错时 apply 中止且不 retire', async () => {
   setDreamGenerator(null);
   setDreamNodeProvider(null);
   await callTool(tools1, 'memory_dreaming', { action: 'off' });
+});
+
+await t.test('P0 分批：chunkItems 按 12 条切块且不丢条目', async () => {
+  const items = Array.from({ length: 25 }, (_, i) => ({ id: 'n' + i }));
+  const chunks = chunkItems(items, 12);
+  assert(chunks.length === 3, '应切成 3 块');
+  assert(chunks[0].length === 12 && chunks[1].length === 12 && chunks[2].length === 1, '块大小应为 12/12/1');
+  const flat = chunks.flat().map((x) => x.id);
+  assert(flat.length === 25 && new Set(flat).size === 25, '合并后不丢不重');
+});
+
+await t.test('P0 截断容错：从 max-tokens 截断的 JSON 里捞出完整裁决', async () => {
+  const items = [{ id: 'a1' }, { id: 'a2' }, { id: 'a3' }];
+  const truncated = '{"items":[{"id":"a1","verdict":"noise","reason":"表态"},{"id":"a2","verdict":"keep","reason":"有内容"},{"id":"a3","verdict":"dup';
+  const parsed = parseCleanupVerdicts(truncated, items);
+  const retired = parsed.retire.map((x) => x.id);
+  assert(retired.includes('a1'), '应捞出 a1 的 noise');
+  assert(!retired.includes('a2'), 'keep 不应被 retire');
+  assert(parsed.invalid <= 1, '不完整对象计入 invalid 或忽略');
+});
+
+await t.test('P0 部分批失败：成功批的裁决仍然生效', async () => {
+  const nodes = Array.from({ length: 13 }, (_, i) => ({ id: 'p' + i, kind: 'progress', text: '第' + i + '条实质进展记录', seq: i + 1 }));
+  setDreamNodeProvider(() => nodes);
+  let calls = 0;
+  setDreamGenerator(async (req) => {
+    calls += 1;
+    if (calls > 1) throw new Error('provider down');
+    const first = req.data.items[0];
+    return '{"items":[{"id":' + JSON.stringify(first.id) + ',"verdict":"noise","reason":"重复进度"}]}';
+  });
+  const retired = [];
+  setDreamRetireProvider((agent, ids) => { retired.push(...ids); return ids.length; });
+  const first = await callTool(tools1, 'memory_dreaming', { action: 'on' });
+  assert(!first.includes('[err:'), 'on 应成功，实际：' + first.slice(0, 200));
+  const run = await callTool(tools1, 'memory_dreaming', { action: 'run', apply: true, force: true });
+  assert(run.includes('"available": true'), '部分失败仍应 available=true，实际：' + run.slice(0, 400));
+  assert(retired.length === 1, '成功批应 retire 1 条，实际 ' + retired.length);
+  assert(run.includes('E_INTERNAL') || run.includes('provider down') || run.includes('error'), '应带部分失败信息');
+  setDreamGenerator(null);
+  setDreamRetireProvider(null);
+  setDreamNodeProvider(() => []);
 });
 
 const result = t.finish();

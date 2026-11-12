@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { Store } from './src/store.js'
 import { Evolve } from './src/evolve.js'
@@ -212,13 +213,54 @@ export function apply(ctx, input = {}) {
     const cwd = cwdForAgent(ctx, agent) ?? session.header?.cwd
     return projectScope({ id: session.id, header: { cwd } })
   }
-  // AI 清理的模型调用：路由优先级 dreaming.provider/model → 顶层 provider/model → 宿主默认。
+  // AI 清理的模型调用：路由优先级 dreaming.provider/model → 顶层 provider/model
+  // → 当前 agent 的模型 → 宿主默认模型（profile 里的 agent-default-model）。
   // 与演化不同，这里不强制配置：没配时 runDreaming 只出候选，apply 会被拒绝。
   const dreamLLM = typeof ctx.get === 'function' ? ctx.get('llm') : ctx.llm
-  const dreamGenerate = async (request) => {
+
+  // 宿主把默认模型写在 <DSH_HOME>/profiles/<name>/cordis.patch.yml 的
+  // agent-default-model 条目里，llm 服务不会把它交给插件，所以这里做只读兜底。
+  // 只解析结构，不执行任何配置表达式：没读到就返回 null，交给调用方报错。
+  const hostDefaultRoute = () => {
+    const homes = []
+    if (process.env.DSH_HOME) homes.push(process.env.DSH_HOME)
+    try { homes.push(join(homedir(), '.dsh')) } catch { /* ignore */ }
+    for (const home of homes) {
+      let profiles = []
+      try { profiles = readdirSync(join(home, 'profiles')) } catch { continue }
+      for (const name of profiles) {
+        let yaml = null
+        try { yaml = readFileSync(join(home, 'profiles', name, 'cordis.patch.yml'), 'utf8') } catch { continue }
+        const block = /- id:\s*agent-default-model([\s\S]{0,600})/.exec(yaml)
+        if (!block) continue
+        const provider = /provider:\s*([^\s#]+)/.exec(block[1])
+        const model = /model:\s*([^\s#]+)/.exec(block[1])
+        if (provider && model) return { provider: provider[1], model: model[1], source: 'host:' + name }
+      }
+    }
+    return null
+  }
+
+  const resolveDreamRoute = (a) => {
+    const cfgProvider = config.dreaming.provider || config.provider
+    const cfgModel = config.dreaming.model || config.model
+    if (cfgProvider && cfgModel) return { provider: cfgProvider, model: cfgModel, source: 'config' }
+    const agentProvider = a?.model?.provider || a?.model?.providerId || a?.session?.model?.provider
+    const agentModel = a?.model?.id || a?.model?.model || a?.session?.model?.id
+    if (agentProvider && agentModel) return { provider: agentProvider, model: agentModel, source: 'agent' }
+    return hostDefaultRoute()
+  }
+
+  const dreamGenerate = async (request, agent = null) => {
     if (!dreamLLM?.stream) return null
-    const provider = config.dreaming.provider || config.provider || undefined
-    const model = config.dreaming.model || config.model || undefined
+    const a = agent || null
+    const route = resolveDreamRoute(a)
+    if (!route) {
+      throw new Error('未配置模型路由：请在插件设置里填 dreaming.provider 和 dreaming.model（或顶层 provider/model）；' +
+        '也可以让宿主写 agent-default-model。agent=' + Object.keys(a || {}).join('|') +
+        ' model=' + JSON.stringify(a?.model ?? null).slice(0, 200))
+    }
+    const { provider, model } = route
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 60000)
     timer.unref?.()
@@ -229,18 +271,25 @@ export function apply(ctx, input = {}) {
         provider, model,
         system: request.system,
         messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(request.data) }] }],
-        tools: [], maxTokens: 2000, signal: controller.signal,
+        tools: [], maxTokens: 6000, signal: controller.signal,
       })) {
         if (chunk.type === 'text-delta') body += chunk.text
-        if (chunk.type === 'finish') finish = chunk.reason?.kind
+        if (chunk.type === 'finish') finish = chunk.reason
         if (Buffer.byteLength(body) > 60000) throw new Error('output_limit')
       }
     } finally {
       clearTimeout(timer)
     }
-    if (finish && finish !== 'stop') throw new Error('模型未正常结束：' + finish)
+    const finishKind = finish?.kind
+    // max-tokens / length 表示输出被预算截断：仍尝试解析已产出的 JSON，能解析就照常裁决。
+    const hardFail = finishKind && finishKind !== 'stop' && finishKind !== 'max-tokens' && finishKind !== 'length'
+    if (hardFail) throw new Error('模型未正常结束：' + finishKind + ' ' + JSON.stringify(finish).slice(0, 300))
     const cleaned = body.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')
-    return JSON.parse(cleaned)
+    try {
+      return JSON.parse(cleaned)
+    } catch (error) {
+      throw new Error('清理结果不是合法 JSON（finish=' + (finishKind || 'unknown') + '）：' + String(error?.message || error))
+    }
   }
   setDreamGenerator(dreamGenerate)
 

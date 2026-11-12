@@ -31,7 +31,7 @@ import {
 import { registerCodingRules } from './coding.js';
 import { registerLessons } from './lessons.js';
 import { biliStatus, searchBili } from './memory/bili.js'
-import { DREAMING_DEFAULTS, buildCleanupRequest, dreamCandidates, parseCleanupVerdicts, pickDigests, readDreamingState, writeDreamingState } from './dreaming.js';
+import { DREAMING_DEFAULTS, buildCleanupRequest, chunkItems, dreamCandidates, parseCleanupVerdicts, pickDigests, readDreamingState, writeDreamingState } from './dreaming.js';
 
 // 当前会话的事件序号提供者：index.js 启动时注入（读 MemoryBuffer 的最新 seq）。
 // 抽出来是为了让 writeNote 不依赖 index.js，测试也能直接喂一个假的。
@@ -1043,18 +1043,31 @@ export async function runDreaming({ apply = false, force = false, trigger = 'man
     if (!dreamGenerate) {
       cleanup = { ...cleanup, available: false, hint: '未配置模型路由，跳过 AI 清理（不会删除任何记忆）；要启用请设置 dreaming.provider/model 或顶层 provider/model。' }
     } else {
-      let verdicts = null
-      try {
-        verdicts = parseCleanupVerdicts(await dreamGenerate(buildCleanupRequest(scan)), scan)
-      } catch (e) {
-        if (apply) return failMessage('E_INTERNAL', '整理模型调用失败，未做任何修改：' + errText(e))
-        cleanup = { ...cleanup, available: false, error: errText(e) }
+      const chunks = chunkItems(scan, 12)
+      const merged = { retire: [], keep: 0, invalid: 0 }
+      const errors = []
+      for (const chunk of chunks) {
+        try {
+          const v = parseCleanupVerdicts(await dreamGenerate(buildCleanupRequest(chunk)), chunk)
+          merged.retire.push(...v.retire)
+          merged.keep += v.keep
+          merged.invalid += v.invalid
+        } catch (e) {
+          errors.push(errText(e))
+        }
       }
-      if (verdicts) {
-        const planned = verdicts.retire.slice(0, maxRetire)
+      if (errors.length === chunks.length) {
+        if (apply) return failMessage('E_INTERNAL', '整理模型调用失败，未做任何修改：' + errors[0])
+        cleanup = { ...cleanup, available: false, error: errors[0] }
+      } else {
+        const planned = merged.retire.slice(0, maxRetire)
         const ids = planned.map(p => p.id)
         const retired = apply && dreamRetire && ids.length ? Number(dreamRetire(agent, ids)) || 0 : 0
-        cleanup = { ...cleanup, available: true, planned: planned.length, retired, keep: verdicts.keep, invalid: verdicts.invalid, details: planned }
+        cleanup = {
+          ...cleanup, available: true, planned: planned.length, retired,
+          keep: merged.keep, invalid: merged.invalid, details: planned,
+          ...(errors.length ? { error: errors[0] } : {}),
+        }
       }
     }
   }

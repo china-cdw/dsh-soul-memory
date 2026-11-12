@@ -164,11 +164,27 @@ export function pickDigests(nodes, { maxNotes = 3, minCluster = 2 } = {}) {
 // ---- AI 清理：让宿主模型判断哪些记忆是垃圾（废话 / 断网重复 / 被纠正的错误） -----------------
 // 只输出裁决，不在这里执行删除：retire 由 core-memory 注入的执行器完成，保持可测试、可回滚。
 
+export function chunkItems(items, size = 12) {
+  const list = Array.isArray(items) ? items : []
+  const n = Math.max(1, Number(size) || 12)
+  const out = []
+  for (let i = 0; i < list.length; i += n) out.push(list.slice(i, i + n))
+  return out
+}
+
+function recoverItems(raw) {
+  const out = []
+  const re = /\{\s*"id"\s*:\s*"([^"]{1,80})"\s*,\s*"verdict"\s*:\s*"(keep|noise|duplicate)"[^{}]*\}/g
+  let m
+  while ((m = re.exec(raw))) out.push({ id: m[1], verdict: m[2], reason: '' })
+  return out.length ? { items: out } : null
+}
+
 export function buildCleanupRequest(items) {
   const list = (Array.isArray(items) ? items : []).map((it) => ({
     id: String(it.id),
     kind: String(it.kind ?? ''),
-    text: String(it.text ?? '').slice(0, 300),
+    text: String(it.text ?? '').slice(0, 160),
     seq: Number.isFinite(it.seq) ? it.seq : null,
   }))
   const system = [
@@ -189,7 +205,8 @@ function safeParse(text) {
 export function parseCleanupVerdicts(reply, items) {
   const list = Array.isArray(items) ? items : []
   const allowed = new Set(list.map((it) => String(it.id)))
-  const parsed = typeof reply === 'string' ? safeParse(reply) : reply
+  let parsed = typeof reply === 'string' ? safeParse(reply) : reply
+  if (!parsed || !Array.isArray(parsed.items)) parsed = recoverItems(String(reply ?? ''))
   const out = { retire: [], keep: 0, invalid: 0 }
   const entries = Array.isArray(parsed && parsed.items) ? parsed.items : []
   for (const entry of entries) {
