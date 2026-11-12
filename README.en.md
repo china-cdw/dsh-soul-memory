@@ -97,7 +97,7 @@ If [billion-context](https://github.com/ranxianglei/billion-context) is installe
 
 ## Idle consolidation (dreaming, optional)
 
-Off by default. When enabled, a few seconds after a turn ends the plugin clusters recent decisions, constraints and repeated progress from the session graph into digest notes under `notes/` — it only adds; it never edits or deletes existing memory. With `dreaming.ai` enabled it also asks the model to flag junk (small talk, duplicated turns after a reconnect, clearly garbled content); nodes judged `noise`/`duplicate` are only **retired** — gone from the projection and from neighbour expansion, with the raw session log never deleted; by default only nodes with `hits=0`, not superseded, and at least 7 days old are touched (same guardrails as the periphery heuristic), `action=retired` lists them and `action=restore` brings them back; retired nodes are only pruned after 30 days. Automatic apply is off by default (`dreaming.autoApply`); idle runs require a manual `run`.
+Off by default. When enabled, the plugin clusters recent decisions, constraints and repeated progress from the session graph into digest notes under `notes/` — it only adds; it never edits or deletes existing memory. With `dreaming.ai` enabled it also asks the model to flag junk (small talk, duplicated turns after a reconnect, clearly garbled content); nodes judged `noise`/`duplicate` are only **retired** — gone from the projection and from neighbour expansion, with the raw session log never deleted; by default only nodes with `hits=0`, not superseded, and at least 7 days old are touched (narrower than the periphery heuristic: it does not look at importance scores), `action=retired` lists them and `action=restore` brings them back; retired nodes are only pruned after 30 days. `dreaming.autoApply` defaults to false: idle time never rewrites memory by itself — run it manually, or set it to true to allow an idle auto-run.
 
 - Toggle: `memory_dreaming` with `action=status/on/off` (runtime state lives in `$DSH_HOME/memory/DREAMING.json` and takes effect immediately), or set `dreaming.enabled: true` in the config; whether an idle run may write is controlled by `dreaming.autoApply` (default false);
 - Run by hand: `action=run` is a dry run by default (candidates only); `apply: true` writes, `force: true` ignores the cooldown;
@@ -107,6 +107,8 @@ Off by default. When enabled, a few seconds after a turn ends the plugin cluster
 - Batching and tolerance: candidates go out in batches of 12; when the reply is cut off by the token limit, complete verdicts are recovered from the partial JSON, and a failed batch does not discard the successful ones;
 - Route fallback: `dreaming.provider/model` → plugin-level provider/model → current agent → the host `cordis.patch.yml` `agent-default-model`; only when none exists does it fail with configuration guidance;
 - AI routing: `dreaming.provider` / `dreaming.model`, empty means the global default; scan cap `dreaming.maxScanNodes` (default 60, 10–300), at most `dreaming.maxRetirePerRun` retirements per run (default 20, 1–100); `action=retired` lists the nodes still retired in the store (restored ones disappear) and `action=restore` with `ids` restores them.
+
+- `cleanup` fields: `available`, `reason` (`disabled` / `no_candidates` / `no_generator` / `no_llm` / `llm_failed` / null), `scanned`, `planned`, `retired` (actually retired, after guardrails and the per-run cap), `keep`, `invalid`, `rejected` (planned minus retired) and `error` (first failed batch).
 
 ---
 
@@ -308,7 +310,7 @@ npm run preflight
 npm test          # every self-check script; any failure exits non-zero
 ```
 
-The checks ship in `scripts/`: 76 core assertions, 10 coding, 15 mistake notes, 11 event-replay, 14 billion-context bridge and 26 regression assertions — 152 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
+The checks ship in `scripts/`: 79 core assertions, 10 coding, 15 mistake notes, 11 event-replay, 14 billion-context bridge and 26 regression assertions — 155 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
 
 ---
 

@@ -980,6 +980,45 @@ await t.test('P0 retired/restore：最近裁决可枚举，restore 能把节点�
     setDreamRetiredListProvider(null)
   })
 
+
+await t.test('P0 截断恢复：verdict 写在 id 之前也不串位', async () => {
+  // 整体不是合法 JSON（缺外层数组），只能走 recoverItems；旧实现会把 a2 的 noise 判给 a1。
+  const reply = { text: '{"verdict":"keep","id":"a1","reason":"有内容"},{"verdict":"noise","id":"a2","reason":"断网重试重复"}', finishKind: 'max-tokens' };
+  const parsed = parseCleanupVerdicts(reply, [{ id: 'a1' }, { id: 'a2' }]);
+  const retired = parsed.retire.map((x) => x.id);
+  assert.deepEqual(retired, ['a2'], 'retired=' + JSON.stringify(retired));
+  assert.equal(parsed.keep, 1);
+});
+
+await t.test('P0 无路由：E_NO_ROUTE 归因 no_llm，不按 llm_failed', async () => {
+  await callTool(tools1, 'memory_dreaming', { action: 'on' });
+  setDreamNodeProvider(() => ([{ id: 'n1', kind: 'progress', text: '断网重试断网重试断网重试断网重试', seq: 71 }]));
+  const retired = [];
+  setDreamRetireProvider((agent, ids) => { retired.push(...ids); return ids.length; });
+  setDreamGenerator(async () => {
+    const err = new Error('未配置模型路由');
+    err.code = 'E_NO_ROUTE';
+    throw err;
+  });
+  const out = JSON.parse(await callTool(tools1, 'memory_dreaming', { action: 'run', force: true }));
+  assert.equal(out.cleanup.available, false);
+  assert.equal(out.cleanup.reason, 'no_llm', 'reason=' + out.cleanup.reason);
+  assert.equal(retired.length, 0);
+  setDreamGenerator(null);
+  setDreamRetireProvider(null);
+  setDreamNodeProvider(() => []);
+  await callTool(tools1, 'memory_dreaming', { action: 'off' });
+});
+
+await t.test('P0 retired 列取失败要说原因，不能伪装成空列表', async () => {
+  setDreamRetiredListProvider(() => ({ ok: false, reason: 'db locked' }));
+  const out = await callTool(tools1, 'memory_dreaming', { action: 'retired' });
+  assert.match(String(out), /列取失败/, 'out=' + out);
+  assert.match(String(out), /db locked/);
+  assert.match(String(out), /\[err:E_INTERNAL\]/);
+  setDreamRetiredListProvider(null);
+});
+
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('核心记忆自检通过。');

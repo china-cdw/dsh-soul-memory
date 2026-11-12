@@ -417,7 +417,7 @@ export function neighbourhood(store, scope, id, { limit = 8 } = {}) {
     const other = row.src === id ? row.dst : row.src
     if (seen.has(other)) continue
     const node = store.nodeRow(other)
-    if (!node) continue
+    if (!node || node.state !== 'active') continue
     seen.add(other)
     out.push({ ...view(node), rel: row.rel, strength: Math.round(row.w * 100) / 100 })
     if (out.length >= limit) break

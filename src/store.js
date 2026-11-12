@@ -639,11 +639,12 @@ export class Store {
     if (!scope || (!nodes.length && !edges.length)) return 0
     const now = this.now()
     this.tx(() => {
+      // retired 的节点不在这里复活：否则重放同一批抽取会静默撤销 retire / merge 去重。
+      // 恢复只走显式的 dreaming restore。
       const insert = this.db.prepare(`INSERT INTO node(
         id,scope,kind,claim,terms,anchor,hash,source,seq,pin,valid_from,valid_to,recorded_at,
         weight,support,hits,state,created,seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(id) DO UPDATE SET support=support+1, seen=excluded.seen, claim=excluded.claim,
-          state=CASE WHEN node.state='retired' THEN 'active' ELSE node.state END`)
+        ON CONFLICT(id) DO UPDATE SET support=support+1, seen=excluded.seen, claim=excluded.claim`)
       for (const node of nodes) {
         const claim = bounded(redactText(String(node.claim ?? '')), 400)
         insert.run(node.id, scope, String(node.kind), claim, JSON.stringify(termSet(claim)),
@@ -855,7 +856,7 @@ export class Store {
       .map(row => [row.rel, { n: row.n, avg: row.avg }]))
     const hubs = this.db.prepare(`SELECT n.id, n.kind, n.claim, COUNT(e.id) degree, ROUND(MAX(e.w),2) peak
       FROM node n JOIN edge e ON (e.src = n.id OR e.dst = n.id)
-      WHERE n.scope=? GROUP BY n.id ORDER BY degree DESC, peak DESC LIMIT 5`).all(scope)
+      WHERE n.scope=? AND n.state='active' GROUP BY n.id ORDER BY degree DESC, peak DESC LIMIT 5`).all(scope)
     return { edges: this.db.prepare('SELECT COUNT(*) n FROM edge WHERE scope=?').get(scope)?.n ?? 0, byRel, hubs }
   }
 

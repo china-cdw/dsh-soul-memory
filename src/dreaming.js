@@ -5,7 +5,7 @@
 // - 只新增 digest 笔记，不删、不改既有记忆；
 // - 手动 run 默认 dry-run（只列候选），写盘需要 apply=true；
 // - 有冷却时间与单次条数上限，避免「记一堆低价值摘要」把记忆库冲淡。
-import { readFile, mkdir } from 'node:fs/promises'
+import { copyFile, readFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { atomicWrite, memoryPath, withFileLock } from './memory/util.js'
 import { injected } from './util.js'
@@ -30,10 +30,18 @@ export function dreamingStatePath() {
 }
 
 export async function readDreamingState() {
+  let raw
   try {
-    const raw = await readFile(dreamingStatePath(), 'utf8')
+    raw = await readFile(dreamingStatePath(), 'utf8')
+  } catch (e) {
+    if (e && e.code !== 'ENOENT') {
+      console.error('dsh-x-memory: 读取 DREAMING.json 失败，按默认值处理：' + ((e && e.message) || e))
+    }
+    return { ...DREAMING_DEFAULTS, configured: false }
+  }
+  try {
     const parsed = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object') return { ...DREAMING_DEFAULTS, configured: false }
+    if (!parsed || typeof parsed !== 'object') throw new Error('不是 JSON 对象')
     return {
       ...DREAMING_DEFAULTS,
       ...parsed,
@@ -41,9 +49,9 @@ export async function readDreamingState() {
       configured: Object.prototype.hasOwnProperty.call(parsed, 'enabled'),
     }
   } catch (e) {
-    if (e && e.code !== 'ENOENT') {
-      console.error('dsh-x-memory: 读取 DREAMING.json 失败，按默认值处理：' + ((e && e.message) || e))
-    }
+    // 文件损坏时先留副本：否则下一轮写回会以默认值为底，静默重置 enabled/lastRunAt/lastResult。
+    await copyFile(dreamingStatePath(), dreamingStatePath() + '.bad').catch(() => {})
+    console.error('dsh-x-memory: DREAMING.json 解析失败，已备份为 .bad 并按默认值处理：' + ((e && e.message) || e))
     return { ...DREAMING_DEFAULTS, configured: false }
   }
 }
@@ -52,7 +60,8 @@ export async function writeDreamingState(patch) {
   const target = dreamingStatePath()
   await mkdir(dirname(target), { recursive: true })
   // 读改写必须串行且原子：on/off 与空闲整理的写入可能并发，直写会把用户开关覆盖回去。
-  return withFileLock(target + '.lock', async () => {
+  // withFileLock 内部会拼 .lock；这里再拼会得到 DREAMING.json.lock.lock。
+  return withFileLock(target, async () => {
     const current = await readDreamingState()
     const next = { ...current, ...(patch && typeof patch === 'object' ? patch : {}) }
     // configured 是读时推导出来的状态，不属于落盘字段。
@@ -180,23 +189,50 @@ export function chunkItems(items, size = 12) {
 }
 
 /**
- * 从可能被截断的 JSON 文本里捞回完整对象：按 "id" 切窗，窗内独立找 verdict。
- * 不依赖模型输出字段顺序（{"id","reason","verdict"} 与 {"id","verdict","reason"} 都能捞）。
+ * 从 id 所在位置做花括号配对，取它所属的那个对象。
+ * 不能按「下一个 id」切窗：verdict 写在 id 之前时，会把下一条的裁决判给当前条。
  */
+function objectAround(text, pos) {
+  let start = -1
+  for (let i = Math.min(pos, text.length - 1); i >= 0; i--) {
+    if (text[i] === '{') { start = i; break }
+  }
+  if (start < 0) return null
+  let depth = 0
+  let inStr = false
+  let esc = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (ch === '\\') esc = true
+      else if (ch === '"') inStr = false
+      continue
+    }
+    if (ch === '"') { inStr = true; continue }
+    if (ch === '{') depth++
+    else if (ch === '}') { depth--; if (!depth) return text.slice(start, i + 1) }
+  }
+  return null
+}
+
+/** 从可能被截断的 JSON 文本里捞回完整对象：只认该 id 所在对象内的 verdict。 */
 function recoverItems(raw) {
   const text = String(raw ?? '')
   const idRe = /"id"\s*:\s*"([^"]{1,80})"/g
-  const hits = []
-  let m
-  while ((m = idRe.exec(text))) hits.push({ id: m[1], end: idRe.lastIndex })
   const out = []
-  for (let i = 0; i < hits.length; i++) {
-    const stop = i + 1 < hits.length ? text.lastIndexOf('"id"', hits[i + 1].end) : text.length
-    const win = text.slice(hits[i].end, stop > hits[i].end ? stop : text.length)
-    const v = win.match(/"verdict"\s*:\s*"(keep|noise|duplicate)"/)
+  const seen = new Set()
+  let m
+  while ((m = idRe.exec(text))) {
+    const id = m[1]
+    if (seen.has(id)) continue
+    const obj = objectAround(text, m.index)
+    if (!obj) continue
+    const v = obj.match(/"verdict"\s*:\s*"(keep|noise|duplicate)"/)
     if (!v) continue
-    const r = win.match(/"reason"\s*:\s*"([^"]{0,200})"/)
-    out.push({ id: hits[i].id, verdict: v[1], reason: r ? r[1] : '' })
+    const r = obj.match(/"reason"\s*:\s*"([^"]{0,200})"/)
+    seen.add(id)
+    out.push({ id, verdict: v[1], reason: r ? r[1] : '' })
   }
   return out.length ? { items: out } : null
 }

@@ -1,4 +1,15 @@
 # 变更日志
+## 0.3.38
+
+- 修复：`recoverItems` 改为按 `id` 做花括号配对，模型把 `verdict` 写在 `id` 之前时不再把裁决串到下一条（此前可能退役 keep 的节点、放过 noise 节点）；
+- 修复：retire / restore 的 UPDATE 补 `AND scope=?`，跨 project 的同 id 节点不会被误改；
+- 修复：`recordNodes` 的 `ON CONFLICT` 不再自动把 retired 节点改回 active，恢复只走显式 `action=restore`（重放同一批抽取不会静默撤销退役）；
+- 修复：`action=restore` 与 `run` 共用 `dreamingInFlight` 互斥，整理进行中返回 `[err:E_BUSY]`；
+- 修复：无模型路由归因为 `no_llm`（`E_NO_ROUTE`），不再混进 `llm_failed`；`action=retired` 列取失败时返回原因 + `[err:E_INTERNAL]`，不再伪装成空列表；
+- 修复：`DREAMING.json` 的锁名不再重复拼 `.lock`（此前是 `DREAMING.json.lock.lock`）；解析失败先把损坏文件备份成 `.bad` 再回落默认值，不会静默覆盖用户开关；
+- 修复：`neighbourhood()` 与图谱统计的 hubs 过滤 retired 节点；
+- 改进：`cleanup` 统一字段并新增 `reason`/`keep`/`invalid`/`rejected`，README 补字段表；`autoApply` 默认 false 的措辞与首句矛盾已修正；
+- 自检：核心 79 项、编码 10、踩坑 15、重放 11、桥接 14、回归 26，共 **155 项断言**（新增 3 条：verdict 在 id 前的截断恢复、E_NO_ROUTE 归因、retired 列取失败文案）。
 
 ## 0.3.37
 

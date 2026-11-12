@@ -258,9 +258,12 @@ export function apply(ctx, input = {}) {
     const a = agent || null
     const route = resolveDreamRoute(a)
     if (!route) {
-      throw new Error('未配置模型路由：请在插件设置里填 dreaming.provider 和 dreaming.model（或顶层 provider/model）；' +
+      const err = new Error('未配置模型路由：请在插件设置里填 dreaming.provider 和 dreaming.model（或顶层 provider/model）；' +
         '也可以让宿主写 agent-default-model。agent=' + Object.keys(a || {}).join('|') +
         ' model=' + JSON.stringify(a?.model ?? null).slice(0, 200))
+      // 路由缺失不是模型故障：调用方要把它归到 no_llm，而不是 llm_failed。
+      err.code = 'E_NO_ROUTE'
+      throw err
     }
     const { provider, model } = route
     const controller = new AbortController()
@@ -350,12 +353,12 @@ export function apply(ctx, input = {}) {
     let changed = 0
     const cutoff = Date.now() - 7 * 24 * 3600 * 1000
     try {
-      // 护栏与 periphery() 对齐：只动没人用过、没被取代、已经放了 7 天以上的节点。
+      // 护栏：只动没人用过、未被取代、创建 ≥7 天、未 pin 的节点（比 periphery() 更窄，不做重要性推断）。
       const stmt = store.db.prepare(
-        "UPDATE node SET state='retired', seen=? WHERE id=? AND pin=0 AND hits=0 AND valid_to IS NULL AND created<?")
+        "UPDATE node SET state='retired', seen=? WHERE id=? AND scope=? AND pin=0 AND hits=0 AND valid_to IS NULL AND created<?")
       store.tx(() => {
         const now = Date.now()
-        for (const id of ids) changed += stmt.run(now, id, cutoff).changes
+        for (const id of ids) changed += stmt.run(now, id, scope, cutoff).changes
         if (changed) store.log({ scope, action: 'dream_retire', actor: 'system', detail: { count: changed, ids: ids.slice(0, 20) } })
       })
     } catch (e) {
@@ -370,10 +373,10 @@ export function apply(ctx, input = {}) {
     if (!scope) return 0
     let changed = 0
     try {
-      const stmt = store.db.prepare("UPDATE node SET state='active', seen=? WHERE id=? AND state='retired'")
+      const stmt = store.db.prepare("UPDATE node SET state='active', seen=? WHERE id=? AND scope=? AND state='retired'")
       store.tx(() => {
         const now = Date.now()
-        for (const id of ids) changed += stmt.run(now, id).changes
+        for (const id of ids) changed += stmt.run(now, id, scope).changes
         if (changed) store.log({ scope, action: 'dream_restore', actor: 'system', detail: { count: changed, ids: ids.slice(0, 20) } })
       })
     } catch (e) {
@@ -383,17 +386,18 @@ export function apply(ctx, input = {}) {
     return changed
   }
   const listDreamRetiredNodes = (agent) => {
-    if (!store) return []
+    if (!store) return { ok: false, reason: '图谱库不可用（memory 已关闭或初始化失败）' }
     const scope = scopeForAgent(agent)
-    if (!scope) return []
+    if (!scope) return { ok: false, reason: '无法确定当前项目的 scope' }
     try {
-      return store.db.prepare(
+      const rows = store.db.prepare(
         "SELECT id, kind, claim, seen FROM node WHERE scope=? AND state='retired' ORDER BY seen DESC LIMIT 100")
         .all(scope)
         .map(row => ({ id: row.id, kind: row.kind, text: row.claim, retiredAt: row.seen }))
+      return { ok: true, rows }
     } catch (e) {
       console.error('dsh-x-memory: 列出 retired 失败：' + (e?.message ?? e))
-      return []
+      return { ok: false, reason: String((e && e.message) || e) }
     }
   }
   setDreamRetireProvider((agent, ids) => retireDreamNodes(agent, ids))

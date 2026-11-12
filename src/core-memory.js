@@ -1058,10 +1058,15 @@ async function runDreamingLocked({ apply = false, force = false, trigger = 'manu
   const scanLimit = Math.max(1, Number(dreamingCfg.maxScanNodes) || 60)
   const scan = dreamCandidates(nodes).slice(0, scanLimit)
   const maxRetire = Math.max(1, Number(dreamingCfg.maxRetirePerRun) || 20)
-  let cleanup = { ai: dreamingCfg.ai !== false, scanned: scan.length, planned: 0, retired: 0 }
+  let cleanup = {
+    ai: dreamingCfg.ai !== false,
+    available: false,
+    reason: dreamingCfg.ai === false ? 'disabled' : (scan.length ? null : 'no_candidates'),
+    scanned: scan.length, planned: 0, retired: 0, keep: 0, invalid: 0, rejected: 0,
+  }
   if (dreamingCfg.ai !== false && scan.length) {
     if (!dreamGenerate) {
-      cleanup = { ...cleanup, available: false, hint: '未配置模型路由，跳过 AI 清理（不会删除任何记忆）；要启用请设置 dreaming.provider/model 或顶层 provider/model。' }
+      cleanup = { ...cleanup, available: false, reason: 'no_generator', hint: '未接线模型生成器，跳过 AI 清理（不会删除任何记忆）；由宿主 index.js 注入后才会启用。' }
     } else {
       const chunks = chunkItems(scan, 12)
       const merged = { retire: [], keep: 0, invalid: 0 }
@@ -1076,11 +1081,12 @@ async function runDreamingLocked({ apply = false, force = false, trigger = 'manu
           merged.keep += v.keep
           merged.invalid += v.invalid
         } catch (e) {
+          if (e && e.code === 'E_NO_ROUTE') { unavailable = true; break }
           errors.push(errText(e))
         }
       }
       if (unavailable) {
-        cleanup = { ...cleanup, available: false, reason: 'no_llm', hint: '宿主没有可用的 llm 服务，跳过 AI 清理（不会删除任何记忆）。' }
+        cleanup = { ...cleanup, available: false, reason: 'no_llm', hint: '未配置模型路由（或宿主没有可用的 llm），跳过 AI 清理（不会删除任何记忆）；请设置 dreaming.provider/model。' }
       } else if (errors.length === chunks.length) {
         // 清理整体失败只降级：digest 照写、冷却照常推进，避免每轮空转烧模型。
         cleanup = { ...cleanup, available: false, reason: 'llm_failed', error: errors[0] }
@@ -1092,8 +1098,9 @@ async function runDreamingLocked({ apply = false, force = false, trigger = 'manu
         const ids = planned.map(p => p.id)
         const retired = apply && dreamRetire && ids.length ? Number(dreamRetire(agent, ids)) || 0 : 0
         cleanup = {
-          ...cleanup, available: true, planned: planned.length, retired,
+          ...cleanup, available: true, reason: null, planned: planned.length, retired,
           keep: merged.keep, invalid: merged.invalid, details: planned,
+          rejected: Math.max(0, planned.length - retired),
           ...(errors.length ? { error: errors[0] } : {}),
         }
       }
@@ -1165,8 +1172,10 @@ async function dreamingTool(args = {}, exec = null) {
     if (action === 'retired') {
       // 以库里真实的 state=retired 为准（restore 之后不能再列出），历史记录只作兜底。
       if (dreamListRetired) {
-        const rows = await dreamListRetired(exec?.agent ?? null)
-        if (!Array.isArray(rows) || !rows.length) return '当前没有 retired 节点。'
+        const listed = await dreamListRetired(exec?.agent ?? null)
+        if (listed && listed.ok === false) return '列取失败：' + (listed.reason || '未知原因') + '\n[err:E_INTERNAL]'
+        const rows = Array.isArray(listed) ? listed : (listed && Array.isArray(listed.rows) ? listed.rows : [])
+        if (!rows.length) return '当前没有 retired 节点。'
         return JSON.stringify({ retired: rows }, null, 2)
       }
       const state = await readDreamingState()
@@ -1175,13 +1184,14 @@ async function dreamingTool(args = {}, exec = null) {
       return JSON.stringify({ at: state.lastRunAt ?? null, retired: details }, null, 2)
     }
     if (action === 'restore') {
+      if (dreamingInFlight) return '恢复失败：闲时整理正在运行，请稍后再试。\n[err:E_BUSY]'
       const ids = Array.isArray(args.ids) ? args.ids.map(String).filter(Boolean) : []
       if (!ids.length) return '恢复失败：请传 ids 数组（可用 action=retired 查看）。\n[err:E_ARG]'
       if (!dreamRestore) return '恢复失败：当前环境没有可用的图谱恢复器。\n[err:E_INTERNAL]'
       const changed = Number(dreamRestore(exec?.agent ?? null, ids)) || 0
       return '已恢复 ' + changed + ' 个节点（state=active）；未被恢复的 id 可能不存在或本来就不是 retired。'
     }
-    return '设置失败：action 必须是 status / on / off / run / retired / restore。\n[err:E_ARG]'
+    return '未知 action：必须是 status / on / off / run / retired / restore。\n[err:E_ARG]'
   } catch (e) {
     return failMessage('E_INTERNAL', errText(e))
   }
@@ -1380,7 +1390,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
       parameters: {
         type: 'object', additionalProperties: false,
         properties: {
-          action: { type: 'string', enum: ['status', 'on', 'off', 'run', 'retired', 'restore'], description: 'status=查看；on/off=开关；run=执行一次；retired=列出最近 retire 的节点；restore=恢复误 retire 的节点' },
+          action: { type: 'string', enum: ['status', 'on', 'off', 'run', 'retired', 'restore'], description: 'status=查看；on/off=开关；run=执行一次；retired=列出库里当前仍为 retired 的节点（restore 后消失）；restore=恢复误 retire 的节点' },
           apply: { type: 'boolean', description: 'action=run 时是否写盘；默认 false（dry-run）' },
           force: { type: 'boolean', description: 'action=run 时忽略冷却时间' },
           ids: { type: 'array', items: { type: 'string' }, description: 'action=restore 时要恢复的节点 id（来自 action=retired）' },
