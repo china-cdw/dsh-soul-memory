@@ -17,8 +17,6 @@ import { dirname, join } from 'node:path';
  * 历史版本把裸词（token/password）整行删掉，导致 "SyntaxError: Unexpected token '<'"
  * 这类最常见的 JS 语法错误被当成敏感行丢弃、永远进不了记忆。
  */
-export const SECRET_PATTERN = /(?:password|passwd|secret|token|api[-_ ]?key|access[-_ ]?key|bearer|authorization)\s*[:=]\s*\S{6,}/i;
-
 const SECRET_VALUE = /((?:password|passwd|secret|token|api[-_ ]?key|access[-_ ]?key|bearer|authorization)\s*[:=]\s*)([^\s'"]{6,})/gi;
 
 /** 按字符位置截断，不切断 emoji 等代理对（切一半会留下孤立 \ud83d）。 */

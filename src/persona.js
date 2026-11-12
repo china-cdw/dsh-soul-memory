@@ -171,10 +171,6 @@ export const PRESETS = [
 
 const PRESET_BY_ID = new Map(PRESETS.map((p) => [p.id, p]));
 
-export function presetById(id) {
-  return PRESET_BY_ID.get(id);
-}
-
 /** 供设置页与 persona 工具使用的预设清单（不含正文，正文单独取）。 */
 export function listPresets() {
   return PRESETS.map((p) => ({ id: p.id, name: p.name, summary: p.summary }));

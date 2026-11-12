@@ -19,6 +19,8 @@ dsh-x-memory 是 **dsh-soul 2.0.1** 的 fork，并移植了 **dsh-core-memory 1.
 
 其余 `src/*.js`、`compaction.js`、`harness/`、`locale/` 都是上游镜像，升级时随上游走。
 
+其中 `src/memory-dynamics.js` 是上游预留的 FSRS 式间隔重复参考实现，当前没有任何模块 import 它（运行时 `memory.dynamics` 走 `graph-memory.js` 的 `memoryView`）。不要本地接线，也不要删除：删掉后 `sync-upstream.mjs --check` 会报「缺失」，下次 `--from` 同步又会原样装回。
+
 ## index.js 需要重放的接线点
 
 上游改了 `index.js` 时，把下面几处按新文件重新加回去（都在 `apply()` 里）：

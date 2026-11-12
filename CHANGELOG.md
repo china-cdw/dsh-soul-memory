@@ -1,5 +1,11 @@
 # 变更日志
 
+## 0.3.30
+
+- 删除两处真实死代码：`src/memory/util.js` 的 `SECRET_PATTERN`（从未被引用，真正生效的是 `SECRET_VALUE`）、`src/persona.js` 的 `presetById`（从未被引用，调用方直接用 `PRESET_BY_ID`）。
+- `UPSTREAM.md` 注明 `src/memory-dynamics.js` 是上游预留、无调用方的参考实现：不接线、不删除（删除会被同步装回）。
+- 审计结论：镜像文件里的未用导出保持上游原样；`src/component-worker.js` 由 `components.js` 以子进程路径启动，不是孤儿。
+- 134 断言全过；无运行时行为变化。
 ## 0.3.29
 
 - README 双语计数校正真正进入提交（0.3.28 因 git stat 缓存未重新哈希而漏提交）：提交树与工作区均为 26 项回归、共 134 项断言。
