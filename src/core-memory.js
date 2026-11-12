@@ -58,6 +58,11 @@ let dreamRetire = null;
 export function setDreamRetireProvider(fn) {
   dreamRetire = typeof fn === 'function' ? fn : null;
 }
+// 恢复器：把误 retire 的节点改回 active（retire 的对称操作，供 memory_dreaming action=restore 使用）。
+let dreamRestore = null;
+export function setDreamRestoreProvider(fn) {
+  dreamRestore = typeof fn === 'function' ? fn : null;
+}
 
 const corePath = () => memoryPath('MEMORY.md');
 const notesDir = () => memoryPath('notes');
@@ -1020,7 +1025,18 @@ const outputText = { schema: { type: 'string' }, render: (_args, value) => [{ ty
  * 执行一次闲时整理。默认 dry-run：只返回候选，不写盘。
  * 写盘只走 writeNote（同一套查重、锁与索引维护），且绝不删改既有记忆。
  */
-export async function runDreaming({ apply = false, force = false, trigger = 'manual', agent = null } = {}) {
+let dreamingInFlight = null
+
+export async function runDreaming(opts = {}) {
+  // 同一进程只允许一轮整理：空闲定时器与手动 run 可能重叠，而冷却是在末尾才写的。
+  if (dreamingInFlight) {
+    return { ok: false, enabled: true, skipped: 'running', hint: '上一轮闲时整理仍在执行，稍后再试。' }
+  }
+  dreamingInFlight = runDreamingLocked(opts)
+  try { return await dreamingInFlight } finally { dreamingInFlight = null }
+}
+
+async function runDreamingLocked({ apply = false, force = false, trigger = 'manual', agent = null } = {}) {
   const state = await readDreamingState()
   const enabled = state.configured ? state.enabled === true : dreamingCfg.enabled === true
   if (!enabled) {
@@ -1046,9 +1062,12 @@ export async function runDreaming({ apply = false, force = false, trigger = 'man
       const chunks = chunkItems(scan, 12)
       const merged = { retire: [], keep: 0, invalid: 0 }
       const errors = []
+      let unavailable = false
       for (const chunk of chunks) {
         try {
-          const v = parseCleanupVerdicts(await dreamGenerate(buildCleanupRequest(chunk)), chunk)
+          const result = await dreamGenerate(buildCleanupRequest(chunk), agent)
+          if (result && result.unavailable) { unavailable = true; break }
+          const v = parseCleanupVerdicts(result, chunk)
           merged.retire.push(...v.retire)
           merged.keep += v.keep
           merged.invalid += v.invalid
@@ -1056,11 +1075,16 @@ export async function runDreaming({ apply = false, force = false, trigger = 'man
           errors.push(errText(e))
         }
       }
-      if (errors.length === chunks.length) {
-        if (apply) return failMessage('E_INTERNAL', '整理模型调用失败，未做任何修改：' + errors[0])
-        cleanup = { ...cleanup, available: false, error: errors[0] }
+      if (unavailable) {
+        cleanup = { ...cleanup, available: false, reason: 'no_llm', hint: '宿主没有可用的 llm 服务，跳过 AI 清理（不会删除任何记忆）。' }
+      } else if (errors.length === chunks.length) {
+        // 清理整体失败只降级：digest 照写、冷却照常推进，避免每轮空转烧模型。
+        cleanup = { ...cleanup, available: false, reason: 'llm_failed', error: errors[0] }
       } else {
-        const planned = merged.retire.slice(0, maxRetire)
+        const seenIds = new Set()
+        const planned = merged.retire
+          .filter(p => (seenIds.has(p.id) ? false : (seenIds.add(p.id), true)))
+          .slice(0, maxRetire)
         const ids = planned.map(p => p.id)
         const retired = apply && dreamRetire && ids.length ? Number(dreamRetire(agent, ids)) || 0 : 0
         cleanup = {
@@ -1118,7 +1142,8 @@ async function dreamingTool(args = {}, exec = null) {
         '闲时整理（dreaming）：' + (enabled ? '已开启' : '已关闭'),
         '开关来源：' + source,
         '触发：每次 turn/end 后空闲 ' + dreamingCfg.idleDelaySeconds + ' 秒；冷却 ' + dreamingCfg.minIntervalMinutes + ' 分钟；单次最多 ' + dreamingCfg.maxNotes + ' 条',
-        '清理：' + (dreamingCfg.ai === false ? '仅启发式（不做 AI 判断）' : (dreamGenerate ? 'AI 判断废话/断网重复/被纠正的错误结论后 retire（可逆，可 soul_recall 找回）' : 'AI 未就绪（未配置模型路由）')) + '；扫描上限 ' + (dreamingCfg.maxScanNodes ?? 60) + ' 条、单次最多 retire ' + (dreamingCfg.maxRetirePerRun ?? 20) + ' 条',
+        '清理：' + (dreamingCfg.ai === false ? '仅启发式（不做 AI 判断）' : (dreamGenerate ? 'AI 判断废话/断网重复/被纠正的错误结论后 retire（只动 hits=0、未被取代、创建 ≥7 天的节点；action=retired 可看、restore 可恢复）' : 'AI 未就绪（未配置模型路由）')) + '；扫描上限 ' + (dreamingCfg.maxScanNodes ?? 60) + ' 条、单次最多 retire ' + (dreamingCfg.maxRetirePerRun ?? 20) + ' 条；retired 30 天后会被清理',
+        '自动执行：' + (dreamingCfg.autoApply ? '开启（空闲到期自动 apply）' : '关闭（空闲不自动改库，只能手动 run）'),
         '上次整理：' + (state.lastRunAt || '从未') + (remain ? '（冷却中，约 ' + Math.ceil(remain / 60000) + ' 分钟后可再跑）' : ''),
         '上次结果：' + (state.lastResult ? JSON.stringify(state.lastResult) : '从未执行'),
         '只新增 digest 笔记，不删改既有记忆；action=run 默认 dry-run，apply=true 才写盘。',
@@ -1133,17 +1158,31 @@ async function dreamingTool(args = {}, exec = null) {
       const out = await runDreaming({ apply: args.apply === true, force: args.force === true, trigger: 'manual', agent: exec?.agent ?? null })
       return JSON.stringify(out, null, 2)
     }
-    return '设置失败：action 必须是 status / on / off / run。\n[err:E_ARG]'
+    if (action === 'retired') {
+      const state = await readDreamingState()
+      const details = state.lastResult?.cleanup?.details ?? []
+      if (!details.length) return '最近一次整理没有 retire 任何节点。'
+      return JSON.stringify({ at: state.lastRunAt ?? null, retired: details }, null, 2)
+    }
+    if (action === 'restore') {
+      const ids = Array.isArray(args.ids) ? args.ids.map(String).filter(Boolean) : []
+      if (!ids.length) return '恢复失败：请传 ids 数组（可用 action=retired 查看）。\n[err:E_ARG]'
+      if (!dreamRestore) return '恢复失败：当前环境没有可用的图谱恢复器。\n[err:E_INTERNAL]'
+      const changed = Number(dreamRestore(exec?.agent ?? null, ids)) || 0
+      return '已恢复 ' + changed + ' 个节点（state=active）；未被恢复的 id 可能不存在或本来就不是 retired。'
+    }
+    return '设置失败：action 必须是 status / on / off / run / retired / restore。\n[err:E_ARG]'
   } catch (e) {
     return failMessage('E_INTERNAL', errText(e))
   }
 }
 
-export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, coding = null, lessons = null, bridge = null, dreaming = null, generate = null, retireNodes = null, core = true } = {}) {
+export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, coding = null, lessons = null, bridge = null, dreaming = null, generate = null, retireNodes = null, restoreNodes = null, core = true } = {}) {
   const bridgeCfg = bridge && typeof bridge === 'object' ? bridge : null
   dreamingCfg = { ...DREAMING_DEFAULTS, ...(dreaming && typeof dreaming === 'object' ? dreaming : {}) };
   setDreamGenerator(generate);
   setDreamRetireProvider(retireNodes);
+  setDreamRestoreProvider(restoreNodes);
   // 核心记忆层可单独关闭（memory.enabled=false）：工具、注入节、风格路由、bootstrap 一起停，
   // 编码规范与踩坑记录层各有独立开关，不受影响。
   if (core) enqueue(async () => {
@@ -1330,9 +1369,10 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
       parameters: {
         type: 'object', additionalProperties: false,
         properties: {
-          action: { type: 'string', enum: ['status', 'on', 'off', 'run'], description: 'status=查看；on/off=开关；run=执行一次' },
+          action: { type: 'string', enum: ['status', 'on', 'off', 'run', 'retired', 'restore'], description: 'status=查看；on/off=开关；run=执行一次；retired=列出最近 retire 的节点；restore=恢复误 retire 的节点' },
           apply: { type: 'boolean', description: 'action=run 时是否写盘；默认 false（dry-run）' },
           force: { type: 'boolean', description: 'action=run 时忽略冷却时间' },
+          ids: { type: 'array', items: { type: 'string' }, description: 'action=restore 时要恢复的节点 id（来自 action=retired）' },
         },
         required: ['action'],
       },

@@ -97,16 +97,16 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 
 ## 闲时整理（dreaming，可选）
 
-默认关闭。开启后，每次 turn 结束、空闲若干秒，插件会把最近会话图谱里的决策、约束和重复进度聚成 digest 笔记写进 `notes/`（只新增，不删改既有记忆）；开了 `dreaming.ai` 时还会先让模型判一遍垃圾（寒暄、断网重发的重复对话、明显错乱的内容），判定为 noise/duplicate 的节点只 retire——可逆、从投影消失，`soul_recall` 仍能找回，原始会话日志不删。
+默认关闭。开启后，每次 turn 结束、空闲若干秒，插件会把最近会话图谱里的决策、约束和重复进度聚成 digest 笔记写进 `notes/`（只新增，不删改既有记忆）；开了 `dreaming.ai` 时还会先让模型判一遍垃圾（寒暄、断网重发的重复对话、明显错乱的内容），判定为 noise/duplicate 的节点只 retire——从投影与联想扩散里消失、原始会话日志不删；默认只动 hits=0、未被取代、创建 ≥7 天的节点（与 periphery 启发式同护栏），可用 `action=retired` 查看、`action=restore` 恢复；retired 超过 30 天后才可能被清理。自动 apply 默认关闭（`dreaming.autoApply`），空闲只允许手动 `run`。
 
-- 开关：`memory_dreaming` 的 `action=status/on/off`（运行态写入 `$DSH_HOME/memory/DREAMING.json`，立即生效），或在设置里给 `dreaming.enabled: true`；
+- 开关：`memory_dreaming` 的 `action=status/on/off`（运行态写入 `$DSH_HOME/memory/DREAMING.json`，立即生效），或在设置里给 `dreaming.enabled: true`；开启后是否允许空闲自动改库由 `dreaming.autoApply`（默认 false）决定；
 - 手动跑：`action=run` 默认 dry-run 只列候选，`apply: true` 才写盘，`force: true` 忽略冷却；
 - 边界：每次最多 `dreaming.maxNotes` 条（默认 3）；两次自动整理至少间隔 `dreaming.minIntervalMinutes`（默认 180 分钟）；digest 带 `dream` 标签和来源 seq，走与 `memory_write` 相同的查重；
 - 空闲触发延迟由 `dreaming.idleDelaySeconds` 控制（默认 120 秒，最小 10）；
-- AI 清理（默认开）：模型只做裁决，必须返回严格 JSON；判 `noise`/`duplicate` 的节点 retire（可逆），`keep` 与编造 id 一律不动；模型不可用、超时或返回不合法 JSON 时跳过清理、照常整理，不会擅自删任何东西；
+- AI 清理（默认开）：模型只做裁决，必须返回严格 JSON；判 `noise`/`duplicate` 的节点 retire，`keep` 与编造 id 一律不动；某一批失败不影响其他批；全部失败或无 llm 时降级为「不清理」，digest 照写、冷却照常推进（`cleanup.available=false` 并在 `reason` 里说明 `llm_failed`/`no_llm`）；
 - 分批与容错：候选每 12 条一批调用；输出被 token 上限截断时，从残缺 JSON 里捞出完整裁决；某批失败不影响其他批的结果；
 - 路由兜底：`dreaming.provider/model` → 插件顶层 provider/model → 当前 agent → 宿主 `cordis.patch.yml` 的 `agent-default-model`，都没有才报错并给出配置指引；
-- AI 路由：`dreaming.provider` / `dreaming.model`，留空用全局默认模型；扫描上限 `dreaming.maxScanNodes`（默认 60，范围 10–300），单次最多 retire `dreaming.maxRetirePerRun`（默认 20，范围 1–100）。
+- AI 路由：`dreaming.provider` / `dreaming.model`，留空用全局默认模型；扫描上限 `dreaming.maxScanNodes`（默认 60，范围 10–300），单次最多 retire `dreaming.maxRetirePerRun`（默认 20，范围 1–100）；`action=retired` 列出最近 retire 的节点，`action=restore` 配 `ids` 恢复。
 
 ---
 
@@ -148,7 +148,7 @@ dsh plugin --profile desktop add "$PWD"
 | `memory_delete` | 删除（写墓碑，不复活） | `id` |
 | `memory_core` | 改核心记忆分节 | `action`（append/replace/remove）、`section`、`text?` |
 | `memory_brief` | 记忆库体检 | — |
-| `memory_dreaming` | 闲时整理开关与手动执行（含 AI 垃圾清理） | `action`（status/on/off/run）、`apply?`、`force?` |
+| `memory_dreaming` | 闲时整理开关、手动执行与误删恢复（含 AI 垃圾清理） | `action`（status/on/off/run/retired/restore）、`apply?`、`force?`、`ids?` |
 | `persona` | 回复风格 | `action`（get/set/custom/disable）、`preset?`、`text?` |
 | `coding_rules` | 编码规范 | `action`（show/list/add/forget）、`text?` |
 | `lessons` | 踩坑记录 | `action`（list/forget/clear）、`text?`、`limit?`（默认 50，上限 200） |
@@ -198,6 +198,7 @@ config:
     maxChars: 1200          # 桥接段输出上限（200–4000）
   dreaming:
     enabled: false          # 闲时整理：默认关；开启后只新增 digest 笔记
+    autoApply: false        # 空闲到期是否自动改库；默认 false，只能手动 run
     idleDelaySeconds: 120   # turn 结束后等多少秒再跑（10–3600）
     minIntervalMinutes: 180 # 两次自动整理的最小间隔（0–10080）
     maxNotes: 3             # 单次最多写几条（1–10）
@@ -307,7 +308,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 72 项、编码层 10 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项，共 148 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 75 项、编码层 10 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项，共 151 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

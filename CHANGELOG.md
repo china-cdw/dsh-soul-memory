@@ -1,5 +1,15 @@
 # 变更日志
 
+## 0.3.36
+
+- 修复：AI 裁决的截断恢复真正可达——生成器返回 `{text, finishKind}`，由 `parseCleanupVerdicts` 统一解析；`max-tokens`/`length` 时强制从残缺 JSON 里捞完整裁决（`recoverItems` 改为按 id 切窗、不依赖字段顺序）。
+- 修复：retire 加护栏（与 periphery 同口径：`hits=0`、未被取代、创建 ≥7 天、`pin=0`）并包进事务；`recordNodes` 冲突时把 retired 节点复活；`latestNode`/`neighbours` 只认 active，retired 不再从 handoff 与联想扩散漏回上下文。
+- 新增：`memory_dreaming action=retired` 列出最近 retire 的节点，`action=restore ids=[...]` 恢复；`retired` 30 天后才可能被清理。
+- 修复：全批失败或无 llm 时降级为「不清理」而不是中止——digest 照写、冷却照推进，`cleanup.available=false` 并带 `reason: llm_failed|no_llm`。
+- 新增：`dreaming.autoApply`（默认 false）。空闲到期不再自动改库，只允许手动 `run`；显式开启后才自动 apply。
+- 修复：`runDreaming` 增加 in-flight 互斥；`DREAMING.json` 的读改写走文件锁 + 原子写，`configured` 不再落盘；加入快照文件清单；`planned` 去重。
+- 文档：写清「可逆」的含义（投影/联想消失、30 天后才清理）、`cleanup` 字段、`autoApply` 与 `ai` 默认值；中英 README 同步；151 项断言。
+
 ## 0.3.35
 
 - 闲时整理的 AI 清理改为分批调用（每批 12 条），避免单次裁决 60 条被 token 上限截断；

@@ -334,7 +334,7 @@ export class Store {
   /** Newest node of one kind, used to carry a session's last known position forward. */
   latestNode(scope, kind) {
     return this.parseNode(this.db.prepare(
-      'SELECT * FROM node WHERE scope=? AND kind=? ORDER BY seen DESC, rowid DESC LIMIT 1').get(scope, kind))
+      "SELECT * FROM node WHERE scope=? AND kind=? AND state='active' ORDER BY seen DESC, rowid DESC LIMIT 1").get(scope, kind))
   }
 
   // -- blobs ---------------------------------------------------------------
@@ -642,7 +642,8 @@ export class Store {
       const insert = this.db.prepare(`INSERT INTO node(
         id,scope,kind,claim,terms,anchor,hash,source,seq,pin,valid_from,valid_to,recorded_at,
         weight,support,hits,state,created,seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(id) DO UPDATE SET support=support+1, seen=excluded.seen, claim=excluded.claim`)
+        ON CONFLICT(id) DO UPDATE SET support=support+1, seen=excluded.seen, claim=excluded.claim,
+          state=CASE WHEN node.state='retired' THEN 'active' ELSE node.state END`)
       for (const node of nodes) {
         const claim = bounded(redactText(String(node.claim ?? '')), 400)
         insert.run(node.id, scope, String(node.kind), claim, JSON.stringify(termSet(claim)),
@@ -758,7 +759,8 @@ export class Store {
     return [...other]
       .filter(id => !ids.includes(id))
       .map(id => this.nodeRow(id))
-      .filter(Boolean)
+      // retired 节点不参与联想扩散：否则被清理的垃圾会从邻居那条路重新漏回上下文。
+      .filter(node => node && node.state === 'active')
   }
 
   /** Record that a node was surfaced. The log is the Hebbian signal and the GC evidence. */

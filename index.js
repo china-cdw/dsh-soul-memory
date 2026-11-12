@@ -20,7 +20,7 @@ import { sizeReport, COMPONENTS } from './src/tree.js'
 import { createComponents, cwdForAgent } from './src/components.js'
 import { assertVerifier, validationSettings } from './src/validation.js'
 import { runChecks } from './src/probe.js'
-import { registerCoreMemory, runDreaming, setDreamGenerator, setDreamNodeProvider, setDreamRetireProvider, setSessionSeqProvider } from './src/core-memory.js'
+import { registerCoreMemory, runDreaming, setDreamGenerator, setDreamNodeProvider, setDreamRestoreProvider, setDreamRetireProvider, setSessionSeqProvider } from './src/core-memory.js'
 import { snapshotGraph } from './src/memory/util.js'
 
 export const name = 'dsh-x-memory'
@@ -83,6 +83,8 @@ export function settings(input = {}) {
       model: input.dreaming?.model ?? '',
       maxScanNodes: integer(input.dreaming?.maxScanNodes, 60, 10, 300, 'dreaming.maxScanNodes'),
       maxRetirePerRun: integer(input.dreaming?.maxRetirePerRun, 20, 1, 100, 'dreaming.maxRetirePerRun'),
+      // 自动执行：默认关。开启才允许空闲到期自动 apply；关闭时只能手动 run。
+      autoApply: boolean(input.dreaming?.autoApply, false, 'dreaming.autoApply'),
     },
     memory: {
       // On by default: the projection emits nothing until the graph has nodes, so a fresh
@@ -252,7 +254,7 @@ export function apply(ctx, input = {}) {
   }
 
   const dreamGenerate = async (request, agent = null) => {
-    if (!dreamLLM?.stream) return null
+    if (!dreamLLM?.stream) return { unavailable: true }
     const a = agent || null
     const route = resolveDreamRoute(a)
     if (!route) {
@@ -285,11 +287,8 @@ export function apply(ctx, input = {}) {
     const hardFail = finishKind && finishKind !== 'stop' && finishKind !== 'max-tokens' && finishKind !== 'length'
     if (hardFail) throw new Error('模型未正常结束：' + finishKind + ' ' + JSON.stringify(finish).slice(0, 300))
     const cleaned = body.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')
-    try {
-      return JSON.parse(cleaned)
-    } catch (error) {
-      throw new Error('清理结果不是合法 JSON（finish=' + (finishKind || 'unknown') + '）：' + String(error?.message || error))
-    }
+    // 解析交给 parseCleanupVerdicts：截断时它还要从残缺 JSON 里捞完整裁决。
+    return { text: cleaned, finishKind: finishKind ?? 'stop' }
   }
   setDreamGenerator(dreamGenerate)
 
@@ -301,6 +300,7 @@ export function apply(ctx, input = {}) {
     dreaming: config.dreaming,
     generate: dreamGenerate,
     retireNodes: (agent, ids) => retireDreamNodes(agent, ids),
+    restoreNodes: (agent, ids) => restoreDreamNodes(agent, ids),
     graphSearch: async (agent, query) => {
       if (!config.memory.enabled || !store) return []
       const scope = scopeForAgent(agent)
@@ -347,18 +347,42 @@ export function apply(ctx, input = {}) {
     const scope = scopeForAgent(agent)
     if (!scope) return 0
     let changed = 0
+    const cutoff = Date.now() - 7 * 24 * 3600 * 1000
     try {
-      const stmt = store.db.prepare("UPDATE node SET state='retired', seen=? WHERE id=? AND pin=0")
-      const now = Date.now()
-      for (const id of ids) changed += stmt.run(now, id).changes
-      if (changed) store.log({ scope, action: 'dream_retire', actor: 'system', detail: { count: changed, ids: ids.slice(0, 20) } })
+      // 护栏与 periphery() 对齐：只动没人用过、没被取代、已经放了 7 天以上的节点。
+      const stmt = store.db.prepare(
+        "UPDATE node SET state='retired', seen=? WHERE id=? AND pin=0 AND hits=0 AND valid_to IS NULL AND created<?")
+      store.tx(() => {
+        const now = Date.now()
+        for (const id of ids) changed += stmt.run(now, id, cutoff).changes
+        if (changed) store.log({ scope, action: 'dream_retire', actor: 'system', detail: { count: changed, ids: ids.slice(0, 20) } })
+      })
     } catch (e) {
       console.error('dsh-x-memory: dreaming retire 失败：' + (e?.message ?? e))
       return 0
     }
     return changed
   }
+  const restoreDreamNodes = (agent, ids) => {
+    if (!store || !Array.isArray(ids) || !ids.length) return 0
+    const scope = scopeForAgent(agent)
+    if (!scope) return 0
+    let changed = 0
+    try {
+      const stmt = store.db.prepare("UPDATE node SET state='active', seen=? WHERE id=? AND state='retired'")
+      store.tx(() => {
+        const now = Date.now()
+        for (const id of ids) changed += stmt.run(now, id).changes
+        if (changed) store.log({ scope, action: 'dream_restore', actor: 'system', detail: { count: changed, ids: ids.slice(0, 20) } })
+      })
+    } catch (e) {
+      console.error('dsh-x-memory: dreaming restore 失败：' + (e?.message ?? e))
+      return 0
+    }
+    return changed
+  }
   setDreamRetireProvider((agent, ids) => retireDreamNodes(agent, ids))
+  setDreamRestoreProvider((agent, ids) => restoreDreamNodes(agent, ids))
 
   const recorder = new Recorder()
   const disposers = []
@@ -601,14 +625,17 @@ export function apply(ctx, input = {}) {
           const last = store.latestNode(state.scope, 'progress')
           if (last) safe(() => recordHandoff(store, state.scope, session.id, last.claim))()
           // 闲时整理：等这一轮彻底结束再动，避免和 turn 抢 CPU；开关关闭时 runDreaming 自己会早退。
-          if (dreamTimer) clearTimeout(dreamTimer)
-          dreamTimer = setTimeout(() => {
-            dreamTimer = null
-            if (disposed) return
-            runDreaming({ apply: true, trigger: 'idle', agent: { session } })
-              .catch(e => console.error('dsh-x-memory: 闲时整理失败（不影响使用）：' + (e?.message ?? e)))
-          }, Math.max(10, config.dreaming.idleDelaySeconds) * 1000)
-          dreamTimer.unref?.()
+          // 自动 apply 必须是用户显式开启的（dreaming.autoApply），默认只允许手动 run。
+          if (config.dreaming.autoApply) {
+            if (dreamTimer) clearTimeout(dreamTimer)
+            dreamTimer = setTimeout(() => {
+              dreamTimer = null
+              if (disposed) return
+              runDreaming({ apply: true, trigger: 'idle', agent: { session } })
+                .catch(e => console.error('dsh-x-memory: 闲时整理失败（不影响使用）：' + (e?.message ?? e)))
+            }, Math.max(10, config.dreaming.idleDelaySeconds) * 1000)
+            dreamTimer.unref?.()
+          }
         }
         return
       }

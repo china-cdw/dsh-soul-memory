@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { assert, callTool, makeCtx, makeHome, suite, waitFor } from './_testkit.mjs';
-import { registerCoreMemory, setDreamGenerator, setDreamNodeProvider, setDreamRetireProvider, setSessionSeqProvider } from '../src/core-memory.js';
+import { registerCoreMemory, setDreamGenerator, setDreamNodeProvider, setDreamRestoreProvider, setDreamRetireProvider, setSessionSeqProvider } from '../src/core-memory.js';
 import { latestSnapshot, snapshotGraph, snapshotMemory } from '../src/memory/util.js';
 import { readPersona } from '../src/persona.js';
 import { normalize, extract } from '../src/skeleton.js';
@@ -865,15 +865,18 @@ await t.test('P0 AI 不可用时 apply 不 retire 任何节点', async () => {
   await callTool(tools1, 'memory_dreaming', { action: 'off' });
 });
 
-await t.test('P0 整理模型报错时 apply 中止且不 retire', async () => {
+await t.test('P0 整理模型全部报错时降级：不 retire、可用性标记为 false', async () => {
   await callTool(tools1, 'memory_dreaming', { action: 'on' });
   setDreamNodeProvider(() => ([{ id: 'g10', kind: 'progress', text: '网络断开重试网络断开重试网络断开', seq: 41 }]));
   const retired = [];
   setDreamRetireProvider((agent, ids) => { retired.push(...ids); return ids.length });
   setDreamGenerator(async () => { throw new Error('provider down') });
-  const text = await callTool(tools1, 'memory_dreaming', { action: 'run', apply: true, force: true });
-  assert.match(text, /E_INTERNAL/);
+  const out = JSON.parse(await callTool(tools1, 'memory_dreaming', { action: 'run', apply: true, force: true }));
+  assert.equal(out.cleanup.available, false);
+  assert.equal(out.cleanup.reason, 'llm_failed');
+  assert.equal(out.cleanup.retired, 0);
   assert.equal(retired.length, 0);
+  assert.match(String(out.cleanup.error || ''), /provider down/);
   setDreamGenerator(null);
   setDreamNodeProvider(null);
   await callTool(tools1, 'memory_dreaming', { action: 'off' });
@@ -919,6 +922,51 @@ await t.test('P0 部分批失败：成功批的裁决仍然生效', async () => 
   setDreamGenerator(null);
   setDreamRetireProvider(null);
   setDreamNodeProvider(() => []);
+});
+
+await t.test('P0 截断对象恢复：{text, finishKind} 形式的 max-tokens 裁决仍被捞回', async () => {
+  const items = [{ id: 'b1' }, { id: 'b2' }, { id: 'b3' }];
+  const reply = { text: '{"items":[{"id":"b1","reason":"表态","verdict":"noise"},{"id":"b2","verdict":"keep","reason":"有内容"},{"id":"b3","verdict":"dup', finishKind: 'max-tokens' };
+  const parsed = parseCleanupVerdicts(reply, items);
+  const retired = parsed.retire.map((x) => x.id);
+  assert(retired.includes('b1'), '字段顺序不同也应捞出 b1');
+  assert(!retired.includes('b2'), 'keep 不应被 retire');
+  assert(parsed.invalid <= 1, '不完整对象计入 invalid 或忽略');
+});
+
+await t.test('P0 无 llm：生成器返回 unavailable 时不算成功、也不 retire', async () => {
+  await callTool(tools1, 'memory_dreaming', { action: 'on' });
+  setDreamNodeProvider(() => ([{ id: 'u1', kind: 'progress', text: '网络断开重试网络断开重试网络断开', seq: 51 }]));
+  const retired = [];
+  setDreamRetireProvider((agent, ids) => { retired.push(...ids); return ids.length });
+  setDreamGenerator(async () => ({ unavailable: true }));
+  const out = JSON.parse(await callTool(tools1, 'memory_dreaming', { action: 'run', apply: true, force: true }));
+  assert.equal(out.cleanup.available, false);
+  assert.equal(out.cleanup.reason, 'no_llm');
+  assert.equal(retired.length, 0);
+  setDreamGenerator(null);
+  setDreamNodeProvider(() => []);
+  await callTool(tools1, 'memory_dreaming', { action: 'off' });
+});
+
+await t.test('P0 retired/restore：最近裁决可枚举，restore 能把节点恢复', async () => {
+  await callTool(tools1, 'memory_dreaming', { action: 'on' });
+  setDreamNodeProvider(() => ([{ id: 'r1', kind: 'progress', text: '网络断开重试网络断开重试网络断开', seq: 61 }]));
+  setDreamGenerator(async () => ({ items: [{ id: 'r1', verdict: 'noise', reason: '重复' }] }));
+  setDreamRetireProvider((agent, ids) => ids.length);
+  await callTool(tools1, 'memory_dreaming', { action: 'run', apply: true, force: true });
+  const listed = await callTool(tools1, 'memory_dreaming', { action: 'retired' });
+  assert.match(listed, /r1/, 'retired 应能列出最近 retire 的节点');
+  const restored = [];
+  setDreamRestoreProvider((agent, ids) => { restored.push(...ids); return ids.length; });
+  const out = await callTool(tools1, 'memory_dreaming', { action: 'restore', ids: ['r1'] });
+  assert.match(out, /已恢复 1 个节点/);
+  assert.deepEqual(restored, ['r1']);
+  setDreamGenerator(null);
+  setDreamRestoreProvider(null);
+  setDreamRetireProvider(null);
+  setDreamNodeProvider(() => []);
+  await callTool(tools1, 'memory_dreaming', { action: 'off' });
 });
 
 const result = t.finish();

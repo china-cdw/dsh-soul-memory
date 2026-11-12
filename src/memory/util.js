@@ -184,7 +184,7 @@ export function errText(e) {
   return '操作失败：' + (e && e.message ? e.message : String(e));
 }
 
-const SNAPSHOT_FILES = ['MEMORY.md', 'PERSONA.md', 'CODING.md', 'LESSONS.jsonl', 'GUARD.json', 'index.json'];
+const SNAPSHOT_FILES = ['MEMORY.md', 'PERSONA.md', 'CODING.md', 'LESSONS.jsonl', 'GUARD.json', 'index.json', 'DREAMING.json'];
 const SQLITE_MAGIC = 'SQLite format 3\u0000';
 
 /** 只认真正的 SQLite 文件：大小启发式会把纯文本/半截库当可用备份。 */

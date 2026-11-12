@@ -5,13 +5,15 @@
 // - 只新增 digest 笔记，不删、不改既有记忆；
 // - 手动 run 默认 dry-run（只列候选），写盘需要 apply=true；
 // - 有冷却时间与单次条数上限，避免「记一堆低价值摘要」把记忆库冲淡。
-import { readFile, mkdir, writeFile } from 'node:fs/promises'
+import { readFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { memoryPath } from './memory/util.js'
+import { atomicWrite, memoryPath, withFileLock } from './memory/util.js'
 import { injected } from './util.js'
 
 export const DREAMING_DEFAULTS = {
   enabled: false,
+  // 自动执行：默认关。开启后空闲到期会自动 apply；关闭时只允许手动 run。
+  autoApply: false,
   idleDelaySeconds: 120,
   minIntervalMinutes: 180,
   maxNotes: 3,
@@ -47,12 +49,17 @@ export async function readDreamingState() {
 }
 
 export async function writeDreamingState(patch) {
-  const current = await readDreamingState()
-  const next = { ...current, ...(patch && typeof patch === 'object' ? patch : {}) }
   const target = dreamingStatePath()
   await mkdir(dirname(target), { recursive: true })
-  await writeFile(target, JSON.stringify(next, null, 2) + '\n', 'utf8')
-  return next
+  // 读改写必须串行且原子：on/off 与空闲整理的写入可能并发，直写会把用户开关覆盖回去。
+  return withFileLock(target + '.lock', async () => {
+    const current = await readDreamingState()
+    const next = { ...current, ...(patch && typeof patch === 'object' ? patch : {}) }
+    // configured 是读时推导出来的状态，不属于落盘字段。
+    delete next.configured
+    await atomicWrite(target, JSON.stringify(next, null, 2) + '\n')
+    return next
+  })
 }
 
 const CJK = /[\u4e00-\u9fff]/
@@ -172,11 +179,25 @@ export function chunkItems(items, size = 12) {
   return out
 }
 
+/**
+ * 从可能被截断的 JSON 文本里捞回完整对象：按 "id" 切窗，窗内独立找 verdict。
+ * 不依赖模型输出字段顺序（{"id","reason","verdict"} 与 {"id","verdict","reason"} 都能捞）。
+ */
 function recoverItems(raw) {
-  const out = []
-  const re = /\{\s*"id"\s*:\s*"([^"]{1,80})"\s*,\s*"verdict"\s*:\s*"(keep|noise|duplicate)"[^{}]*\}/g
+  const text = String(raw ?? '')
+  const idRe = /"id"\s*:\s*"([^"]{1,80})"/g
+  const hits = []
   let m
-  while ((m = re.exec(raw))) out.push({ id: m[1], verdict: m[2], reason: '' })
+  while ((m = idRe.exec(text))) hits.push({ id: m[1], end: idRe.lastIndex })
+  const out = []
+  for (let i = 0; i < hits.length; i++) {
+    const stop = i + 1 < hits.length ? text.lastIndexOf('"id"', hits[i + 1].end) : text.length
+    const win = text.slice(hits[i].end, stop > hits[i].end ? stop : text.length)
+    const v = win.match(/"verdict"\s*:\s*"(keep|noise|duplicate)"/)
+    if (!v) continue
+    const r = win.match(/"reason"\s*:\s*"([^"]{0,200})"/)
+    out.push({ id: hits[i].id, verdict: v[1], reason: r ? r[1] : '' })
+  }
   return out.length ? { items: out } : null
 }
 
@@ -202,21 +223,45 @@ function safeParse(text) {
   try { return JSON.parse(raw) } catch { return null }
 }
 
+const TRUNCATED_FINISH = new Set(['max-tokens', 'length'])
+
+/**
+ * 统一解析裁决：接受原始文本、{text, finishKind}（index.js 的生成器返回）或已解析对象。
+ * 截断（max-tokens/length）时强制走 recoverItems，避免「已产出的完整裁决被整段丢弃」。
+ */
 export function parseCleanupVerdicts(reply, items) {
   const list = Array.isArray(items) ? items : []
   const allowed = new Set(list.map((it) => String(it.id)))
-  let parsed = typeof reply === 'string' ? safeParse(reply) : reply
-  if (!parsed || !Array.isArray(parsed.items)) parsed = recoverItems(String(reply ?? ''))
+  let text = ''
+  let truncated = false
+  let parsed = null
+  if (typeof reply === 'string') {
+    text = reply
+  } else if (reply && typeof reply === 'object') {
+    if (Array.isArray(reply.items)) parsed = reply
+    else {
+      text = typeof reply.text === 'string' ? reply.text : ''
+      truncated = TRUNCATED_FINISH.has(String(reply.finishKind ?? ''))
+    }
+  }
+  if (!parsed) {
+    if (!truncated) parsed = safeParse(text)
+    if (!parsed || !Array.isArray(parsed.items)) parsed = recoverItems(text)
+  }
   const out = { retire: [], keep: 0, invalid: 0 }
+  const seen = new Set()
   const entries = Array.isArray(parsed && parsed.items) ? parsed.items : []
   for (const entry of entries) {
     if (!entry || typeof entry !== 'object') { out.invalid++; continue }
     const id = String(entry.id ?? '')
     if (!allowed.has(id)) { out.invalid++; continue }
+    if (seen.has(id)) continue
     const verdict = String(entry.verdict ?? '').toLowerCase()
     if (verdict === 'noise' || verdict === 'duplicate') {
+      seen.add(id)
       out.retire.push({ id, verdict, reason: String(entry.reason ?? '').slice(0, 80) })
     } else if (verdict === 'keep') {
+      seen.add(id)
       out.keep++
     } else {
       out.invalid++
