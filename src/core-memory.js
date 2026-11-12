@@ -718,7 +718,8 @@ async function searchNotes(args, graphSearch, agent, bridge) {
 
 /** 统一 id 归一化：去掉方括号（memory_list 打印的就是 [id]）与 .md 后缀。 */
 function normalizeRef(ref) {
-  return String(ref || '').trim().replace(/^\[|\]$/g, '').replace(/\.md$/, '').trim();
+  // 先去掉 .md 再去方括号：'[abc].md' 若先剥方括号，结尾的 ] 不在行尾，会残留成 'abc]'。
+  return String(ref || '').trim().replace(/\.md$/, '').replace(/^\[|\]$/g, '').trim();
 }
 
 async function readNote(ref) {
@@ -1024,11 +1025,11 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
               '\n\n提示：改动将在下一次模型组装时生效。';
           }
           if (action === 'disable') {
-            return await enqueue(async () => {
+            return await enqueue(() => withFileLock(personaPath(), async () => {
               const cur = readPersona();
               await atomicWrite(personaPath(), renderPersonaFile({ enabled: false, preset: cur.preset, custom: cur.custom }));
               return '已停用回复风格注入（预设选择「' + cur.preset + '」已保留，重新启用即可恢复）。';
-            });
+            }));
           }
           if (action !== 'set' && action !== 'custom') {
             return '设置失败：action 必须是 get / set / custom / disable。';
@@ -1038,15 +1039,15 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             return failMessage('E_ARG', '设置失败：action=set 需要提供 preset。可用：' + PRESETS.map((p) => p.id).join(' / '));
           }
           if (action === 'custom') patch.custom = typeof args.text === 'string' ? args.text : '';
-          return await enqueue(async () => {
+          return await enqueue(() => withFileLock(personaPath(), async () => {
             const cur = readPersona();
             const incoming = { enabled: true, preset: patch.preset, custom: patch.custom !== undefined ? patch.custom : cur.custom };
             const check = normalizePersonaInput(incoming, cur);
-            if (!check.ok) return '设置失败：' + check.error;
+            if (!check.ok) return '设置失败：' + check.error + '\n[err:E_ARG]';
             await atomicWrite(personaPath(), renderPersonaFile(check.value));
             const preset = PRESETS.find((p) => p.id === check.value.preset);
             return '已切换回复风格为「' + (preset ? preset.name : check.value.preset) + '」。已在后续模型组装中生效。';
-          });
+          }));
         } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
       },
     },
@@ -1104,14 +1105,15 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             try { sameOrigin = new URL(origin).host === req.headers.host; } catch { sameOrigin = false; }
             if (!sameOrigin) { sendJson(403, { error: '跨源请求被拒绝' }); return; }
           }
-          // 同源页面必须带自定义请求头：跨站表单/链接无法伪造，且会触发 CORS 预检，挡住跨源读取。
-          if (String(req.headers['x-dsh-x-memory'] || '') !== '1') {
-            sendJson(403, { error: '缺少 X-DSH-X-Memory: 1 请求头' });
-            return;
-          }
+          // 方法先判：OPTIONS 预检应拿到 405 + Allow，而不是被头检查挡成 403。
           if (req.method !== 'GET' && req.method !== 'POST') {
             res.setHeader('Allow', 'GET, POST');
             sendJson(405, { error: '仅支持 GET / POST' });
+            return;
+          }
+          // 同源页面必须带自定义请求头：跨站表单/链接无法伪造，且会触发 CORS 预检，挡住跨源读取。
+          if (String(req.headers['x-dsh-x-memory'] || '') !== '1') {
+            sendJson(403, { error: '缺少 X-DSH-X-Memory: 1 请求头' });
             return;
           }
           if (req.method === 'POST') {
@@ -1133,26 +1135,32 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
               if (key === 'preset' && typeof value !== 'string') { sendJson(400, { error: 'preset 必须是字符串' }); return; }
               if (key === 'enabled' && typeof value !== 'boolean') { sendJson(400, { error: 'enabled 必须是布尔值' }); return; }
             }
+            if (typeof patch.preset === 'string' && !patch.preset.trim()) {
+              sendJson(400, { error: 'preset 不能为空' });
+              return;
+            }
             if (Object.keys(patch).length === 0) {
               res.setHeader('cache-control', 'no-store');
               res.statusCode = 204;
               res.end();
               return;
             }
-            const result = await enqueue(async () => {
+            const result = await enqueue(() => withFileLock(personaPath(), async () => {
               const cur = readPersona();
               const check = normalizePersonaInput(patch, cur);
               if (!check.ok) return { ok: false, error: check.error };
               await atomicWrite(personaPath(), renderPersonaFile(check.value));
               return { ok: true, persona: readPersona() };
-            });
+            }));
             if (!result.ok) { sendJson(400, { error: result.error }); return; }
-            sendJson(200, { persona: result.persona, presets: listPresets() });
+            sendJson(200, { persona: result.persona, presets: listPresets(), maxCustom: MAX_CUSTOM_TEXT });
             return;
           }
           sendJson(200, { persona: readPersona(), presets: listPresets(), maxCustom: MAX_CUSTOM_TEXT });
         } catch (error) {
-          sendJson(400, { error: (error && error.message) ? error.message : String(error) });
+          // 校验失败是 400；写盘失败/内部异常必须 500，否则设置页会把"服务器写不进去"显示成"参数不对"。
+          console.error('dsh-x-memory: 风格接口内部错误', error);
+          sendJson(500, { error: '服务器内部错误：' + ((error && error.message) ? error.message : String(error)) });
         }
       },
     }), 'dsh-x-memory: persona settings route');

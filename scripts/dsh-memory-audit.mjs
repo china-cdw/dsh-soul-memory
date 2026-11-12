@@ -482,6 +482,27 @@ await t.test('当天已有图谱快照、copied=0 时不会删掉 evolve.sqlite'
     await other.cleanup();
   }
 });
+await t.test('memory_read 认 [id].md 组合形式（归一化顺序）', async () => {
+  const saved = await callTool(tools1, 'memory_write', { title: '组合引用', content: 'combo ref body', force: true });
+  const id = /\[([^\]]+)\]/.exec(saved)[1];
+  assert.match(await callTool(tools1, 'memory_read', { id: '[' + id + '].md' }), /组合引用/);
+});
+
+await t.test('persona 路由：preset 空串返回 400 且不落盘', async () => {
+  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const before = readPersona();
+  const res = fakeRes();
+  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-x-memory': '1' }, body: JSON.stringify({ preset: '' }) }), res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(readPersona().preset, before.preset);
+});
+
+await t.test('persona 路由：未知字段返回 400', async () => {
+  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const res = fakeRes();
+  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-x-memory': '1' }, body: JSON.stringify({ foo: 1 }) }), res);
+  assert.equal(res.statusCode, 400);
+});
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('核心记忆自检通过。');

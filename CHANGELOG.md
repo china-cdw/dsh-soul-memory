@@ -1,5 +1,14 @@
 # 变更日志
 
+## 0.3.11
+
+- 踩坑层 `rewriteRows`（forget/clear）加跨进程文件锁，避免与 append 互相覆盖。
+- `withFileLock` 支持显式短等待优先；陈旧锁删除前二次校验 token；心跳下限随 stale 自适应。
+- persona 的三处读-改-写（disable / set / HTTP 路由）改用文件锁；路由对未知字段、空 preset 返回 400，内部错误返回 500，响应带 maxCustom。
+- 快照逐文件校验，任一文件失败不写 `.complete` 并打印原因（不再谎报完成）。
+- `normalizeRef` 先去掉 `.md` 再去方括号，`[abc].md` 不再归一成 `abc]`。
+- `expandRange` 返回真实 `to`、`truncated` 与提示，不再静默截断却回显请求值。
+- 自检 99 断言。
 ## 0.3.10
 
 - 修复：`memory_delete` / `memory_read` 收到空引用（如 `[]`、`[`、`.md`）时不再做空前缀匹配，返回 `E_ARG`，避免误删整库。

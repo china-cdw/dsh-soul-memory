@@ -37,13 +37,14 @@ export function sliceSafe(text, end) {
  * 用于 MEMORY.md / CODING.md 这类「读-改-写」必须整体的文件——进程内队列
  * 挡不住第二个 DSH 实例，两个实例各读旧内容再写回会静默丢内容。
  */
-export async function withFileLock(file, job, { waitMs = 15000, staleMs = 10000 } = {}) {
+export async function withFileLock(file, job, { waitMs = null, staleMs = 10000 } = {}) {
   const lock = file + '.lock';
   await mkdir(dirname(lock), { recursive: true });
   const token = process.pid + '-' + Date.now() + '-' + Math.random().toString(16).slice(2);
   const started = Date.now();
-  // 等待窗口必须大于过期阈值，否则两个进程会同时判定对方过期并互相拆锁。
-  const effectiveWait = Math.max(waitMs, Math.ceil(staleMs * 1.2));
+  // 显式 waitMs（调用方/环境变量）优先；未指定时按 stale 的 1.2 倍兜底，
+  // 保证等待窗口大于过期阈值，避免两个进程同时判定对方过期并互相拆锁。
+  const effectiveWait = Number.isFinite(waitMs) && waitMs > 0 ? waitMs : Math.max(10000, Math.ceil(staleMs * 1.2));
   for (;;) {
     try {
       await writeFile(lock, token, { flag: 'wx' });
@@ -52,8 +53,14 @@ export async function withFileLock(file, job, { waitMs = 15000, staleMs = 10000 
       if (!e || e.code !== 'EEXIST') throw e;
       if (Date.now() - started > effectiveWait) throw new Error('文件写入被占用（' + lock + ' 超过 ' + effectiveWait + 'ms 未释放）');
       try {
+        // 删过期锁前必须复核内容：stat 与 rm 之间持有者可能刚换人，
+        // 直接 rm 会把别人新建的有效锁删掉，两个写者同时进临界区。
+        const before = await readFile(lock, 'utf8').catch(() => null);
         const st = await stat(lock);
-        if (Date.now() - st.mtimeMs > staleMs) await rm(lock, { force: true });
+        if (before !== null && Date.now() - st.mtimeMs > staleMs) {
+          const again = await readFile(lock, 'utf8').catch(() => null);
+          if (again === before) await rm(lock, { force: true });
+        }
       } catch { /* 锁刚被持有者删掉，睡一下再试 */ }
       await new Promise((r) => setTimeout(r, 25));
     }
@@ -67,7 +74,7 @@ export async function withFileLock(file, job, { waitMs = 15000, staleMs = 10000 
         return utimes(lock, now, now);
       })
       .catch(() => {});
-  }, Math.max(200, Math.floor(staleMs / 4)));
+  }, Math.max(50, Math.floor(staleMs / 4)));
   beat.unref?.();
   try {
     return await job();
@@ -175,8 +182,17 @@ export async function snapshotMemory({ keep = 7 } = {}) {
   const dest = createdNew ? join(dir, stamp) : join(dir, todayDirs[todayDirs.length - 1]);
   await mkdir(dest, { recursive: true });
   let copied = 0;
+  const failed = [];
   for (const name of SNAPSHOT_FILES) {
-    try { await copyFile(memoryPath(name), join(dest, name)); copied++; } catch { /* 文件不存在就跳过 */ }
+    try {
+      const st = await stat(memoryPath(name));
+      if (!st.isFile()) continue;
+      await copyFile(memoryPath(name), join(dest, name));
+      copied++;
+    } catch (e) {
+      // ENOENT 表示这个文件本来就没有；其他错误（占用/权限）意味着当天备份不完整，不能写 .complete。
+      if (e && e.code !== 'ENOENT') failed.push(name);
+    }
   }
   try {
     await cp(memoryPath('notes'), join(dest, 'notes'), { recursive: true });
@@ -188,10 +204,12 @@ export async function snapshotMemory({ keep = 7 } = {}) {
     if (createdNew) await rm(dest, { recursive: true, force: true }).catch(() => {});
     return { skipped: false, dir: dest, copied: 0, error: '没有可快照的记忆文件（记忆目录为空或不可读）' };
   }
-  // 完成标记：只有它存在才表示这一天的文件记忆真的备完了。
-  await writeFile(join(dest, '.complete'), new Date().toISOString(), 'utf8').catch(() => {});
+  // 完成标记：只有它存在才表示这一天的文件记忆真的备完了；有文件没拷成就先不写，
+  // 下次启动会重试，轮转也不会把残缺备份当成好备份。
+  if (!failed.length) await writeFile(join(dest, '.complete'), new Date().toISOString(), 'utf8').catch(() => {});
+  else console.error('dsh-x-memory: 快照不完整，未写完成标记：' + failed.join(', '));
   await rotateSnapshots(dir, keep);
-  return { skipped: false, dir: dest, copied };
+  return { skipped: false, dir: dest, copied, incomplete: failed };
 }
 
 /**

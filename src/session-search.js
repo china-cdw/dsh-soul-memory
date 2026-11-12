@@ -180,9 +180,10 @@ export function searchSession(session, query, options) {
 export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 } = {}) {
   const start = Math.max(0, Math.min(Number(from) || 0, Number(to) || 0))
   const end = Math.max(Number(from) || 0, Number(to) || 0)
-  if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0 }
+  if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0, truncated: false, note: '会话没有可读的原文接口' }
   const parts = []
   let events = 0
+  let last = start - 1
   for (let seq = start; seq <= end && events < maxEvents; seq++) {
     const event = session.eventAt(seq)
     if (!event) continue
@@ -190,7 +191,18 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200 }
     if (!text) continue
     parts.push(text)
     events++
+    last = seq
   }
-  const text = bounded(parts.join('\n'), limit)
-  return { from: start, to: end, bytes: Buffer.byteLength(text), text, events }
+  const joined = parts.join('\n')
+  const text = bounded(joined, limit)
+  const truncated = events >= maxEvents || Buffer.byteLength(text) < Buffer.byteLength(joined) || last < end
+  return {
+    from: start,
+    to: last >= start ? last : start,
+    bytes: Buffer.byteLength(text),
+    text,
+    events,
+    truncated,
+    ...(truncated ? { note: '已截断：仅返回 ' + events + ' 条事件 / ' + Buffer.byteLength(text) + ' 字节，用更小的 from–to 继续。' } : {}),
+  }
 }

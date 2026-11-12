@@ -97,13 +97,15 @@ function rowsToText(rows) {
  * 若在队列外先读，并发 appendRow 可能在这两步之间插入，导致刚记的坑被旧快照覆盖。
  */
 async function rewriteRows(mutate) {
-  return enqueue(async () => {
+  // 整份重写必须和 appendRow 共用跨进程锁：只包进程内队列时，
+  // 另一实例的 append 会落在 readRows 与 atomicWrite 之间被旧快照覆盖。
+  return withFileLock(lessonsPath(), () => enqueue(async () => {
     const rows = await readRows();
     const next = await mutate(rows);
     if (next === null) return { ok: false, error: '没有找到匹配的记录。' };
     await atomicWrite(lessonsPath(), rowsToText(next));
     return { ok: true, removed: rows.length - next.length };
-  });
+  }));
 }
 
 /**
@@ -318,10 +320,10 @@ export function registerLessons(ctx, options = {}) {
         return `已清空 ${res.removed} 条踩坑记录。`;
       }
       if (args.action === 'forget') {
-        if (!String(args.text ?? '').trim()) return '参数错误：forget 需要 text（错误文本片段或指纹）。';
+        if (!String(args.text ?? '').trim()) return '参数错误：forget 需要 text（错误文本片段或指纹）。\n[err:E_ARG]';
         const res = await forgetLesson(String(args.text).trim());
         refresh();
-        return res.ok ? `已删除 ${res.removed} 条记录。` : `未删除：${res.error}`;
+        return res.ok ? `已删除 ${res.removed} 条记录。` : `未删除：${res.error}\n[err:E_NOT_FOUND]`;
       }
       const rows = await readRows();
       const merged = mergeRows(rows);
@@ -445,7 +447,7 @@ export function registerLessons(ctx, options = {}) {
       const ok = call.args ? call.args : '';
       enqueue(() => appendRow({ fp: pending.fp, tool: call.name, error: pending.error, ok, at: now, session: sid }))
         .then(refresh)
-        .catch(() => {});
+        .catch((e) => console.error('dsh-x-memory: 记录踩坑失败：' + (e?.message ?? e)));
     } catch {
       /* 自动记录不能影响主流程 */
     }

@@ -267,17 +267,17 @@ export function registerCodingRules(ctx, options = {}) {
       const action = args.action;
       if (action === 'add') {
         const res = await addRule(args.text);
-        return res.ok ? `已记入全局编码规范：${res.rule}` : `未写入：${res.error}`;
+        return res.ok ? `已记入全局编码规范：${res.rule}` : `未写入：${res.error}\n[err:E_ARG]`;
       }
       if (action === 'forget') {
         const res = await forgetRule(args.text);
-        return res.ok ? `已删除 ${res.removed} 条规则。` : `未删除：${res.error}`;
+        return res.ok ? `已删除 ${res.removed} 条规则。` : `未删除：${res.error}\n[err:E_NOT_FOUND]`;
       }
       if (action === 'list') {
         const text = readCapped(codingPath());
         return text || '全局编码规范还是空的。可以 manual 编辑 ' + codingPath() + '，或用 action=add。';
       }
-      if (action !== 'show') return '参数错误：action 必须是 show / list / add / forget。';
+      if (action !== 'show') return '参数错误：action 必须是 show / list / add / forget。\n[err:E_ARG]';
       const cwd = exec?.agent?.session?.header?.cwd || null;
       const gathered = collectRules(cwd, { budget });
       if (!gathered.files.length) return '当前没有发现任何编码规范文件。可用 action=add 写一条全局规则，或在项目里放 AGENTS.md / CLAUDE.md / .cursorrules。';
