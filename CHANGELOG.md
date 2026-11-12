@@ -1,5 +1,14 @@
 # 变更日志
 
+## 0.3.21
+
+- 修复 `soul_expand` 的 offset 在空事件上顺延、吞掉下一条开头（空事件也先消费 offset；`from=0` 零预算返回 `to=-1` 且标 `truncated`）。
+- `limit` 极小预算不再超预算返回字符：放不下就返回空并标 `truncated`，调用方不会拿到超过承诺的字节数。
+- 崩溃遗留的锁按 pid 立即回收（无需等 10 分钟 stale）；`index.json` 快照拷贝遇 EBUSY/EPERM 重试 3 次。
+- 图谱快照失败写日志；rotate 的 keep 注释与实际一致。
+- `soul_expand` / `soul_recall` 参数边界进 schema（from/to ≤ 1000000、limit ≤ 20000、maxEvents ≤ 1000、k 1–5）。
+- README 中英双语补续读协议（`from=resume.seq` + `offset=resume.offset`）与默认值/上限。
+- 125 断言全绿。
 ## 0.3.20
 
 - 续读游标不再多算：只有「被裁剪的那条事件」的 skip 才计入 `resume.offset`，跳过整条事件不贡献字节；skip+clip 组合续读不再永久丢字节。

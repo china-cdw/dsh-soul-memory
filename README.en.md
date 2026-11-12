@@ -137,7 +137,7 @@ The table below lists the 12 tools registered by default. With evolution enabled
 | `coding_rules` | Coding conventions | `action` (show/list/add/forget), `text?` |
 | `lessons` | Mistake notes | `action` (list/forget/clear), `text?`, `limit?` (default 50, max 200) |
 | `soul_recall` | Recall from the session graph / raw history | `query`, `k?` |
-| `soul_expand` | Expand raw text by seq range; continue a clipped first event with `resume.offset` | `from`, `to`, `limit`, `maxEvents`, `offset` |
+| `soul_expand` | Expand raw text by seq range (default 2000 bytes / 200 events, max 20000 / 1000); continue with `from=resume.seq` + `offset=resume.offset` | `from`, `to` (required, 0–1000000); `limit?`, `maxEvents?`, `offset?` (default 2000 / 200 / 0) |
 
 Write rules: `memory_write` runs a near-duplicate check (similarity ≥ 0.55 is rejected; pass `force: true` to write anyway).
 

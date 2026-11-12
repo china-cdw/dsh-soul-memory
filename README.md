@@ -137,7 +137,7 @@ dsh plugin --profile desktop add "$PWD"
 | `coding_rules` | 编码规范 | `action`（show/list/add/forget）、`text?` |
 | `lessons` | 踩坑记录 | `action`（list/forget/clear）、`text?`、`limit?`（默认 50，上限 200） |
 | `soul_recall` | 从会话图谱/历史原文回捞 | `query`、`k?` |
-| `soul_expand` | 按 seq 区间展开原文；首条超预算时用 `resume.offset` 续读 | `from`、`to`、`limit`、`maxEvents`、`offset` |
+| `soul_expand` | 按 seq 区间展开原文（默认 2000 字节 / 200 条，上限 20000 / 1000）；被裁剪时用 `from=resume.seq` + `offset=resume.offset` 续读 | `from`、`to`（必填，0–1000000）；`limit?`、`maxEvents?`、`offset?`（默认 2000 / 200 / 0） |
 
 写入规则：`memory_write` 会做近重复检查（相似度 ≥0.55 拒写，加 `force: true` 可强写）。
 

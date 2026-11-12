@@ -101,7 +101,9 @@ function sliceAround(text, from, to, limit) {
   // 宁可超出几字节，也不能让调用方拿不到任何内容（否则会反复重试同一区间）。
   if (end === start) {
     const cp = text.codePointAt(start)
-    return cp === undefined ? '' : String.fromCodePoint(cp)
+    if (cp === undefined) return ''
+    const ch = String.fromCodePoint(cp)
+    return Buffer.byteLength(ch) <= limit ? ch : ''
   }
   return text.slice(start, end)
 }
@@ -221,8 +223,8 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
   const toNum = Number.isFinite(rawTo) ? Math.max(0, Math.floor(rawTo)) : fromNum
   const start = Math.max(0, Math.min(fromNum, toNum))
   const end = Math.max(0, Math.max(fromNum, toNum))
-  if (budget <= 0) return { from: start, to: Math.max(0, start - 1), bytes: 0, text: '', events: 0, truncated: false, note: 'limit 为 0 或负数：未处理任何事件（to 停在 start 前一位；start=0 时 to=0）' }
-  if (cap <= 0) return { from: start, to: Math.max(0, start - 1), bytes: 0, text: '', events: 0, truncated: false, note: 'maxEvents 为 0：未处理任何事件（to 停在 start 前一位；start=0 时 to=0）' }
+  if (budget <= 0) return { from: start, to: start - 1, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'limit 为 0 或负数：未处理任何事件（to 停在 start 前一位；start=0 时 to=0）' }
+  if (cap <= 0) return { from: start, to: start - 1, bytes: 0, text: '', events: 0, truncated: start <= end, note: 'maxEvents 为 0：未处理任何事件（to 停在 start 前一位；start=0 时 to=0）' }
   if (typeof session?.eventAt !== 'function') return { from: start, to: end, bytes: 0, text: '', events: 0, truncated: false, note: '会话没有可读的原文接口' }
   const parts = []
   let events = 0
@@ -238,7 +240,8 @@ export function expandRange(session, from, to, { limit = 2000, maxEvents = 200, 
     const event = session.eventAt(seq)
     if (!event) continue
     const text = textOfEvent(event).trim()
-    if (!text) continue
+    // 即使这条事件为空，也要先把 offset 消费掉：否则 skip 会顺延到后面的条目，
+    // 悄悄吃掉下一条事件的开头。
     // offset 只作用于调用方指定的那一条事件，用掉即清零；否则会连带切掉后续事件。
     let body = text
     let eventSkip = 0

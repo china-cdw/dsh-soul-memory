@@ -635,12 +635,15 @@ await t.test('persona set 只传 enabled 也能切换启用状态', async () => 
   assert.match(cur, /当前回复风格/)
 })
 
-await t.test('expandRange 极小预算也返回完整 code point', async () => {
+await t.test('expandRange 极小预算不超预算且明确标截断', async () => {
   const emoji = String.fromCodePoint(0x1f600)
   const session = { eventAt: (seq) => seq === 3 ? { type: 'user/message', data: { message: { content: [{ type: 'text', text: emoji + emoji }] } } } : null }
   const out = expandRange(session, 3, 3, { limit: 2 })
-  assert.equal(out.events, 1, '必须返回内容，不能零进展')
-  assert.equal(Array.from(out.text).length, 1, '不能切出孤立代理项')
+  assert.equal(out.bytes <= 2, true, '不能超出调用方的字节预算')
+  assert.equal(out.truncated, true, '没取到内容必须标截断，不能装作读完')
+  const fits = expandRange(session, 3, 3, { limit: 4 })
+  assert.equal(fits.events, 1, '预算够一个字符时要返回内容')
+  assert.equal(Array.from(fits.text).length, 1, '不能切出孤立代理项')
 })
 
 await t.test('expandRange 首条超预算时返回 resume 游标', async () => {

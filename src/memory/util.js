@@ -41,6 +41,11 @@ export function sliceSafe(text, end) {
 // 心跳在此期间无法刷新；阈值太小会把活锁当死锁删掉。
 export const SNAPSHOT_LOCK_STALE_MS = 10 * 60 * 1000
 
+/** 锁内容里的 pid 还活着吗？进程崩溃留下的锁可以立即回收，不必等 stale 过期。 */
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true } catch (e) { return Boolean(e && e.code === 'EPERM') }
+}
+
 export async function withFileLock(file, job, { waitMs = null, staleMs = 10000 } = {}) {
   const lock = file + '.lock';
   await mkdir(dirname(lock), { recursive: true });
@@ -64,7 +69,11 @@ export async function withFileLock(file, job, { waitMs = null, staleMs = 10000 }
         // 直接 rm 会把别人新建的有效锁删掉，两个写者同时进临界区。
         const before = await readFile(lock, 'utf8').catch(() => null);
         const st = await stat(lock);
-        if (before !== null && Date.now() - st.mtimeMs > staleMs) {
+        // 进程崩溃留下的锁：pid 已不存在就立刻回收，不必等 stale 过期（否则要白等十分钟）。
+        const holderPid = Number(String(before ?? '').split('-')[0]);
+        const dead = Number.isInteger(holderPid) && holderPid > 0 && !pidAlive(holderPid);
+        if (dead && Date.now() - st.mtimeMs > 2000) await rm(lock, { force: true });
+        else if (before !== null && Date.now() - st.mtimeMs > staleMs) {
           const again = await readFile(lock, 'utf8').catch(() => null);
           const st2 = await stat(lock);
           // 心跳只刷新 mtime、不改内容：内容相同但 mtime 前进了，说明持有者还活着。
@@ -238,7 +247,17 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
     try {
       const st = await stat(memoryPath(name));
       if (!st.isFile()) continue;
-      await copyFile(memoryPath(name), join(dest, name));
+      // Windows 上别的进程可能正持有 index.json / WAL：EBUSY 重试几次，别把当天备份判成不完整。
+      let lastErr = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try { await copyFile(memoryPath(name), join(dest, name)); lastErr = null; break }
+        catch (err) {
+          lastErr = err;
+          if (!err || (err.code !== 'EBUSY' && err.code !== 'EPERM')) break;
+          await new Promise((r) => setTimeout(r, 120));
+        }
+      }
+      if (lastErr) throw lastErr;
       copied++;
     } catch (e) {
       // ENOENT 表示这个文件本来就没有；其他错误（占用/权限）意味着当天备份不完整，不能写 .complete。
@@ -326,7 +345,9 @@ async function snapshotGraphLocked(db, keep, dir) {
     return { skipped: false, dir: join(dir, target), copied: true };
   } catch (e) {
     await rm(tmp, { force: true }).catch(() => {});
-    return { skipped: true, error: e && e.message ? e.message : String(e) };
+    const msg = e && e.message ? e.message : String(e);
+    console.error('dsh-x-memory: 图谱快照失败：' + msg);
+    return { skipped: true, error: msg };
   }
 }
 
@@ -376,7 +397,8 @@ async function rotateSnapshots(dir, keep, { protect = [] } = {}) {
       await rm(join(dir, item.name), { recursive: true, force: true }).catch(() => {});
     }
   }
-  // keep 必须把本轮正在写的目录也算进去，否则「保护」会变成「多留一份」。
+  // 完整备份计入 keep；本轮正在写的 in-flight 目录不在 keepable 里，所以结果可能是 keep+1 份——
+  // 这是有意的：保护在途目录优先于份数上限。
   const keepable = items.filter((item) => (item.valid || item.graphDone) && !item.inFlight);
   keepable.sort((a, b) => a.mtimeMs - b.mtimeMs);
   // 先按总数算出该删几份，再从可删集合（排除 protected）里挑最旧的删。
