@@ -12,6 +12,7 @@
 import { readFileSync, statSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWrite, createQueue, memoryHome, sliceSafe, withFileLock } from './memory/util.js';
+import { withNotes } from './tool-notes.js';
 
 const DEFAULT_BUDGET = 2000;
 const FILE_CHAR_CAP = 6000;
@@ -283,7 +284,8 @@ export function registerCodingRules(ctx, options = {}) {
 
   ctx.tools.register({
     name: 'coding_rules',
-    description: '编码规范固定记忆。show=看当前会注入的规则（全局+项目）；list=看全局 CODING.md 原文；add=追加一条全局规则（跨会话生效，用户纠正你的写法后用它记住；可选 why/pitfall 记「为什么为真」和「陷阱」）；forget=删除一条全局规则（需完全匹配，连同子项一起删）。',
+    description: withNotes('编码规范固定记忆。show=看当前会注入的规则（全局+项目）；list=看全局 CODING.md 原文；add=追加一条全局规则（跨会话生效，用户纠正你的写法后用它记住；可选 why/pitfall 记「为什么为真」和「陷阱」）；forget=删除一条全局规则（需完全匹配，连同子项一起删）。',
+      '写入 <DSH home>/memory/CODING.md（项目层只读，来自 AGENTS.md/CLAUDE.md 等）；下一轮组装生效；不调用模型、不花钱。'),
     output: outputText,
     parameters: {
       type: 'object',

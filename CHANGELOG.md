@@ -1,5 +1,12 @@
 # 变更日志
 
+## 0.3.41
+
+- 所有记忆类工具的描述末尾补一行「备注：」：说明数据落在 `<DSH home>/memory/` 的哪个文件、有没有副作用、是否调用模型/花钱；
+- 备注以工具定义里的 `notes` 字段维护，注册时由 `src/tool-notes.js` 的 `withNotes()` 统一拼接，备注留空的工具保持原描述；
+- 覆盖 `memory_write` / `memory_core` / `memory_search` / `memory_read` / `memory_list` / `memory_delete` / `memory_brief` / `persona` / `memory_dreaming` / `coding_rules` / `lessons` / `soul_recall` / `soul_expand` 与 `evolve_*`；
+- 自检 161 断言全过（描述改动不涉及执行逻辑）。
+
 ## 0.3.40
 
 - AI 裁决的 `reason` 也按「离该 id 最近」归属，同一对象里两个 id 不再互相借理由；

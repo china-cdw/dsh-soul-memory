@@ -32,6 +32,7 @@ import { registerCodingRules } from './coding.js';
 import { registerLessons } from './lessons.js';
 import { biliStatus, searchBili } from './memory/bili.js'
 import { DREAMING_DEFAULTS, buildCleanupRequest, chunkItems, dreamCandidates, parseCleanupVerdicts, pickDigests, readDreamingState, withDreamingRunLock, writeDreamingState } from './dreaming.js';
+import { withNotes } from './tool-notes.js';
 
 // 当前会话的事件序号提供者：index.js 启动时注入（读 MemoryBuffer 的最新 seq）。
 // 抽出来是为了让 writeNote 不依赖 index.js，测试也能直接喂一个假的。
@@ -1250,6 +1251,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     {
       name: 'memory_write',
       description: '保存一条归档记忆（episodic note），跨所有会话持久。适用：用户偏好/纠正、项目决策、环境事实、重要结论等未来会话可能需要的内容。内容要自包含（未来会话看不到当前对话）。疑似重复时不会写入，会返回已有候选；确认要新增时带 force=true；若是修正某条旧记忆（而不是新增），带 supersedes=<旧 id>，旧条目会被标记为「已被取代」。',
+      notes: '写入 <DSH home>/memory/notes/ 并更新索引；不调用模型、不花钱；来源会话与事件序号自动记录。',
       parameters: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -1269,6 +1271,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     {
       name: 'memory_core',
       description: '编辑核心记忆 MEMORY.md——它在每个会话的系统提示里常驻注入，务必保持精炼。action=append 在指定分节末尾追加要点；action=replace 用 text 整体替换指定分节；action=remove 删除指定分节。适合：用户画像/偏好、环境事实、项目约定这类需要"每次都记得"的长期信息。',
+      notes: '直接改写 <DSH home>/memory/MEMORY.md，下一次模型组装即生效；内容常驻系统提示预算（建议 <3KB）；不调用模型、不花钱。',
       parameters: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -1283,6 +1286,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     {
       name: 'memory_search',
       description: '按关键词检索持久记忆：归档记忆（标题/标签/正文，按相关度+新鲜度排序），并在会话图谱里补一轮同类节点。需要回忆过往会话保存的细节时主动使用。',
+      notes: '只读；先查归档索引，命中不足再补会话图谱；不调用模型、不花钱。',
       parameters: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -1296,6 +1300,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     {
       name: 'memory_read',
       description: '按 id 读取一条归档记忆的完整内容。id 来自 memory_list / memory_search 的结果（或注入索引里的 [id]）。',
+      notes: '只读；id 支持唯一前缀；依据的文件已被改动或缺失时，结果里会标注「已过时/缺失」。',
       parameters: {
         type: 'object', additionalProperties: false,
         properties: { id: { type: 'string', description: '记忆 id（可带 .md 后缀；支持唯一前缀匹配）' } },
@@ -1306,6 +1311,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     {
       name: 'memory_list',
       description: '列出归档记忆（新→旧），可按标签过滤。用于浏览记忆库全貌。',
+      notes: '只读；默认 15 条，只返回标题与元信息，不返回正文；不花钱。',
       parameters: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -1319,6 +1325,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     {
       name: 'memory_delete',
       description: '删除一条归档记忆：从索引移除并把文件改写为墓碑占位。用于清理过时或错误的记忆。',
+      notes: '改写为墓碑占位，不物理删除（正文可能仍在备份/版本库里）；索引同步更新；不花钱。',
       parameters: {
         type: 'object', additionalProperties: false,
         properties: { id: { type: 'string', description: '要删除的记忆 id' } },
@@ -1329,12 +1336,14 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     {
       name: 'memory_brief',
       description: '一次返回记忆库体检：核心记忆大小与分节、归档条数与最近 5 条、回复风格、会话图谱规模。判断"我记住了什么/记忆是不是健康"时先调它，不要逐个工具试。',
+      notes: '只读；四项体检一次返回；不调用模型、不花钱。',
       parameters: { type: 'object', additionalProperties: false, properties: {}, required: [] },
       execute: (_args, exec) => brief(graphStats, exec?.agent ?? null, bridgeCfg),
     },
     {
       name: 'persona',
       description: '读取或设置 AI 的回复风格（与 MEMORY.md 并列的持久偏好，注入每个会话的系统提示）。action=get 查看当前风格与全部预设；action=set 切换到某个预设；action=custom 写入自定义风格文本；action=disable 停用风格注入。仅在用户明确要求改变回复风格、或表达长期语气偏好时调用。',
+      notes: '写入 <DSH home>/memory/PERSONA.md，下一次模型组装生效；不调用模型、不花钱。',
       parameters: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -1407,6 +1416,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     {
       name: 'memory_dreaming',
       description: '闲时整理（dreaming）：可选开关。开启后把近期决策/约束/重复进度聚成 digest 笔记；配置了模型路由时，还会用 AI 判断哪些记忆是废话、断网重试造成的重复、已被纠正的错误结论，并把它们 retire（可逆，soul_recall 仍可找回；不删原始日志与笔记）。默认关闭；action=status 查看，on/off 切换，run 手动执行（默认只列候选，apply=true 才写盘，force=true 忽略冷却）。',
+      notes: 'status/on/off/retired/restore 不花钱；run 默认 dry-run，apply=true 才写盘；仅当配置了 dreaming 或顶层模型路由时才调用模型（花钱）；retire 可逆，不删原始日志。',
       parameters: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -1424,7 +1434,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
   if (core) for (const def of defs) {
     ctx.tools.register({
       name: def.name,
-      description: def.description,
+      description: withNotes(def.description, def.notes),
       parameters: def.parameters,
       output: outputText,
       execute: def.execute,

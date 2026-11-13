@@ -3,6 +3,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { atomicWrite, createQueue, memoryHome, redactSecrets, sliceSafe, withFileLock } from './memory/util.js';
+import { withNotes } from './tool-notes.js';
 
 const DEFAULT_BUDGET = 600;
 const MAX_ROWS = 400;
@@ -301,7 +302,8 @@ export function registerLessons(ctx, options = {}) {
 
   ctx.tools.register({
     name: 'lessons',
-    description: '自动踩坑记录：list=看记录（同类错误已合并计数）；forget=按错误文本或指纹删除一条；clear=清空。记录由插件在"工具报错后同会话恢复"时自动写入。',
+    description: withNotes('自动踩坑记录：list=看记录（同类错误已合并计数）；forget=按错误文本或指纹删除一条；clear=清空。记录由插件在"工具报错后同会话恢复"时自动写入。',
+      '写入 <DSH home>/memory/LESSONS.jsonl（上限 ' + MAX_ROWS + ' 条，超出按旧→新淘汰）；不调用模型、不花钱。'),
     output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
     parameters: {
       type: 'object',
