@@ -1,4 +1,4 @@
-# dsh-x-memory
+# dsh-soul-memory
 
 [简体中文](README.md) | English
 
@@ -117,8 +117,8 @@ Off by default. When enabled, the plugin clusters recent decisions, constraints 
 
 ```bash
 # 1. Clone
-git clone https://github.com/china-cdw/dsh-x-memory
-cd dsh-x-memory
+git clone https://github.com/china-cdw/dsh-soul-memory
+cd dsh-soul-memory
 
 # 2. Install into a DSH profile
 dsh plugin --profile desktop add "$PWD"

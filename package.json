@@ -1,16 +1,16 @@
 {
   "name": "dsh-x-memory",
-  "version": "0.3.41",
+  "version": "0.3.42",
   "description": "DSH 分层记忆：核心记忆常驻 + 归档笔记 + 踩坑记录 + 编码规范 + 会话图谱 + billion-context 摘要桥接",
   "license": "MIT",
   "author": "china-cdw",
-  "homepage": "https://github.com/china-cdw/dsh-x-memory#readme",
+  "homepage": "https://github.com/china-cdw/dsh-soul-memory#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/china-cdw/dsh-x-memory.git"
+    "url": "git+https://github.com/china-cdw/dsh-soul-memory.git"
   },
   "bugs": {
-    "url": "https://github.com/china-cdw/dsh-x-memory/issues"
+    "url": "https://github.com/china-cdw/dsh-soul-memory/issues"
   },
   "type": "module",
   "main": "index.js",

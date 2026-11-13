@@ -1,5 +1,11 @@
 # 变更日志
 
+## 0.3.42
+
+- 显示名改为 `dsh-soul-memory`（`locale/zh.json`、`locale/en.json` 的 `meta.title`），描述同步改成实际能力，不再沿用旧的「独立 Evolve」文案；
+- 仓库改名为 `china-cdw/dsh-soul-memory`，`package.json` 的 homepage / repository / bugs 与两份 README 的克隆地址同步更新；包名与安装名仍为 `dsh-x-memory`；
+- 自检 161 断言全过（只改显示文案与链接）。
+
 ## 0.3.41
 
 - 所有记忆类工具的描述末尾补一行「备注：」：说明数据落在 `<DSH home>/memory/` 的哪个文件、有没有副作用、是否调用模型/花钱；

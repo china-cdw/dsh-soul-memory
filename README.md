@@ -1,4 +1,4 @@
-# dsh-x-memory
+# dsh-soul-memory
 
 简体中文 | [English](README.en.md)
 
@@ -117,8 +117,8 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 
 ```bash
 # 1. 克隆到本地
-git clone https://github.com/china-cdw/dsh-x-memory
-cd dsh-x-memory
+git clone https://github.com/china-cdw/dsh-soul-memory
+cd dsh-soul-memory
 
 # 2. 装进 DSH 的 profile
 dsh plugin --profile desktop add "$PWD"
