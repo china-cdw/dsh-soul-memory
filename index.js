@@ -23,6 +23,7 @@ import { runChecks } from './src/probe.js'
 import { registerCoreMemory, runDreaming, setDreamGenerator, setDreamNodeProvider, setDreamRestoreProvider, setDreamRetiredListProvider, setDreamRetireProvider, setSessionSeqProvider } from './src/core-memory.js'
 import { snapshotGraph } from './src/memory/util.js'
 import { withNotes } from './src/tool-notes.js'
+import { rememberIntent, rememberReminder } from './src/memory/remember.js'
 
 export const name = 'dsh-soul-memory'
 export const inject = ['tools', 'systemPrompt', 'commands']
@@ -416,6 +417,15 @@ export function apply(ctx, input = {}) {
   let dreamTimer = null
   const recent = new Map()      // session -> last finished observation
   const lastTurn = new Map()    // session -> { intent } to detect corrections
+  const rememberCue = new Map() // session -> { text, left } 用户明确要求长期记住
+  // 取一次提醒就减一次：最多注入 3 轮，避免把「记住」的提醒永远挂在每轮提示里。
+  const takeRememberReminder = (sid) => {
+    const cue = rememberCue.get(sid)
+    if (!cue || cue.left <= 0) return ''
+    cue.left -= 1
+    if (cue.left === 0) rememberCue.delete(sid)
+    return rememberReminder(cue.text)
+  }
   const memory = new MemoryBuffer()
   // memory_write 自动记下来源：会话 id 由工具上下文给，事件序号从缓冲区取。
   setSessionSeqProvider((sid) => {
@@ -542,6 +552,7 @@ export function apply(ctx, input = {}) {
           if (!text.trim()) continue
           // 宿主注入的运行时上下文/技能目录不是人的话：不猜意图、不当纠正、不进缓冲。
           if (injected(text)) continue
+          if (config.memory.enabled && rememberIntent(text)) rememberCue.set(sid, { text: bounded(text, 400), left: 3 })
           // Buffer the raw message: one normalizer decides what a block is, and it is the
           // same one that the offline bench exercises.
           if (config.memory.enabled) memory.push(sid, { type: 'user/message', data: { message } })
@@ -672,7 +683,7 @@ export function apply(ctx, input = {}) {
     listen('agent/disposed', safe(({ agent }) => {
       const sid = String(agent.session.id)
       recorder.turns.delete(sid); lastTurn.delete(sid); recent.delete(sid)
-      memory.clear(sid); cwdBySession.delete(sid); cues.delete(sid); needsLookup.delete(sid); lookups.delete(sid)
+      memory.clear(sid); cwdBySession.delete(sid); cues.delete(sid); needsLookup.delete(sid); lookups.delete(sid); rememberCue.delete(sid)
     }))
 
     // ---- harness injection ------------------------------------------------
@@ -706,10 +717,12 @@ export function apply(ctx, input = {}) {
             try {
               const scope = projectScope({ id: agent.session.id, header: { cwd } })
               const card = projectionText(store, scope, config.memory.projectionBytes, { sessionId: String(agent.session.id), dynamics: config.memory.dynamics, promote: config.memory.promote, cues: cues.get(String(agent.session.id)) ?? null })
-              if (!card) return ''
-              return needsLookup.get(String(agent.session.id))
+              const reminder = takeRememberReminder(String(agent.session.id))
+              if (!card) return reminder
+              const body = needsLookup.get(String(agent.session.id))
                 ? `${card}\n[提示] 本轮问题与卡片重合很低：先 soul_recall 查原文（本轮最多 3 次），再回答，不要凭印象。`
                 : card
+              return reminder ? `${body}\n\n${reminder}` : body
             } catch { return '' }
           },
         }))

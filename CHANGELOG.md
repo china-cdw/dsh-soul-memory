@@ -1,5 +1,11 @@
 # 变更日志
 
+## 0.3.44
+
+- 新增「长期记忆要求」兑底：人类消息命中「记住 / 以后都 / 别再 / 今后 / remember / from now on …」时，`agent/pre-step` 记下原话，随后最多 3 轮在该会话的 systemPrompt 末尾注入提醒，要求先用 `memory_write`（必须长期稳定再用 `memory_core`）落盘再回答；未命中不注入、不改历史、不额外调用模型。
+- 新增 `src/memory/remember.js`（中英文正则、`rememberExcerpt` 截断 200 字符、`rememberReminder` 提醒文案）与 `scripts/dsh-memory-remember-test.mjs`（12 条断言）。
+- 自检 161 → 173 断言全绿。
+
 ## 0.3.43
 
 - 彻底改名：包名、patch id、源码目录、安装副本目录、profile 依赖与 pnpm 锁文件全部改为 `dsh-soul-memory`；旧名只保留在历史记录里。
