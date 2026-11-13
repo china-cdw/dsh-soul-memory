@@ -28,6 +28,7 @@ const DEFAULTS = {
     '(?:password|passwd|secret|token|api[-_ ]?key|access[-_ ]?key)\\s*[:=]\\s*\\S{6,}',
     'bearer\\s+[A-Za-z0-9._-]{20,}',
     'authorization\\s*:\\s*\\S{8,}',
+    '(?:密码|口令|验证码|密钥|身份证|银行卡|手机号|住址)\\s*(?:是|为|[:：=])\\s*\\S{4,}',
   ],
 };
 
