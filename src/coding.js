@@ -1,4 +1,4 @@
-// dsh-x-memory — 编码规范固定记忆层
+// dsh-soul-memory — 编码规范固定记忆层
 //
 // 目标：让"怎么写代码"这类规则跨会话固定下来，而不是每次靠人重复。
 // 两个来源，一起注入（有字节预算，超了就截断并注明）：
@@ -32,7 +32,7 @@ const CURSOR_RULES_DIR = join('.cursor', 'rules');
 const TEMPLATE = [
   '# 编码规范（全局）',
   '',
-  '> dsh-x-memory 的固定记忆层：以下规则注入每个会话的系统提示（有预算上限），跨项目生效。',
+  '> dsh-soul-memory 的固定记忆层：以下规则注入每个会话的系统提示（有预算上限），跨项目生效。',
   '> 用 coding_rules action=add 追加；action=list 查看；action=forget 删除；action=show 看当前实际注入内容。',
   '',
   '## 规则',
@@ -115,7 +115,7 @@ export function collectRules(cwd, { budget = DEFAULT_BUDGET, globalText = null }
   const lines = [];
   const files = [];
   const headLines = [
-    '# 编码规范（dsh-x-memory）',
+    '# 编码规范（dsh-soul-memory）',
     '',
     '以下是本机与当前项目的编码约定。写代码、改文件时遵守；与用户当轮明确指令冲突时以用户为准。',
     '用户纠正你的写法后，用 coding_rules action=add 记到全局层，下次会话仍然生效。',
@@ -266,7 +266,7 @@ export function registerCodingRules(ctx, options = {}) {
   const budget = Number.isFinite(options.budget) ? Math.max(400, Math.min(8000, options.budget)) : DEFAULT_BUDGET;
 
   const section = ctx.systemPrompt.section({
-    name: 'dsh-x-memory:coding',
+    name: 'dsh-soul-memory:coding',
     order: 61,
     // 规则文件是用户内容，可能含 {{...}}；关闭插值，按纯文本注入。
     interpolate: false,

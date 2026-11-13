@@ -1,6 +1,6 @@
 # 上游与同步
 
-dsh-x-memory 是 **dsh-soul 2.0.1** 的 fork，并移植了 **dsh-core-memory 1.0.1**（MIT）的核心记忆层。
+dsh-soul-memory 是 **dsh-soul 2.0.1** 的 fork，并移植了 **dsh-core-memory 1.0.1**（MIT）的核心记忆层。
 升级上游时不要整目录覆盖：`src/` 里大部分文件是上游逐字节镜像，但有几个文件是我们自己写的。
 
 ## 哪些是我们的

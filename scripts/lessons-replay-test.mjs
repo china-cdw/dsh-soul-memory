@@ -23,7 +23,7 @@ const readLines = async () => (await readFile(file, 'utf8')).split('\n').filter(
 
 const { ctx, handlers, tools, sections } = makeCtx();
 registerLessons(ctx, { budget: 600 });
-const section = sections.find((s) => s.name === 'dsh-x-memory:lessons');
+const section = sections.find((s) => s.name === 'dsh-soul-memory:lessons');
 const fire = (type, data, session = 's-replay') => handlers.get('session/event')({ id: session }, { type, data });
 
 let n = 0;

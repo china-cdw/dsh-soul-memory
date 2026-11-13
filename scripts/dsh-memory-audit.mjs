@@ -65,7 +65,7 @@ await t.test('启动 bootstrap 建好 MEMORY.md / index.json / notes/', async ()
 });
 
 await t.test('召回节关闭模板插值（interpolate:false）', async () => {
-  const recall = ctx1.sections.find((s) => s.name === 'dsh-x-memory:recall');
+  const recall = ctx1.sections.find((s) => s.name === 'dsh-soul-memory:recall');
   assert.ok(recall, '未注册 recall section');
   assert.equal(recall.order, 60);
   assert.equal(recall.interpolate, false);
@@ -288,31 +288,31 @@ await t.test('正文缓存按 mtime/size 失效', async () => {
 });
 
 await t.test('persona 路由：拒绝跨源与错误 Content-Type，同源 JSON 可写', async () => {
-  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   assert.ok(route, '未注册 persona 路由');
   const host = '127.0.0.1:2300';
 
   let res = fakeRes();
-  await route.handler(fakeReq({ method: 'GET', headers: { host, 'x-dsh-x-memory': '1' } }), res);
+  await route.handler(fakeReq({ method: 'GET', headers: { host, 'x-dsh-soul-memory': '1' } }), res);
   assert.equal(res.statusCode, 200);
   assert.ok(JSON.parse(res.body).presets.length > 0);
 
   res = fakeRes();
   await route.handler(fakeReq({
-    method: 'POST', headers: { host, origin: 'http://evil.example', 'content-type': 'application/json', 'x-dsh-x-memory': '1' }, body: '{}',
+    method: 'POST', headers: { host, origin: 'http://evil.example', 'content-type': 'application/json', 'x-dsh-soul-memory': '1' }, body: '{}',
   }), res);
   assert.equal(res.statusCode, 403);
 
   res = fakeRes();
   await route.handler(fakeReq({
-    method: 'POST', headers: { host, origin: 'http://' + host, 'content-type': 'text/plain', 'x-dsh-x-memory': '1' }, body: '{}',
+    method: 'POST', headers: { host, origin: 'http://' + host, 'content-type': 'text/plain', 'x-dsh-soul-memory': '1' }, body: '{}',
   }), res);
   assert.equal(res.statusCode, 415);
 
   res = fakeRes();
   await route.handler(fakeReq({
     method: 'POST',
-    headers: { host, origin: 'http://' + host, 'content-type': 'application/json', 'x-dsh-x-memory': '1' },
+    headers: { host, origin: 'http://' + host, 'content-type': 'application/json', 'x-dsh-soul-memory': '1' },
     body: JSON.stringify({ enabled: true, preset: 'custom', custom: '说话简短，先给结论。' }),
   }), res);
   assert.equal(res.statusCode, 200);
@@ -322,7 +322,7 @@ await t.test('persona 路由：拒绝跨源与错误 Content-Type，同源 JSON 
 });
 
 await t.test('persona 路由：缺少 X-DSH-X-Memory 头时拒绝', async () => {
-  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const res = fakeRes();
   await route.handler(fakeReq({
     method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json' }, body: '{}',
@@ -341,7 +341,7 @@ await t.test('persona 文件无 front-matter 时视为 custom 并注入', async 
 });
 
 await t.test('persona 路由拒绝非本机 Host（DNS rebinding）', async () => {
-  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const res = fakeRes();
   await route.handler(fakeReq({ method: 'GET', headers: { host: 'evil.example' } }), res);
   assert.equal(res.statusCode, 403);
@@ -364,24 +364,24 @@ await t.test('失败结果带机器可读 [err:CODE] 后缀', async () => {
 });
 
 await t.test('persona 路由：非 GET/POST 返回 405 并带 Allow', async () => {
-  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const res = fakeRes();
-  await route.handler(fakeReq({ method: 'PUT', headers: { host: '127.0.0.1:2300', 'x-dsh-x-memory': '1', 'content-type': 'application/json' }, body: '{}' }), res);
+  await route.handler(fakeReq({ method: 'PUT', headers: { host: '127.0.0.1:2300', 'x-dsh-soul-memory': '1', 'content-type': 'application/json' }, body: '{}' }), res);
   assert.equal(res.statusCode, 405);
   assert.match(String(res.headers.allow || ''), /GET/);
 });
 
 await t.test('persona 路由：空 patch 返回 204 且不落盘', async () => {
-  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const res = fakeRes();
-  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-x-memory': '1' }, body: '{}' }), res);
+  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-soul-memory': '1' }, body: '{}' }), res);
   assert.equal(res.statusCode, 204);
 });
 
 await t.test('persona 路由：GET 响应禁缓存', async () => {
-  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const res = fakeRes();
-  await route.handler(fakeReq({ method: 'GET', headers: { host: '127.0.0.1:2300', 'x-dsh-x-memory': '1' } }), res);
+  await route.handler(fakeReq({ method: 'GET', headers: { host: '127.0.0.1:2300', 'x-dsh-soul-memory': '1' } }), res);
   assert.equal(res.statusCode, 200);
   assert.equal(String(res.headers['cache-control'] || '').toLowerCase(), 'no-store');
 });
@@ -493,24 +493,24 @@ await t.test('memory_read 认 [id].md 组合形式（归一化顺序）', async 
 });
 
 await t.test('persona 路由：preset 空串返回 400 且不落盘', async () => {
-  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const before = readPersona();
   const res = fakeRes();
-  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-x-memory': '1' }, body: JSON.stringify({ preset: '' }) }), res);
+  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-soul-memory': '1' }, body: JSON.stringify({ preset: '' }) }), res);
   assert.equal(res.statusCode, 400);
   assert.equal(readPersona().preset, before.preset);
 });
 
 await t.test('persona 路由：未知字段返回 400', async () => {
-  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const res = fakeRes();
-  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-x-memory': '1' }, body: JSON.stringify({ foo: 1 }) }), res);
+  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-soul-memory': '1' }, body: JSON.stringify({ foo: 1 }) }), res);
   assert.equal(res.statusCode, 400);
 });
 await t.test('persona 路由：坏 JSON 返回 400 而不是 500', async () => {
-  const route = ctx1.routes.find((r) => r.path === '/dsh-x-memory/persona');
+  const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const res = fakeRes();
-  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-x-memory': '1' }, body: '{not json' }), res);
+  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-soul-memory': '1' }, body: '{not json' }), res);
   assert.equal(res.statusCode, 400);
   assert.ok(!/Error/.test(String(res.body || '')), '不应回显异常');
 });

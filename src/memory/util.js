@@ -1,4 +1,4 @@
-// dsh-x-memory — 自建五层共用的底层工具
+// dsh-soul-memory — 自建五层共用的底层工具
 //
 // 为什么要单独一个目录：src/ 下其余 27 个文件是 dsh-soul 2.0.1 的逐字节镜像，
 // 升级上游时会整体覆盖 src/*.js。本插件自己写的模块（core-memory / persona /
@@ -364,10 +364,10 @@ async function snapshotMemoryLocked({ keep = 7 } = {}) {
       await writeFile(join(dest, '.complete'), new Date().toISOString(), 'utf8');
     } catch {
       failed.push('.complete');
-      console.error('dsh-x-memory: 完成标记写入失败，本次快照按不完整处理。');
+      console.error('dsh-soul-memory: 完成标记写入失败，本次快照按不完整处理。');
     }
   }
-  else console.error('dsh-x-memory: 快照不完整，未写完成标记：' + failed.join(', '));
+  else console.error('dsh-soul-memory: 快照不完整，未写完成标记：' + failed.join(', '));
   // 本轮正在写的目录必须保护起来：失败时它还没有 .complete，
   // 轮转若把它当残片删掉，就会出现「返回了目录、目录却不存在」。
   await rotateSnapshots(dir, keep, { protect: [dest] });
@@ -433,7 +433,7 @@ async function snapshotGraphLocked(db, keep, dir) {
   } catch (e) {
     await rm(tmp, { force: true }).catch(() => {});
     const msg = e && e.message ? e.message : String(e);
-    console.error('dsh-x-memory: 图谱快照失败：' + msg);
+    console.error('dsh-soul-memory: 图谱快照失败：' + msg);
     return { skipped: true, error: msg };
   }
 }

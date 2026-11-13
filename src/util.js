@@ -167,8 +167,8 @@ const HOST_INJECTED = [
   /^You are an AI agent powered by DeepSeek Harness/i,
   /^# 跨会话记忆/,
   /^# DSH 核心记忆/,
-  /^# 编码规范（dsh-x-memory）/,
-  /^# 踩过的坑（dsh-x-memory/,
+  /^# 编码规范（dsh-soul-memory）/,
+  /^# 踩过的坑（dsh-soul-memory/,
   /^## 最近归档记忆/,
 ]
 export const injected = text => {

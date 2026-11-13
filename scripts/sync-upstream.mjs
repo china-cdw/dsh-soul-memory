@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// dsh-x-memory 上游同步工具
+// dsh-soul-memory 上游同步工具
 //
-// 背景：dsh-x-memory 是 dsh-soul 的 fork。src/ 下大部分文件是上游逐字节镜像，
+// 背景：dsh-soul-memory 是 dsh-soul 的 fork。src/ 下大部分文件是上游逐字节镜像，
 // 只有少数几个是我们自己的（见 OUR_FILES）。升级上游时不能整目录覆盖，否则会
 // 把我们的四个模块和 index.js 的接线冲掉。
 //

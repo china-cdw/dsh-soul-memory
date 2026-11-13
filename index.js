@@ -24,7 +24,7 @@ import { registerCoreMemory, runDreaming, setDreamGenerator, setDreamNodeProvide
 import { snapshotGraph } from './src/memory/util.js'
 import { withNotes } from './src/tool-notes.js'
 
-export const name = 'dsh-x-memory'
+export const name = 'dsh-soul-memory'
 export const inject = ['tools', 'systemPrompt', 'commands']
 
 export function settings(input = {}) {
@@ -32,7 +32,7 @@ export function settings(input = {}) {
   const profileRaw = input.profile ?? process.env.DSH_PROFILE ?? profileMatch?.[1] ?? 'desktop'
   const profile = /^[a-zA-Z0-9_-]{1,80}$/.test(String(profileRaw)) ? String(profileRaw) : 'desktop'
   if (profile !== String(profileRaw)) {
-    console.error('[dsh-x-memory] profile 标识无效：' + String(profileRaw) + '，已回落 desktop；如需隔离请显式设置 profile 或 DSH_PROFILE')
+    console.error('[dsh-soul-memory] profile 标识无效：' + String(profileRaw) + '，已回落 desktop；如需隔离请显式设置 profile 或 DSH_PROFILE')
   }
 
   // `enabled` remains the legacy evolution switch; the explicit switch wins.
@@ -335,11 +335,11 @@ export function apply(ctx, input = {}) {
   try {
     store = new Store(config.database, { maxNodes: config.memory.maxNodes })
   } catch (e) {
-    console.error('dsh-x-memory: 图谱库打开失败，已降级为纯文件记忆（MEMORY.md / notes / 编码规范 / 踩坑记录仍可用）：' + (e?.message ?? e))
+    console.error('dsh-soul-memory: 图谱库打开失败，已降级为纯文件记忆（MEMORY.md / notes / 编码规范 / 踩坑记录仍可用）：' + (e?.message ?? e))
     return
   }
   // 图谱库也进每日快照：文件记忆有备份、图谱没有，等于一半记忆无副本。
-  snapshotGraph(store.db).catch((e) => console.error('dsh-x-memory: 图谱快照跳过（不影响使用）：' + (e?.message ?? e)))
+  snapshotGraph(store.db).catch((e) => console.error('dsh-soul-memory: 图谱快照跳过（不影响使用）：' + (e?.message ?? e)))
   // 闲时整理的输入：当前项目的会话图谱节点（只读；写盘仍走 memory_write 的同一套查重与锁）。
   setDreamNodeProvider((agent) => {
     if (!config.memory.enabled || !agent) return []
@@ -369,7 +369,7 @@ export function apply(ctx, input = {}) {
         if (changed) store.log({ scope, action: 'dream_retire', actor: 'system', detail: { count: changed, ids: ids.slice(0, 20) } })
       })
     } catch (e) {
-      console.error('dsh-x-memory: dreaming retire 失败：' + (e?.message ?? e))
+      console.error('dsh-soul-memory: dreaming retire 失败：' + (e?.message ?? e))
       return 0
     }
     return changed
@@ -387,7 +387,7 @@ export function apply(ctx, input = {}) {
         if (changed) store.log({ scope, action: 'dream_restore', actor: 'system', detail: { count: changed, ids: ids.slice(0, 20) } })
       })
     } catch (e) {
-      console.error('dsh-x-memory: dreaming restore 失败：' + (e?.message ?? e))
+      console.error('dsh-soul-memory: dreaming restore 失败：' + (e?.message ?? e))
       return 0
     }
     return changed
@@ -403,7 +403,7 @@ export function apply(ctx, input = {}) {
         .map(row => ({ id: row.id, kind: row.kind, text: row.claim, retiredAt: row.seen }))
       return { ok: true, rows }
     } catch (e) {
-      console.error('dsh-x-memory: 列出 retired 失败：' + (e?.message ?? e))
+      console.error('dsh-soul-memory: 列出 retired 失败：' + (e?.message ?? e))
       return { ok: false, reason: String((e && e.message) || e) }
     }
   }
@@ -659,7 +659,7 @@ export function apply(ctx, input = {}) {
               dreamTimer = null
               if (disposed) return
               runDreaming({ apply: true, trigger: 'idle', agent: { session } })
-                .catch(e => console.error('dsh-x-memory: 闲时整理失败（不影响使用）：' + (e?.message ?? e)))
+                .catch(e => console.error('dsh-soul-memory: 闲时整理失败（不影响使用）：' + (e?.message ?? e)))
             }, Math.max(10, config.dreaming.idleDelaySeconds) * 1000)
             dreamTimer.unref?.()
           }

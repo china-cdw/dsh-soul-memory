@@ -1,4 +1,4 @@
-// dsh-x-memory — 核心记忆层
+// dsh-soul-memory — 核心记忆层
 // 移植自 dsh-core-memory 1.0.1（MIT），并入 dsh-soul 底座后统一为一个插件。
 //
 // 布局（<dshHome>/memory/，默认 ~/.dsh/memory），与原插件完全一致，旧数据可直接复用：
@@ -80,7 +80,7 @@ const CORE_BUDGET = 3000;
 const TEMPLATE = [
   '# DSH 核心记忆',
   '',
-  '> 由 dsh-x-memory 插件维护，并注入每个会话的系统提示。保持精炼（建议 ' + CORE_BUDGET + ' 字内）。',
+  '> 由 dsh-soul-memory 插件维护，并注入每个会话的系统提示。保持精炼（建议 ' + CORE_BUDGET + ' 字内）。',
   '> 可用 memory_core 工具增删改，也可手工编辑（插件每次组装时同步读取，立即可见）。',
   '',
   '## 用户',
@@ -596,7 +596,7 @@ function renderSectionText() {
     ).join('\n');
     const persona = buildPersonaText();
     return [
-      '# 跨会话记忆（dsh-x-memory）',
+      '# 跨会话记忆（dsh-soul-memory）',
       '',
       '你在本机的所有会话共享以下持久记忆。核心记忆常驻注入；归档记忆仅列索引，用 memory_search / memory_read 按需取用。',
       '会话过程记忆（约束、决策、产物、历史原文）由同一插件的 soul_recall 检索，两者互补。',
@@ -1244,8 +1244,8 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     });
     // 索引与 notes/ 对账：补齐外部新增、标记文件缺失、收口墓碑。
     try { await reconcileIndex(); } catch { /* 对账失败不阻塞启动 */ }
-    try { await snapshotMemory(); } catch (e) { console.error('dsh-x-memory: 启动快照失败（不影响读写）：' + (e?.message ?? e)) }
-  }).catch((e) => console.error('dsh-x-memory: bootstrap failed', e));
+    try { await snapshotMemory(); } catch (e) { console.error('dsh-soul-memory: 启动快照失败（不影响读写）：' + (e?.message ?? e)) }
+  }).catch((e) => console.error('dsh-soul-memory: bootstrap failed', e));
 
   const defs = [
     {
@@ -1442,7 +1442,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
   }
 
   if (core) ctx.systemPrompt.section({
-    name: 'dsh-x-memory:recall',
+    name: 'dsh-soul-memory:recall',
     order: 60,
     // 记忆正文可能包含 {{...}}；关掉模板插值，避免用户内容被当成提示模板执行。
     interpolate: false,
@@ -1453,7 +1453,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
   if (core) ctx.inject(['webServer'], (c) => {
     c.effect(() => c.webServer.register({
       kind: 'exact',
-      path: '/dsh-x-memory/persona',
+      path: '/dsh-soul-memory/persona',
       async handler(req, res) {
         const sendJson = (code, payload) => {
           try {
@@ -1490,7 +1490,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             if (!sameOrigin) { sendJson(403, { error: '跨源请求被拒绝' }); return; }
           }
           // 同源页面必须带自定义请求头：跨站表单/链接无法伪造，且会触发 CORS 预检，挡住跨源读取。
-          if (String(req.headers['x-dsh-x-memory'] || '') !== '1') {
+          if (String(req.headers['x-dsh-soul-memory'] || '') !== '1') {
             sendJson(403, { error: '缺少 X-DSH-X-Memory: 1 请求头' });
             return;
           }
@@ -1540,26 +1540,26 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
           sendJson(200, { persona: readPersona(), presets: listPresets(), maxCustom: MAX_CUSTOM_TEXT });
         } catch (error) {
           // 校验失败是 400；写盘失败/内部异常必须 500，否则设置页会把"服务器写不进去"显示成"参数不对"。
-          console.error('dsh-x-memory: 风格接口内部错误', error);
+          console.error('dsh-soul-memory: 风格接口内部错误', error);
           sendJson(500, { error: '服务器内部错误：' + ((error && error.message) ? error.message : String(error)) });
         }
       },
-    }), 'dsh-x-memory: persona settings route');
+    }), 'dsh-soul-memory: persona settings route');
   });
 
   // 编码规范层：独立的 section（order 61），与 MEMORY.md 的预算互不挤占。
   try {
     registerCodingRules(ctx, coding ?? {});
   } catch (e) {
-    console.error('dsh-x-memory: 编码规范层注册失败', e);
+    console.error('dsh-soul-memory: 编码规范层注册失败', e);
   }
 
   // 自动踩坑记录：工具报错后同会话恢复时记一条，注入 order 62 的 section。
   try {
     registerLessons(ctx, lessons ?? {});
   } catch (e) {
-    console.error('dsh-x-memory: 踩坑记录层注册失败', e);
+    console.error('dsh-soul-memory: 踩坑记录层注册失败', e);
   }
 
-  console.log('dsh-x-memory: 核心记忆层已激活，记忆库 ' + memoryPath());
+  console.log('dsh-soul-memory: 核心记忆层已激活，记忆库 ' + memoryPath());
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// dsh-x-memory — 发布前扫描
+// dsh-soul-memory — 发布前扫描
 //
 // 目标：在 npm publish / GitHub 发布前，把不该离开本机的东西拦下来。
 // 四类：私钥块、凭据形状、绝对家目录、超长高熵块。

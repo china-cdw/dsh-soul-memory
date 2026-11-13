@@ -1,6 +1,6 @@
 - insert:
-    - id: dsh-x-memory
-      name: dsh-x-memory
+    - id: dsh-soul-memory
+      name: dsh-soul-memory
       inject: [tools, systemPrompt, commands]
       config:
         # 演化（自改 harness）默认关闭；记忆层默认开启。

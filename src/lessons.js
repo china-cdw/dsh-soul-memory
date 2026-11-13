@@ -136,7 +136,7 @@ export function buildLessonsText(rows, { budget = DEFAULT_BUDGET, limit = 6 } = 
   const merged = mergeRows(rows).slice(0, limit);
   if (!merged.length) return '';
   const head = [
-    '# 踩过的坑（dsh-x-memory 自动记录）',
+    '# 踩过的坑（dsh-soul-memory 自动记录）',
     '',
     '同一次会话里，某条命令报错后同类调用恢复，就会记在这里。只是线索，不一定精确；确认可长期复用的，可以用 coding_rules action=add 固化成规则。',
     '',
@@ -293,7 +293,7 @@ export function registerLessons(ctx, options = {}) {
   };
   refresh();
   const section = ctx.systemPrompt.section({
-    name: 'dsh-x-memory:lessons',
+    name: 'dsh-soul-memory:lessons',
     order: 62,
     // 记录正文来自工具报错，可能含 {{...}}；按纯文本注入，不做模板插值。
     interpolate: false,
@@ -449,7 +449,7 @@ export function registerLessons(ctx, options = {}) {
       const ok = call.args ? call.args : '';
       enqueue(() => appendRow({ fp: pending.fp, tool: call.name, error: pending.error, ok, at: now, session: sid }))
         .then(refresh)
-        .catch((e) => console.error('dsh-x-memory: 记录踩坑失败：' + (e?.message ?? e)));
+        .catch((e) => console.error('dsh-soul-memory: 记录踩坑失败：' + (e?.message ?? e)));
     } catch {
       /* 自动记录不能影响主流程 */
     }

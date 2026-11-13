@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /** 建一个临时 DSH_HOME 并切过去；返回 { dir, cleanup }。 */
-export async function makeHome(prefix = 'dsh-x-memory-test-') {
+export async function makeHome(prefix = 'dsh-soul-memory-test-') {
   const dir = await mkdtemp(join(tmpdir(), prefix));
   process.env.DSH_HOME = dir;
   return {

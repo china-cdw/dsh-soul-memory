@@ -127,9 +127,9 @@ dsh plugin --profile desktop add "$PWD"
 Restart DSH (or toggle the bundle off and on to hot-reload). The system prompt should then contain:
 
 ```
-# 跨会话记忆（dsh-x-memory）
-# 编码规范（dsh-x-memory）
-# 踩过的坑（dsh-x-memory 自动记录）   ← only when there are notes
+# 跨会话记忆（dsh-soul-memory）
+# 编码规范（dsh-soul-memory）
+# 踩过的坑（dsh-soul-memory 自动记录）   ← only when there are notes
 ```
 
 To verify, call `memory_brief`: it reports core-memory size, archived note count, persona, snapshots, graph size and billion-context status. To write your first memory immediately, use `memory_core` with `append`.
@@ -164,7 +164,7 @@ Mistake notes are captured automatically: within one session, if a tool errors a
 
 ### Settings route
 
-The style settings page calls the local route `/dsh-x-memory/persona` over same-origin `fetch` (registered only when the host provides `webServer`):
+The style settings page calls the local route `/dsh-soul-memory/persona` over same-origin `fetch` (registered only when the host provides `webServer`):
 
 - `GET` returns `{ persona, presets, maxCustom }`;
 - every request (GET included) must carry the custom header `X-DSH-X-Memory: 1`: cross-site forms and links cannot forge it, and the browser sends a CORS preflight first, which blocks unapproved cross-origin reads;
@@ -263,7 +263,7 @@ Three granularities are supported: `relative/path`, `relative/path:line`, `relat
 They are not the same kind of tool and don't compete:
 
 - **billion-context** handles "one session doesn't fit" — it compresses consumed conversation and lets the model decompress when needed;
-- **dsh-x-memory** handles "you can't remember across sessions" — it keeps what should survive in the system prompt and on local disk.
+- **dsh-soul-memory** handles "you can't remember across sessions" — it keeps what should survive in the system prompt and on local disk.
 
 The bridge does exactly one thing: it folds billion-context's compressed session summaries **read-only** into `memory_search`. It keeps managing compression; the memory layer never writes to it or depends on its internal format (unknown formats are skipped).
 
@@ -274,7 +274,7 @@ Running both does not hurt prefix caching: memory travels in the system prompt, 
 ## Upgrading
 
 1. Update the source in the plugin directory (`git pull` or install a new version);
-2. After changing the source, sync the installed copy: run `plugin_manager set_bundle dsh-x-memory=false`, then `node <workspace>/sync-install.mjs`, then `set_bundle ... =true` to hot-reload;
+2. After changing the source, sync the installed copy: run `plugin_manager set_bundle dsh-soul-memory=false`, then `node <workspace>/sync-install.mjs`, then `set_bundle ... =true` to hot-reload;
 3. Your data is untouched: `$DSH_HOME/memory` and the graph database stay as they are, and the previous day's snapshot in `.snapshots/` is available for rollback.
 
 ## Upstream and syncing

@@ -38,7 +38,7 @@ export async function readDreamingState() {
       // 读不出来（占用/权限/IO）也要留副本：否则下一轮写回会以默认值为底，静默重置用户开关。
       await copyFile(dreamingStatePath(), dreamingStatePath() + '.bad-' + Date.now()).catch(() => {})
       await pruneBadBackups()
-      console.error('dsh-x-memory: 读取 DREAMING.json 失败，已备份并按默认值处理：' + ((e && e.message) || e))
+      console.error('dsh-soul-memory: 读取 DREAMING.json 失败，已备份并按默认值处理：' + ((e && e.message) || e))
       return { ...DREAMING_DEFAULTS, configured: false, corrupt: true }
     }
     return { ...DREAMING_DEFAULTS, configured: false, corrupt: false }
@@ -57,7 +57,7 @@ export async function readDreamingState() {
     // 文件损坏时先留副本：否则下一轮写回会以默认值为底，静默重置 enabled/lastRunAt/lastResult。
     await copyFile(dreamingStatePath(), dreamingStatePath() + '.bad-' + Date.now()).catch(() => {})
     await pruneBadBackups()
-    console.error('dsh-x-memory: DREAMING.json 解析失败，已备份为 .bad 并按默认值处理：' + ((e && e.message) || e))
+    console.error('dsh-soul-memory: DREAMING.json 解析失败，已备份为 .bad 并按默认值处理：' + ((e && e.message) || e))
     return { ...DREAMING_DEFAULTS, configured: false, corrupt: true }
   }
 }

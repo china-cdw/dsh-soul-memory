@@ -15,7 +15,7 @@ const projectDir = join(home.dir, 'project');
 await t.test('注册 section：order 61 且 interpolate:false', async () => {
   const { ctx, sections } = makeCtx();
   registerCodingRules(ctx, { budget: 2000 });
-  const section = sections.find((s) => s.name === 'dsh-x-memory:coding');
+  const section = sections.find((s) => s.name === 'dsh-soul-memory:coding');
   assert.ok(section);
   assert.equal(section.order, 61);
   assert.equal(section.interpolate, false);

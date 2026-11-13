@@ -1,4 +1,4 @@
-// dsh-x-memory ↔ billion-context 桥接层
+// dsh-soul-memory ↔ billion-context 桥接层
 //
 // 只读、永不写 billion-context 的数据；解析失败一律降级为空，绝不影响记忆层。
 //

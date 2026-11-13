@@ -1,9 +1,15 @@
 # 变更日志
 
+## 0.3.43
+
+- 彻底改名：包名、patch id、源码目录、安装副本目录、profile 依赖与 pnpm 锁文件全部改为 `dsh-soul-memory`；旧名只保留在历史记录里。
+- 显示名与 GitHub 仓库已在 0.3.42 改为 `dsh-soul-memory`，本次补齐包与安装标识。
+- 161 断言全绿。
+
 ## 0.3.42
 
 - 显示名改为 `dsh-soul-memory`（`locale/zh.json`、`locale/en.json` 的 `meta.title`），描述同步改成实际能力，不再沿用旧的「独立 Evolve」文案；
-- 仓库改名为 `china-cdw/dsh-soul-memory`，`package.json` 的 homepage / repository / bugs 与两份 README 的克隆地址同步更新；包名与安装名仍为 `dsh-x-memory`；
+- 仓库改名为 `china-cdw/dsh-soul-memory`，`package.json` 的 homepage / repository / bugs 与两份 README 的克隆地址同步更新；包名与安装名当时仍为 `dsh-x-memory`（0.3.43 起已全部改名）；
 - 自检 161 断言全过（只改显示文案与链接）。
 
 ## 0.3.41

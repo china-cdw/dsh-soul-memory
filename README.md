@@ -127,9 +127,9 @@ dsh plugin --profile desktop add "$PWD"
 装完后重启 DSH（或把 bundle 关掉再打开，会热重载），系统提示里应出现：
 
 ```
-# 跨会话记忆（dsh-x-memory）
-# 编码规范（dsh-x-memory）
-# 踩过的坑（dsh-x-memory 自动记录）   ← 有记录时才出现
+# 跨会话记忆（dsh-soul-memory）
+# 编码规范（dsh-soul-memory）
+# 踩过的坑（dsh-soul-memory 自动记录）   ← 有记录时才出现
 ```
 
 验证：在会话里调用 `memory_brief`，应看到核心记忆大小、归档条数、风格、快照、图谱规模、billion-context 状态。想立刻写第一条记忆，用 `memory_core` 的 `append`。
@@ -164,7 +164,7 @@ dsh plugin --profile desktop add "$PWD"
 
 ### 设置页接口
 
-风格设置页通过同源 `fetch` 调用本机路由 `/dsh-x-memory/persona`（只在宿主提供 `webServer` 时注册）：
+风格设置页通过同源 `fetch` 调用本机路由 `/dsh-soul-memory/persona`（只在宿主提供 `webServer` 时注册）：
 
 - `GET` 返回 `{ persona, presets, maxCustom }`；
 - 所有请求（含 GET）必须带自定义请求头 `X-DSH-X-Memory: 1`：跨站表单/链接伪造不了这个头，浏览器还会先发 CORS 预检，挡住了未经允许的跨源读取；
@@ -263,7 +263,7 @@ npm run preflight
 两者不是同类，也不抢活：
 
 - **billion-context** 管「一次会话装不下」——压缩已消耗的对话，模型需要时可解压；
-- **dsh-x-memory** 管「跨会话记不住」——把该长期保留的东西放在系统提示和本地库里。
+- **dsh-soul-memory** 管「跨会话记不住」——把该长期保留的东西放在系统提示和本地库里。
 
 桥接只做一件事：把它的会话压缩摘要**只读**并入 `memory_search`。它继续管它的压缩，记忆层不介入、不改写、不依赖它的内部格式（格式不认识就跳过）。
 
@@ -274,7 +274,7 @@ npm run preflight
 ## 升级
 
 1. 在插件目录更新源码（`git pull` 或安装新版本）；
-2. 改完源码后同步安装副本：先 `plugin_manager set_bundle dsh-x-memory=false`，再跑 `node <workspace>/sync-install.mjs`，最后 `set_bundle ... =true` 热重载；
+2. 改完源码后同步安装副本：先 `plugin_manager set_bundle dsh-soul-memory=false`，再跑 `node <workspace>/sync-install.mjs`，最后 `set_bundle ... =true` 热重载；
 3. 数据不会动：`$DSH_HOME/memory` 与图谱库保持原样，升级前一天的快照在 `.snapshots/` 里可回退。
 
 ## 上游与同步

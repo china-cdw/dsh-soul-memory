@@ -36,7 +36,7 @@ registerLessons(ctx, { budget: 600 });
 const fire = (type, data, session = 's1') => handlers.get('session/event')({ id: session }, { type, data });
 
 await t.test('注册 section：order 62 且 interpolate:false', async () => {
-  const section = sections.find((s) => s.name === 'dsh-x-memory:lessons');
+  const section = sections.find((s) => s.name === 'dsh-soul-memory:lessons');
   assert.ok(section);
   assert.equal(section.order, 62);
   assert.equal(section.interpolate, false);
