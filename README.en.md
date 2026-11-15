@@ -7,8 +7,8 @@
 One plugin gives you: a resident core memory, searchable archived notes, a session knowledge graph, automatic mistake notes, project coding conventions, and the ability to recover old session details from billion-context summaries. Every layer has its own budget and its own switch, so they never crowd each other out.
 
 - Requirements: Node.js ≥ 24, DSH ≥ 0.2.1-rc.2
-- License: MIT
-- Built on [dsh-soul](https://github.com/icyaaaww/dsh-soul) 2.0.1, with the core-memory layer ported from dsh-core-memory 1.0.1 (both MIT). See "Credits" below.
+- License: AGPL-3.0-or-later (closed-source commercial use requires a commercial license — see "Credits and license" below)
+- Built on [dsh-soul](https://github.com/icyaaaww/dsh-soul) 2.0.1, with the core-memory layer ported from dsh-core-memory 1.0.1 (both MIT; notices retained in [NOTICE](NOTICE)).
 
 ---
 
@@ -332,10 +332,17 @@ The checks ship in `scripts/`: 85 core assertions, 14 coding, 15 mistake notes, 
 
 ## Credits and license
 
-MIT License.
+This project is dual-licensed: **AGPL-3.0-or-later + commercial license**.
+
+- **Free use**: use, modify and distribute under the [GNU AGPL-3.0](LICENSE). Any modified version must be released under the same AGPL-3.0 — including when you do not ship a binary but only offer it to others as a network service — and must keep this project's copyright notice. The practical test: if you serve it to others, you owe those users the source under AGPL.
+- **Closed-source commercial use**: closed-source integration, closed-source distribution and closed-source SaaS require a commercial license first. Apply by opening an [issue](https://github.com/china-cdw/dsh-soul-memory/issues) stating your company, product and intended use. A commercial license changes only the terms, not the code — you do not have to open-source your modifications.
+- **Earlier releases**: versions published before 0.3.51 were MIT and cannot be revoked; AGPL-3.0 applies from 0.3.51 onward.
+
+Upstream and third parties:
 
 - Base: [icyaaaww/dsh-soul](https://github.com/icyaaaww/dsh-soul) 2.0.1 (MIT) — session graph, projection, compaction backend;
 - Core-memory layer ported from dsh-core-memory 1.0.1 (MIT) — `MEMORY.md`, archived notes, persona;
+- The upstreams remain MIT; their copyright and permission notices are retained in [NOTICE](NOTICE);
 - Design inspiration from two open-source projects (no code copied):
   - [NattoCB/dsh-plugin-memory](https://github.com/NattoCB/dsh-plugin-memory): layering, index/detail separation, truncation budgets;
   - [dearbld/dsh-living-memory](https://github.com/dearbld/dsh-living-memory): conflict supersede markers, data-driven guard rules, pre-publish scanning, snapshot rotation;

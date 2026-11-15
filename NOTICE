@@ -1,0 +1,46 @@
+dsh-soul-memory — 上游与第三方声明 / Upstream and third-party notices
+==========================================================================
+
+本项目自 0.3.51 起以 GNU Affero General Public License v3.0 或更新版本
+（AGPL-3.0-or-later）发布，另提供商业授权（申请方式见 README「致谢与许可」）。
+AGPL 完整原文见 LICENSE。
+
+本项目包含源于下列 MIT 许可项目的代码与衍生部分。MIT 许可要求在所有副本或
+实质性部分中保留原始版权声明与本许可声明；这些声明在下方保留，并继续约束
+来自这些上游的代码。
+
+This project is distributed under the GNU Affero General Public License v3.0
+or later (AGPL-3.0-or-later) starting from 0.3.51, with a commercial license
+available (see "Credits and license" in README). The full AGPL text is in
+LICENSE.
+
+This project contains code derived from the MIT-licensed projects below. The
+MIT license requires the copyright notice and this permission notice to be
+included in all copies or substantial portions of the Software. They are
+preserved below and continue to govern the upstream code.
+
+----------------------------------------------------------------------
+MIT License — 上游项目 / upstream projects
+----------------------------------------------------------------------
+
+Copyright (c) 2026 icyaaaww (dsh-soul 2.0.1 — https://github.com/icyaaaww/dsh-soul)
+Copyright (c) 2026 the dsh-core-memory authors (dsh-core-memory 1.0.1, MIT)
+Copyright (c) 2026 china-cdw (dsh-x-memory — https://github.com/china-cdw/dsh-x-memory)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -1,5 +1,11 @@
 # 变更日志
 
+## 0.3.51
+
+- 协议从 MIT 改为 **AGPL-3.0-or-later + 商业授权** 双轨：修改后分发、或以网络服务形式提供给别人使用，都必须同样以 AGPL-3.0 开源；闭源商用需先取得商业授权（申请方式写进 README）。0.3.51 之前以 MIT 发布的版本不可撤回，不受影响。
+- 新增 `NOTICE`：保留上游 dsh-soul 2.0.1、dsh-core-memory 1.0.1、dsh-x-memory 的 MIT 版权与许可原文 —— MIT 要求保留，换协议后这些声明继续约束上游代码。
+- `package.json` 的 `license` 改为 `AGPL-3.0-or-later`，`files` 补 `NOTICE`；中英 README 的「致谢与许可」整节重写。
+
 ## 0.3.50
 
 - 编码规范注入上限可由用户在设置页自填：灵魂记忆 → 规则顶部新增「注入上限」输入框（400–8000 字，步进 100），留空 = 跟随宿主 `coding.budget`；写入 `memory/SOUL-UI.json` 的 `rulesBudget`，改动下一轮组装生效。

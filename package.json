@@ -1,8 +1,8 @@
 {
   "name": "dsh-soul-memory",
-  "version": "0.3.50",
+  "version": "0.3.51",
   "description": "DSH 分层记忆：核心记忆常驻 + 归档笔记 + 踩坑记录 + 编码规范 + 会话图谱 + billion-context 摘要桥接",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "author": "china-cdw",
   "homepage": "https://github.com/china-cdw/dsh-soul-memory#readme",
   "repository": {
@@ -56,6 +56,7 @@
     "README.en.md",
     "README.md",
     "LICENSE",
+    "NOTICE",
     "CHANGELOG.md"
   ],
   "keywords": [

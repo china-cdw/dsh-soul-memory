@@ -7,8 +7,8 @@
 只装这一个插件，就能同时得到：常驻核心记忆、可检索的归档笔记、会话过程图谱、自动踩坑记录、项目编码规范，以及从 billion-context 会话摘要里找回旧过程的能力。每一层都有独立预算和独立开关，互不挤占。
 
 - 运行要求：Node.js ≥ 24，DSH ≥ 0.2.1-rc.2
-- 许可证：MIT
-- 来源：以 [dsh-soul](https://github.com/icyaaaww/dsh-soul) 2.0.1 为底座，移植 dsh-core-memory 1.0.1 的核心记忆层（两者均 MIT），详见文末「致谢」
+- 许可证：AGPL-3.0-or-later（闭源商用需商业授权，见文末「致谢与许可」）
+- 来源：以 [dsh-soul](https://github.com/icyaaaww/dsh-soul) 2.0.1 为底座，移植 dsh-core-memory 1.0.1 的核心记忆层（上游均为 MIT，声明保留在 [NOTICE](NOTICE)）
 
 ---
 
@@ -332,10 +332,17 @@ npm test          # 全部自检脚本；任何一项失败即非零退出
 
 ## 致谢与许可
 
-MIT License。
+本项目采用 **AGPL-3.0-or-later + 商业授权** 双轨：
+
+- **免费用**：遵守 [GNU AGPL-3.0](LICENSE) 即可使用、修改、分发。修改后的版本必须以同样的 AGPL-3.0 开源 —— 包括不发布二进制、只以网络服务形式提供给别人使用的情况 —— 并保留本项目的版权声明。想立刻核对这一点：你改过的代码如果对外提供了服务，就要把源码按 AGPL 提供给使用者。
+- **闭源商用**：不想承担 AGPL 开源义务的商用场景（闭源集成、闭源分发、闭源 SaaS），需先取得商业授权。申请方式：在 [Issues](https://github.com/china-cdw/dsh-soul-memory/issues) 开一条，写明公司 / 产品 / 使用方式。商业授权只改许可条款，代码与开源版完全相同，取得后无需开源你的修改。
+- **历史版本**：0.3.51 之前以 MIT 发布的版本不可撤回，仍按 MIT 授权；AGPL-3.0 自 0.3.51 起生效。
+
+上游与第三方：
 
 - 底座来自 [icyaaaww/dsh-soul](https://github.com/icyaaaww/dsh-soul) 2.0.1（MIT）：会话图谱、投影、压缩后端；
 - 核心记忆层移植自 dsh-core-memory 1.0.1（MIT）：`MEMORY.md`、归档笔记、persona；
+- 上述上游仍为 MIT，其版权与许可原文保留在 [NOTICE](NOTICE)；
 - 设计上借鉴了两个开源项目（未复制代码）：
   - [NattoCB/dsh-plugin-memory](https://github.com/NattoCB/dsh-plugin-memory)：分层、索引与详情分离、截断预算；
   - [dearbld/dsh-living-memory](https://github.com/dearbld/dsh-living-memory)：冲突取代标记、守卫规则数据化、发布前扫描、快照轮转；
