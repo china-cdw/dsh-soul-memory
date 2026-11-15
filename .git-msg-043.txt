@@ -1,9 +1,0 @@
-fix: finish the remaining review findings (0.4.3)
-
-- split the recall label into match (quote/literal/spread/graph) and share (Jaccard)
-- spans carry match=quote; bm25 negated so all scores read larger-is-better
-- recordLookup no longer writes anchors from external transcript line numbers
-- persist the UI write token so a hot reload stops 403-ing every write
-- rules usage reads the host budget instead of the module default
-- memory_backup file rejects paths with a clear message
-- document due inversion, low-tier maxImportance, unawaited turn log
