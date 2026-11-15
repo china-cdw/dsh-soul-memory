@@ -19,6 +19,7 @@ import { readPersona, listPresets, MAX_CUSTOM_TEXT } from './persona.js';
 import { GC_DEFAULTS, tierCounts, collectionCandidates } from './tiering.js';
 import { memoryPath } from './memory/util.js';
 import { readDreamingState, writeDreamingState, withDreamingRunLock } from './dreaming.js';
+import { readTurns } from './turnlog.js';
 
 const PREFIX = '/dsh-soul-memory/';
 const BODY_LIMIT = 64 * 1024; // 待批批量操作与规则预览；与 persona 的 16KB 不同是有意的（批量批准）。
@@ -311,6 +312,50 @@ function healthOf(store, tiers, usage, pendingCount) {
  * @param {object} ctx Cordis 上下文（已确认 webServer 可用）
  * @param {{ store?: object }} deps
  */
+/**
+ * 记忆内容只读快照：归档笔记（标题 + 字数）、踩坑条数、最近几天的回合日志。
+ * 页面只负责「让人看见记住了什么」；写入和删除仍走模型工具，避免第二个写源。
+ */
+async function memoriesOf() {
+  const notes = [];
+  try {
+    for (const name of readdirSync(memoryPath('notes'))) {
+      if (!name.endsWith('.md')) continue;
+      const text = readFileSync(join(memoryPath('notes'), name), 'utf8');
+      // 笔记头是 front matter，标题在 title: 行；没有才退回一级标题或文件名。
+      const titleLine = text.split('\n').find((line) => /^title:\s*\S/.test(line)) || '';
+      const heading = text.split('\n').find((line) => line.startsWith('# ')) || '';
+      const fallback = name.replace(/\.md$/, '');
+      notes.push({
+        id: fallback,
+        title: titleLine
+          ? titleLine.replace(/^title:\s*/, '').trim()
+          : heading ? heading.replace(/^#\s*/, '').trim() : fallback,
+        chars: text.length,
+      });
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') console.error('dsh-soul-memory: 读取归档笔记失败', error);
+  }
+  notes.sort((a, b) => b.chars - a.chars);
+
+  let lessons = 0;
+  try {
+    lessons = readFileSync(memoryPath('LESSONS.jsonl'), 'utf8').split('\n').filter((line) => line.trim()).length;
+  } catch { /* 还没有记录就是 0 */ }
+
+  let journal = [];
+  try {
+    journal = await readTurns({ days: 5 });
+  } catch { journal = []; }
+
+  return {
+    notes: notes.slice(0, 200),
+    lessons,
+    journal: journal.map((entry) => ({ name: entry.name.replace(/\.md$/, ''), text: entry.text })),
+  };
+}
+
 export function registerSoulUiRoutes(ctx, deps = {}) {
   const store = deps.store || null;
   const budget = deps.budget ?? null;
@@ -571,6 +616,25 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
         sendJson(res, 200, { ok: true, dreaming: { enabled: !!next.enabled } });
       } catch (error) {
         console.error('dsh-soul-memory: 闲时整理开关失败', error);
+        sendJson(res, 500, { error: '服务器内部错误，详情见宿主日志' });
+      }
+    },
+  }));
+
+  // GET /dsh-soul-memory/memories —— 记忆内容只读快照
+  disposers.push(route({
+    kind: 'exact',
+    path: PREFIX + 'memories',
+    async handler(req, res) {
+      try {
+        if (!guard(req, res, false)) return;
+        if (req.method !== 'GET') {
+          sendJson(res, 405, { error: '该接口只支持 GET' });
+          return;
+        }
+        sendJson(res, 200, await memoriesOf());
+      } catch (error) {
+        console.error('dsh-soul-memory: 读取记忆内容失败', error);
         sendJson(res, 500, { error: '服务器内部错误，详情见宿主日志' });
       }
     },

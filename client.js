@@ -22,13 +22,13 @@ window.__ModuleLoader__.load({
 .dsm-page{display:flex;flex-direction:column;gap:18px;padding:24px 28px 40px;max-width:920px}
 .dsm-h1{margin:0;font-size:18px;font-weight:600;letter-spacing:.2px}
 .dsm-sub{margin:0;color:var(--dsw-alias-label-tertiary);font-size:12px}
-.dsm-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
-.dsm-tabs{display:flex;gap:4px;padding:3px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-2);align-self:flex-start}
+.dsm-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.dsm-tabs{display:flex;flex-wrap:wrap;gap:4px;padding:3px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-2);align-self:flex-start}
 .dsm-tab{border:0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;padding:6px 12px;border-radius:var(--dsw-radius-sm);cursor:pointer}
 .dsm-tab[data-active="1"]{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);box-shadow:0 1px 2px rgba(0,0,0,.08)}
-.dsm-card{border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-1);padding:16px 18px}
-.dsm-card h3{margin:0 0 4px;font-size:13px;font-weight:600}
-.dsm-card p.dsm-hint{margin:0 0 14px;color:var(--dsw-alias-label-tertiary);font-size:12px}
+.dsm-card{border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-1);padding:16px 20px}
+.dsm-card h3{margin:0 0 6px;font-size:14px;font-weight:600}
+.dsm-card p.dsm-hint{margin:0 0 12px;color:var(--dsw-alias-label-tertiary);font-size:12px}
 /* 三个形态是单选组：纵向排列，说明不会被 200px 窄列压成三行，也不会出现 2+1 的孤行。 */
 .dsm-modes{display:flex;flex-direction:column;gap:8px}
 .dsm-mode{display:flex;gap:10px;align-items:flex-start;text-align:left;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-base);padding:12px;cursor:pointer;font:inherit;color:inherit}
@@ -41,27 +41,28 @@ window.__ModuleLoader__.load({
 .dsm-mode-cost{display:block;color:var(--dsw-alias-label-secondary);font-size:11px;margin-top:3px}
 .dsm-count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:500;vertical-align:1px}
 .dsm-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
-.dsm-item{border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);padding:12px 14px;background:var(--dsw-alias-bg-base)}
+.dsm-item{border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);padding:12px 16px;background:var(--dsw-alias-bg-base)}
 .dsm-item-top{display:flex;gap:10px;align-items:flex-start}
-.dsm-item-text{flex:1;font-size:12px;white-space:pre-wrap;word-break:break-word}
-.dsm-meta{margin-top:6px;color:var(--dsw-alias-label-tertiary);font-size:11px;display:flex;flex-wrap:wrap;gap:10px}
-.dsm-meta em{font-style:normal;color:var(--dsw-alias-label-secondary)}
+.dsm-item-text{flex:1;min-width:0;font-size:12px;white-space:pre-wrap;word-break:break-word}
+.dsm-meta{margin-top:6px;color:var(--dsw-alias-label-secondary);font-size:11px;display:flex;flex-wrap:wrap;gap:10px;overflow-wrap:anywhere}
+.dsm-meta em{font-style:normal;color:var(--dsw-alias-label-primary)}
 .dsm-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.dsm-btn{border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:5px 12px;border-radius:var(--dsw-radius-sm);cursor:pointer}
+.dsm-btn{border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;height:28px;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;padding:0 12px;border-radius:var(--dsw-radius-sm);cursor:pointer}
 .dsm-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsm-btn[data-tone="primary"]{background:var(--dsw-alias-button-primary-fill);border-color:transparent;color:var(--dsw-alias-label-on-color)}
 .dsm-btn[data-tone="primary"]:hover{background:var(--dsw-alias-button-primary-hover)}
 .dsm-btn[data-tone="danger"]{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-border-l3)}
 .dsm-btn[data-tone="ghost"]{border-color:transparent;background:transparent;color:var(--dsw-alias-label-secondary)}
-.dsm-btn:disabled{opacity:.5;cursor:default}
+.dsm-btn:disabled{opacity:.55;cursor:default;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);border-color:transparent}
 .dsm-empty{color:var(--dsw-alias-label-tertiary);font-size:12px;padding:18px;text-align:center;border:1px dashed var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md)}
-.dsm-input,.dsm-textarea{width:100%;box-sizing:border-box;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);padding:7px 10px}
+.dsm-input,.dsm-textarea{width:100%;box-sizing:border-box;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);padding:5px 10px}
+.dsm-input{height:28px}
 .dsm-input:focus,.dsm-textarea:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
 .dsm-textarea{min-height:96px;resize:vertical;line-height:1.6}
 .dsm-label{display:block;font-size:12px;font-weight:600;margin-bottom:6px}
 .dsm-field{display:flex;flex-direction:column;gap:6px;margin-bottom:16px}
 .dsm-field-label{font-size:12px;color:var(--dsw-alias-label-secondary)}
-.dsm-modal-mask{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.34)}
+.dsm-modal-mask{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--dsw-alias-bg-mask-1)}
 .dsm-modal{width:min(720px,100%);max-height:min(82vh,760px);overflow:auto;padding:20px 22px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm,8px);box-shadow:0 18px 48px rgba(0,0,0,.24)}
 .dsm-modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
 .dsm-modal-title{margin:0;font-size:15px;font-weight:600;color:var(--dsw-alias-label-primary)}
@@ -73,27 +74,31 @@ window.__ModuleLoader__.load({
 .dsm-preset span{display:block;color:var(--dsw-alias-label-tertiary);font-size:11px;margin-top:2px}
 .dsm-tiers{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
 .dsm-tier{border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);padding:12px 14px;background:var(--dsw-alias-bg-base)}
-.dsm-tier b{display:block;font-size:20px;font-weight:600;line-height:1.2}
+.dsm-tier b{display:block;font-size:18px;font-weight:600;line-height:1.2}
 .dsm-tier span{font-size:11px;color:var(--dsw-alias-label-tertiary)}
-.dsm-rules{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;white-space:pre-wrap;word-break:break-word;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);padding:12px 14px;margin:0;max-height:420px;overflow:auto}
-.dsm-meter{height:6px;border-radius:999px;background:rgba(127,127,127,.18);overflow:hidden;margin:8px 0 10px}
-.dsm-budget{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 4px}
-.dsm-budget-input{width:104px;padding:4px 8px;font-size:12px}.dsm-meter-fill{height:100%;border-radius:999px;background:var(--dsw-alias-accent-1,#4c8dff);transition:width .2s ease}
-.dsm-meter-fill[data-warn="1"]{background:#e0a100}
+.dsm-rules{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;white-space:pre-wrap;word-break:break-word;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);padding:12px 14px;margin:0;max-height:420px;overflow:auto}
+.dsm-meter{height:6px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);overflow:hidden;margin:8px 0 10px}
+.dsm-budget{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}
+.dsm-budget-input{width:88px;padding:4px 8px;font-size:12px}.dsm-meter-fill{height:100%;border-radius:999px;background:var(--dsw-alias-accent-1,#4c8dff);transition:width .2s ease}
+.dsm-meter-fill[data-warn="1"]{background:var(--dsw-alias-state-warning-primary)}
 .dsm-mute{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
-.dsm-mute-label{font-size:12px;color:var(--dsw-alias-label-tertiary);margin-right:2px}
+.dsm-seg{display:inline-flex;padding:3px;gap:3px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l3)}
+    .dsm-seg-btn{appearance:none;border:0;background:transparent;color:inherit;font:inherit;font-size:12px;padding:5px 14px;border-radius:var(--dsw-radius-sm);cursor:pointer;opacity:.7}
+    .dsm-seg-btn[data-active="1"]{background:var(--dsw-alias-bg-base,#fff);opacity:1;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+    .dsm-seg-btn:disabled{opacity:.45;cursor:default}
+    .dsm-mute-label{font-size:12px;color:var(--dsw-alias-label-tertiary);margin-right:2px}
 .dsm-health{border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-base);padding:12px;margin-bottom:14px}
 .dsm-health-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(88px,1fr));gap:8px}
 .dsm-health-cell{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:8px 10px;border-radius:var(--dsw-radius-md);border:1px solid transparent;background:transparent;cursor:pointer;text-align:left;font:inherit;color:inherit}
 .dsm-health-cell:disabled{cursor:default}
 .dsm-health-cell:not(:disabled):hover{border-color:var(--dsw-alias-border-l3)}
-.dsm-health-cell b{font-size:16px;font-weight:600;line-height:1.2}
-.dsm-health-cell span{font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.dsm-health-cell b{font-size:18px;font-weight:600;line-height:1.2}
+.dsm-health-cell span{font-size:11px;color:var(--dsw-alias-label-secondary)}
 .dsm-health-cell em{font-size:11px;font-style:normal;color:var(--dsw-alias-label-tertiary)}
-.dsm-health-cell[data-warn="1"] b{color:#e0a100}
+.dsm-health-cell[data-warn="1"] b{color:var(--dsw-alias-state-warning-primary)}
 .dsm-health-advise{margin:10px 0 0;font-size:12px;color:var(--dsw-alias-label-secondary)}
 .dsm-rule-list{display:flex;flex-direction:column;gap:6px}
-.dsm-rule-row{display:flex;align-items:flex-start;gap:8px;justify-content:space-between;padding:8px 10px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l3)}
+.dsm-rule-row{display:flex;align-items:flex-start;gap:8px;justify-content:space-between;padding:8px 12px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l3)}
 .dsm-rule-text{font-size:12px;line-height:1.5;flex:1;min-width:0;word-break:break-word}
 .dsm-rule-main{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
 .dsm-meta-soft{font-size:11px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
@@ -104,7 +109,7 @@ window.__ModuleLoader__.load({
 .dsm-save small{color:var(--dsw-alias-label-tertiary);font-size:11px}
 
 /* ---- 输入框下方的提示条 ---- */
-.dsm-inline{display:flex;gap:10px;align-items:center;padding:6px 12px;margin:0 0 6px;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);font-size:12px;color:var(--dsw-alias-label-secondary)}
+.dsm-inline{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:6px 12px;margin:0 0 6px;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);font-size:12px;color:var(--dsw-alias-label-secondary)}
 .dsm-inline b{color:var(--dsw-alias-label-primary);font-weight:600}
 .dsm-inline .dsm-grow{flex:1}
 
@@ -117,9 +122,24 @@ window.__ModuleLoader__.load({
 .dsm-panel{pointer-events:auto;width:380px;max-width:calc(100vw - 36px);max-height:calc(100vh - 120px);overflow:auto;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-lg);box-shadow:var(--dsw-elevation-prominent,rgba(0,0,0,.18) 0 12px 32px);padding:16px}
 .dsm-panel h4{margin:0;font-size:13px;font-weight:600}
 .dsm-panel .dsm-panel-sub{color:var(--dsw-alias-label-tertiary);font-size:11px;margin:2px 0 12px}
-.dsm-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.dsm-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;position:sticky;top:0;z-index:1;background:var(--dsw-alias-bg-layer-1);padding-bottom:8px}
 .dsm-close{border:0;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;border-radius:var(--dsw-radius-sm)}
 .dsm-close:hover{background:var(--dsw-alias-interactive-bg-hover)}
+
+/* 键盘用户看得到焦点；四条 radiogroup 都靠方向键切换，Tab 只停一次。 */
+.dsm-btn:focus-visible,.dsm-tab:focus-visible,.dsm-mode:focus-visible,.dsm-preset:focus-visible,.dsm-seg-btn:focus-visible,.dsm-close:focus-visible,.dsm-health-cell:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-alias-accent-1)}
+.dsm-input:focus,.dsm-textarea:focus{outline:none;border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 2px var(--dsw-alias-accent-1)}
+.dsm-btn:active:not(:disabled){transform:translateY(1px)}
+.dsm-rule-row>.dsm-row{flex:0 0 auto}
+@media (max-width:520px){
+  .dsm-page{padding:18px 16px 32px}
+  .dsm-tiers,.dsm-health-grid{grid-template-columns:repeat(2,1fr)}
+  .dsm-mode{padding:10px 12px}
+}
+@media (max-width:420px){
+  .dsm-inline>span:not(.dsm-grow){display:none}
+  .dsm-modeline{flex-direction:column;align-items:flex-start;gap:6px}
+}
 `
 
     function ensureStyle() {
@@ -311,10 +331,10 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dsm-empty' }, children)
     }
 
-    function sizeText(bytes) {
-      const n = Number(bytes) || 0
-      if (n < 1024) return n + ' 字'
-      return Math.round(n / 102.4) / 10 + 'KB'
+    function sizeText(chars) {
+      const n = Number(chars) || 0
+      if (n < 10000) return n + ' 字'
+      return Math.round(n / 1000) / 10 + ' 万字'
     }
 
     // ---------------------------------------------------------------- 体检卡
@@ -433,8 +453,13 @@ window.__ModuleLoader__.load({
         setModeSaving(true)
         setNotice(null)
         try {
-          const res = await call('dsh-soul-memory/ui', { mutedUntil: until })
-          patchState({ ui: res.ui || { ...ui, mutedUntil: until } })
+          // 不提醒（长期档）和静默（临时档）是两根轴，一起用会停在「已静默但还是不提醒」。
+          // 点静默说明此刻想恢复提醒，所以顺手把形态切回对话内条。
+          const patch = until && ui.displayMode === 'off'
+            ? { mutedUntil: until, displayMode: 'inline' }
+            : { mutedUntil: until }
+          const res = await call('dsh-soul-memory/ui', patch)
+          patchState({ ui: res.ui || { ...ui, ...patch } })
           setNotice({
             tone: 'ok',
             text: until ? '已静默到 ' + new Date(until).toLocaleString() + '，期间照常累积。' : '已恢复提醒。',
@@ -766,7 +791,20 @@ window.__ModuleLoader__.load({
               h('span', { className: 'dsm-hint' }, '留空 = 跟随宿主配置'),
             ),
           ),
-          h(Button, { tone: 'ghost', disabled: !text, onClick: () => { if (text) navigator.clipboard?.writeText(text) } }, '复制全文'),
+          h(Button, {
+            tone: 'ghost',
+            disabled: !text,
+            onClick: () => {
+              if (!text) return
+              const done = () => {
+                setNotice({ tone: 'ok', text: '已复制 ' + text.length + ' 字' })
+                setTimeout(() => setNotice(null), 2000)
+              }
+              const pending = navigator.clipboard && navigator.clipboard.writeText(text)
+              if (pending && pending.then) pending.then(done, () => setNotice({ tone: 'error', text: '复制失败，可以展开原文手动选中' }))
+              else done()
+            },
+          }, '复制全文'),
         ),
         meter,
         notice ? h('div', { style: { marginBottom: 10 } }, h(Banner, { tone: notice.tone }, notice.text)) : null,
@@ -791,7 +829,7 @@ window.__ModuleLoader__.load({
                     disabled: busy,
                     onClick: () => setEditing({ original: rule.text, text: rule.text, why: rule.why || '', pitfall: rule.pitfall || '' }),
                   }, '编辑'),
-                  h(Button, { tone: 'ghost', disabled: busy, onClick: () => setConfirming(rule.text) }, '删除'),
+                  h(Button, { tone: 'danger', disabled: busy, onClick: () => setConfirming(rule.text) }, '删除'),
                 ),
             )),
           )
@@ -857,6 +895,7 @@ window.__ModuleLoader__.load({
       const persona = data.persona || {}
       const presets = data.presets || []
       const limits = data.limits || {}
+      const paused = !!ui.memoryPaused
       const [nickname, setNickname] = useState(ui.nickname || '')
       const [preset, setPreset] = useState(persona.preset || 'default')
       const [custom, setCustom] = useState(persona.custom || '')
@@ -867,6 +906,8 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = useState(null)
       // 暂停写记忆单独一条，免得它的反馈出现在上面两张卡片的提示位。
       const [pauseNotice, setPauseNotice] = useState(null)
+      // 暂停会静默关掉自动记忆，点一次就生效太容易误触：先进入确认态，再点一次才写。
+      const [confirmingPause, setConfirmingPause] = useState(false)
 
       // 两个表单各记各的「有没有改动」：共用一个 ref 时，改称呼会挡住风格的同步，反之亦然。
       const nickDirty = useRef(false)
@@ -998,16 +1039,32 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dsm-card' },
           h('h3', null, '记忆写入'),
           h('p', { className: 'dsm-hint' }, '暂停后，模型不会再自动写归档记忆和待批规则；你明确要求记的也不写。'),
-          h('div', { className: 'dsm-row' },
-            h('label', { className: 'dsm-row', style: { gap: 6, cursor: 'pointer' } },
-              h('input', {
-                type: 'checkbox',
-                checked: !!ui.memoryPaused,
-                onChange: (e) => togglePause(e.target.checked),
-              }),
-              h('span', null, ui.memoryPaused ? '已暂停（下一轮生效）' : '正常写入'),
-            ),
+          h('div', { className: 'dsm-seg', role: 'radiogroup', 'aria-label': '记忆写入' },
+            h('button', {
+              type: 'button',
+              role: 'radio',
+              'aria-checked': !paused,
+              className: 'dsm-seg-btn',
+              'data-active': !paused ? '1' : '0',
+              disabled: busy,
+              onClick: () => { if (paused) togglePause(false) },
+            }, '正常写入'),
+            h('button', {
+              type: 'button',
+              role: 'radio',
+              'aria-checked': paused,
+              className: 'dsm-seg-btn',
+              'data-active': paused ? '1' : '0',
+              disabled: busy,
+              onClick: () => {
+                if (paused) return
+                if (!confirmingPause) { setConfirmingPause(true); return }
+                setConfirmingPause(false)
+                togglePause(true)
+              },
+            }, confirmingPause ? '确认暂停' : '已暂停'),
           ),
+          paused ? h('div', { className: 'dsm-meta', style: { marginTop: 8 } }, '下一轮生效') : null,
           pauseNotice ? h('div', { style: { marginTop: 10 } }, h(Banner, { tone: pauseNotice.tone }, pauseNotice.text)) : null,
         ),
       )
@@ -1140,10 +1197,68 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // ---------------------------------------------------------------- 记忆内容
+    // 用户最高频的问题是「你到底记住了我什么」，所以单独一页把归档笔记、
+    // 踩坑和回合日志摊开；只读，写入仍走模型工具，避免第二个写源。
+    function MemoriesTab() {
+      const [data, setData] = useState(null)
+      const [error, setError] = useState(null)
+      const [busy, setBusy] = useState(false)
+      const load = async () => {
+        setBusy(true)
+        setError(null)
+        try {
+          setData(await call('dsh-soul-memory/memories'))
+        } catch (err) {
+          setError(String(err.message || err))
+        } finally {
+          setBusy(false)
+        }
+      }
+      useEffect(() => { load() }, [])
+      if (error) return h(Empty, null, '读不到记忆内容：' + error)
+      if (!data) return h(Empty, null, busy ? '正在读取…' : '加载中…')
+      const notes = data.notes || []
+      const journal = data.journal || []
+      return h('div', null,
+        h('div', { className: 'dsm-card' },
+          h('div', { className: 'dsm-head' },
+            h('div', null,
+              h('h3', null, '归档笔记 ', h('span', { className: 'dsm-count' }, notes.length)),
+              h('p', { className: 'dsm-hint' }, '模型在对话里存下的长期记忆，只读；要改或删，直接对我说。'),
+            ),
+            h(Button, { tone: 'ghost', disabled: busy, onClick: load }, busy ? '刷新中…' : '刷新'),
+          ),
+          notes.length
+            ? h('div', { className: 'dsm-rule-list' },
+              notes.slice(0, 120).map((note) => h('div', { key: note.id, className: 'dsm-rule-row' },
+                h('span', { className: 'dsm-rule-text' }, note.title),
+                h('span', { className: 'dsm-meta-soft' }, note.chars + ' 字'),
+              )))
+            : h(Empty, null, '还没有归档笔记。'),
+        ),
+        h('div', { className: 'dsm-card', style: { marginTop: 14 } },
+          h('h3', null, '踩坑记录'),
+          h('p', { className: 'dsm-hint' }, '同类命令报错后又恢复时自动记下，目前 ' + (data.lessons || 0) + ' 类。这类记录由工具自动维护，页面上只做展示。'),
+        ),
+        h('div', { className: 'dsm-card', style: { marginTop: 14 } },
+          h('h3', null, '最近几天的回合日志'),
+          h('p', { className: 'dsm-hint' }, '每轮有实际写入时记一行，用来回想「前几天在做什么」。'),
+          journal.length
+            ? journal.map((day) => h('div', { key: day.name, style: { marginTop: 10 } },
+              h('div', { className: 'dsm-field-label' }, day.name),
+              h('pre', { className: 'dsm-rules' }, day.text),
+            ))
+            : h(Empty, null, '还没有回合日志。'),
+        ),
+      )
+    }
+
     // ---------------------------------------------------------------- 设置页
     const TABS = [
       { id: 'pending', name: '待批区' },
-      { id: 'rules', name: '规则' },
+      { id: 'memories', name: '记忆内容' },
+      { id: 'rules', name: '编码规范' },
       { id: 'identity', name: '称呼与风格' },
       { id: 'tiers', name: '记忆分级' },
     ]
@@ -1168,14 +1283,26 @@ window.__ModuleLoader__.load({
       }
 
       const body = !data
-        ? h(Empty, null, snap.error ? '读取失败：' + snap.error : '加载中…')
+        ? h('div', { className: 'dsm-card' },
+          h('h3', null, snap.error ? '读不到记忆数据' : '正在读取…'),
+          snap.error
+            ? h('p', { className: 'dsm-hint' }, '原因：' + snap.error + '。数据在 DSH 记忆目录下，文件被占用或权限不足都会这样。')
+            : null,
+          snap.error
+            ? h('div', { className: 'dsm-row' },
+              h(Button, { tone: 'primary', disabled: refreshing, onClick: refreshNow }, refreshing ? '重试中…' : '重试'),
+            )
+            : null,
+        )
         : tab === 'pending'
           ? h(PendingTab, { data, busy, onBusy: setBusy, patchState: store.patchState })
-          : tab === 'rules'
-            ? h(RulesTab, { data })
-            : tab === 'identity'
-              ? h(IdentityTab, { data, patchState: store.patchState })
-              : h(TiersTab, { data })
+          : tab === 'memories'
+            ? h(MemoriesTab)
+            : tab === 'rules'
+              ? h(RulesTab, { data })
+              : tab === 'identity'
+                ? h(IdentityTab, { data, patchState: store.patchState })
+                : h(TiersTab, { data })
 
       return h('div', { className: 'dsm-root dsm-page' },
         h('div', { className: 'dsm-head' },
@@ -1195,7 +1322,15 @@ window.__ModuleLoader__.load({
             'aria-selected': tab === item.id ? 'true' : 'false',
             className: 'dsm-tab',
             'data-active': tab === item.id ? '1' : '0',
+            tabIndex: tab === item.id ? 0 : -1,
             onClick: () => setTab(item.id),
+            onKeyDown: (event) => {
+              const at = TABS.findIndex((entry) => entry.id === tab)
+              const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+              if (!step) return
+              event.preventDefault()
+              setTab(TABS[(at + step + TABS.length) % TABS.length].id)
+            },
           },
           item.name,
           item.id === 'pending' && pendingCount ? h('span', { className: 'dsm-count' }, pendingCount) : null)),
@@ -1277,7 +1412,7 @@ window.__ModuleLoader__.load({
         : mode === 'overlay'
           ? (snap.open || (pending.length > 0 && !dismissed))
           : mode === 'sidebar'
-            ? !collapsed
+            ? (!collapsed && (pending.length > 0 || snap.open || notice !== null))
             : snap.open))
 
       const close = () => {
@@ -1332,7 +1467,7 @@ window.__ModuleLoader__.load({
       }
 
       return h('div', { className: 'dsm-root dsm-layer', 'data-mode': mode === 'overlay' ? 'overlay' : 'sidebar' },
-        h('div', { className: 'dsm-panel' },
+        h('div', { role: 'dialog', 'aria-modal': 'false', 'aria-label': '待批规则', className: 'dsm-panel' },
           h('div', { className: 'dsm-panel-head' },
             h('div', null,
               h('h4', null, '灵魂记忆 · 待批区'),

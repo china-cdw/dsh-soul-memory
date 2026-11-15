@@ -1,0 +1,6 @@
+feat: redesign soul-memory settings UI per design review (0.4.4)
+
+- spacing/type scale/radius unified, focus-visible & active states, sticky panel head, z-index fix
+- first-screen error card with retry, copy feedback, char-based size, tab keyboard nav
+- new 记忆内容 tab backed by GET /dsh-soul-memory/memories (notes/lessons/journal)
+- pause toggle needs confirm, mute no longer masks off mode, sidebar hidden when idle
