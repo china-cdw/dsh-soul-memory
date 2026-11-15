@@ -27,7 +27,7 @@ dsh-soul-memory 是 **dsh-soul 2.0.1** 的 fork，并移植了 **dsh-core-memory
 
 1. `import { registerCoreMemory } from './src/core-memory.js'` —— 文件头 import 区。
 2. `settings()` 里在 `budget: budgetSettings(input),` 之后加：
-   `coding: { enabled: boolean(input.coding?.enabled, true, 'coding.enabled'), budget: integer(input.coding?.budget, 2000, 400, 8000, 'coding.budget') }`，
+   `coding: { enabled: boolean(input.coding?.enabled, true, 'coding.enabled'), budget: integer(input.coding?.budget, 3500, 400, 8000, 'coding.budget') }`，
    `lessons: { enabled: boolean(input.lessons?.enabled, true, 'lessons.enabled'), budget: integer(input.lessons?.budget, 600, 200, 4000, 'lessons.budget') }`，
    `bridge: { enabled: boolean(input.bridge?.enabled, true, 'bridge.enabled'), sessionsDir: ..., maxSessions: ..., maxChars: ... }`。
 3. 创建 Store 之前先留住原值：`const previousSoulDatabase = process.env.DSH_SOUL_DATABASE`；创建 Store 之后 `process.env.DSH_SOUL_DATABASE = config.database`。插件要能卸载/重载，所以 `stop()` 的 `finally` 里必须还原它（原值为 `undefined` 时 `delete process.env.DSH_SOUL_DATABASE`），启动失败路径同理——否则关掉本插件后，其它插件仍读到我们的数据库路径。

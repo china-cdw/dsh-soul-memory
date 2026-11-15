@@ -38,7 +38,7 @@
 | 归档笔记 | 需要时才查的经历、结论 | `$DSH_HOME/memory/notes/*.md` | 只注入最近 12 条标题 | — | `memory_write` / `memory_read` / `memory_list` / `memory_search` / `memory_delete` |
 | 会话图谱 | 约束、决策、产物、历史原文 | `$DSH_HOME/dsh-soul/<profile>/evolve.sqlite` | 投影 600 字节，`order 940` | 600 字节 | `soul_recall` / `soul_expand` |
 | 踩坑记录 | 工具报错 → 后来怎么改对 | `$DSH_HOME/memory/LESSONS.jsonl` | 每轮，`order 62` | 600 字 | `lessons` |
-| 编码规范 | 全局规矩 + 项目规则文件 | `$DSH_HOME/memory/CODING.md` + 项目目录 | 每轮，`order 61` | 2000 字 | `coding_rules` |
+| 编码规范 | 全局规矩 + 项目规则文件 | `$DSH_HOME/memory/CODING.md` + 项目目录 | 每轮，`order 61` | 3500 字（设置页可调） | `coding_rules` |
 
 ### 编码规范会自动读哪些文件
 
@@ -54,7 +54,7 @@ CLAUDE.md
 .cursor/rules/*.mdc, *.md
 ```
 
-全局 `CODING.md` 优先，项目文件按上面的顺序追加；超出 2000 字预算时截断并注明。
+全局 `CODING.md` 优先，项目文件按上面的顺序追加；超出预算（默认 3500 字，可在「灵魂记忆 → 规则」里改 400–8000）时截断并注明。
 
 ---
 
@@ -140,7 +140,7 @@ dsh plugin --profile desktop add "$PWD"
 
 ## 工具
 
-下表是默认注册的 12 个工具；开启演化（`config.enabled: true` 并配置 provider/model）后还会注册 `evolve_status`、`evolve_diagnose`、`evolve_request`、`evolve_tree` 等 `evolve_*` 工具，总数最多 19 个。
+下表是默认注册的 14 个工具；开启演化（`config.enabled: true` 并配置 provider/model）后还会注册 `evolve_status`、`evolve_diagnose`、`evolve_request`、`evolve_tree` 等 `evolve_*` 工具，总数最多 19 个。
 
 | 工具 | 用途 | 主要参数 |
 | --- | --- | --- |
@@ -153,7 +153,8 @@ dsh plugin --profile desktop add "$PWD"
 | `memory_brief` | 记忆库体检 | — |
 | `memory_dreaming` | 闲时整理开关、手动执行与误删恢复（含 AI 垃圾清理） | `action`（status/on/off/run/retired/restore）、`apply?`、`force?`、`ids?` |
 | `persona` | 回复风格 | `action`（get/set/custom/disable）、`preset?`、`text?` |
-| `coding_rules` | 编码规范 | `action`（show/list/add/forget）、`text?` |
+| `coding_rules` | 编码规范（可弹窗编辑、新增时自动查重） | `action`（show/list/add/propose/pending/approve/reject/forget/dupes）、`text?`、`ids?` |
+| `memory_tier` | 记忆分级与回收（🔴🟡🟢，回收可逆） | `action`（status/collect/restore）、`apply?`、`minAgeDays?`、`ids?` |
 | `lessons` | 踩坑记录 | `action`（list/forget/clear）、`text?`、`limit?`（默认 50，上限 200） |
 | `soul_recall` | 从会话图谱/历史原文回捞 | `query`、`k?` |
 | `soul_expand` | 按 seq 区间展开原文（默认 2000 字节 / 200 条，上限 20000 / 1000）；首条事件被裁剪时用 `from=resume.seq` + `offset=resume.offset` 续读，其他截断用 `from=to+1`；零预算返回的 `next` 即续读起点 | `from`、`to`（必填，0–1000000）；`limit?`、`maxEvents?`、`offset?`（默认 2000 / 200 / 0） |
@@ -171,6 +172,20 @@ dsh plugin --profile desktop add "$PWD"
 - `POST` 要求 `Content-Type: application/json`、请求体 ≤16KB；方法只接受 `GET`/`POST`，其他方法返回 405 且带 `Allow: GET, POST`；空的 `{}` 返回 204 且不写盘；其余返回 200，参数/方法/权限错误返回 400/403/405/413/415，写盘或内部故障返回 500；
 - 只接受本机回环 Host（`localhost` / `127.0.0.1` / `[::1]`），且带 Origin 时必须与 Host 一致——防止 DNS rebinding 与跨站提示注入；未携带 Host 头（HTTP/1.0）时跳过 Host 白名单；
 - 响应带 `Cache-Control: no-store`，风格属于个人数据，不缓存。
+### 灵魂记忆设置页
+
+设置 → 灵魂记忆由 `client.js` 注册到宿主设置页 slot，四个页签：待批区、规则、称呼与风格、记忆分级。数据来自同源 `fetch` 的六条路由（同样只在宿主提供 `webServer` 时注册，基础安全模型与 `/persona` 一致：回环 Host、Origin 同源、`x-dsh-soul-memory: 1` 头）：
+
+| 路由 | 方法 | 作用 |
+| --- | --- | --- |
+| `/dsh-soul-memory/state` | GET | 一次取全：UI 设置、待批、规则列表、分级、体检、闲时整理状态，并下发写令牌 |
+| `/dsh-soul-memory/ui` | POST | 改形态（输入框下方 / 右侧面板 / 居中浮层 / 不提醒）、称呼、临时静默、暂停写记忆、规则注入上限 |
+| `/dsh-soul-memory/pending` | POST | `approve` / `reject` / `edit` 待批规则 |
+| `/dsh-soul-memory/rules` | POST | `forget` 删规则、`edit` 改规则（正文 / 为什么 / 陷阱） |
+| `/dsh-soul-memory/tier` | POST | `preview` / `collect` / `restore` 分级回收 |
+| `/dsh-soul-memory/dreaming` | POST | 开 / 关闲时整理 |
+
+写操作额外要求 `x-dsh-soul-memory-token` 请求头：令牌由 `/state` 随机生成下发、只存在进程内存里（重启即换），缺失或错误返回 403。
 
 工具失败时，返回文本末尾带机器可读后缀 `[err:CODE]`（例如 `[err:E_NOT_FOUND]`、`[err:E_GUARD]`）；注意宿主层仍把这类结果当作成功（`isError` 为 false），调用方需要识别后缀来完成分支。
 
@@ -190,7 +205,7 @@ config:
     maintenance: true       # 每 20 轮去重与边衰减
   coding:
     enabled: true
-    budget: 2000            # 编码规范注入预算（400–8000）
+    budget: 3500            # 编码规范注入预算（400–8000；设置页可覆盖）
   lessons:
     enabled: true
     budget: 600             # 踩坑注入预算（200–4000）
@@ -311,7 +326,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 85 项、编码层 10 项、踩坑层 15 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项，共 161 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 85 项、编码层 14 项、踩坑层 15 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 19 项，共 245 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

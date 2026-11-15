@@ -1,5 +1,12 @@
 # 变更日志
 
+## 0.3.50
+
+- 编码规范注入上限可由用户在设置页自填：灵魂记忆 → 规则顶部新增「注入上限」输入框（400–8000 字，步进 100），留空 = 跟随宿主 `coding.budget`；写入 `memory/SOUL-UI.json` 的 `rulesBudget`，改动下一轮组装生效。
+- host 侧新增 `effectiveBudget()`：UI 设置优先、其次宿主配置、最后默认 3500；`collectRules()` 与用量提示统一走该值；`/state` 的 `limits` 暴露 `minRulesBudget` / `maxRulesBudget`。
+- 修 `sync-install.mjs` 漏复制 `client.js` 的问题（此前页面一直加载旧客户端脚本，表现为「点刷新没反应」）；顺带把 README 双语里过时的 2000 字预算、工具数量与断言计数改对，并补上「灵魂记忆设置页」六条路由的说明。
+- 测试：界面断言 19 条、编码规范 14 条；全套 245 断言全绿。
+
 ## 0.3.49
 
 - 规则可编辑：设置页「灵魂记忆 → 规则」每条后面加「编辑」，弹窗改正文、为什么、陷阱，保存后下一轮组装生效；写入走 `readGlobalRuleBlocks()` / `editRule()`，找不到原规则回 `E_NOT_FOUND`，改完撞上别的规则回 `E_DUPLICATE`；`POST /dsh-soul-memory/rules` 新增 `action=edit`（原来只有 `forget`）。

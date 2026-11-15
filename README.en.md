@@ -38,7 +38,7 @@ When three memory plugins each own a slice, the model has to decide "which one s
 | Archived notes | Experiences and conclusions looked up later | `$DSH_HOME/memory/notes/*.md` | Only the 12 most recent titles | — | `memory_write` / `memory_read` / `memory_list` / `memory_search` / `memory_delete` |
 | Session graph | Constraints, decisions, artifacts, raw history | `$DSH_HOME/dsh-soul/<profile>/evolve.sqlite` | 600-byte projection, `order 940` | 600 bytes | `soul_recall` / `soul_expand` |
 | Mistake notes | Tool error → how it was fixed | `$DSH_HOME/memory/LESSONS.jsonl` | Every turn, `order 62` | 600 chars | `lessons` |
-| Coding conventions | Global rules + project rule files | `$DSH_HOME/memory/CODING.md` + project dir | Every turn, `order 61` | 2000 chars | `coding_rules` |
+| Coding conventions | Global rules + project rule files | `$DSH_HOME/memory/CODING.md` + project dir | Every turn, `order 61` | 3500 chars (editable in settings) | `coding_rules` |
 
 ### Which coding-rule files are read
 
@@ -54,7 +54,7 @@ CLAUDE.md
 .cursor/rules/*.mdc, *.md
 ```
 
-The global `CODING.md` takes priority; project files are appended in the order above. Anything beyond the 2000-character budget is truncated and marked as such.
+The global `CODING.md` takes priority; project files are appended in the order above. Anything beyond the budget (3500 characters by default, adjustable to 400–8000 in Settings → Soul Memory → Rules) is truncated and marked as such.
 
 ---
 
@@ -140,7 +140,7 @@ To verify, call `memory_brief`: it reports core-memory size, archived note count
 
 ## Tools
 
-The table below lists the 12 tools registered by default. With evolution enabled (`config.enabled: true` plus a provider/model) the `evolve_*` tools (`evolve_status`, `evolve_diagnose`, `evolve_request`, `evolve_tree`, …) are registered too, for at most 19 tools.
+The table below lists the 14 tools registered by default. With evolution enabled (`config.enabled: true` plus a provider/model) the `evolve_*` tools (`evolve_status`, `evolve_diagnose`, `evolve_request`, `evolve_tree`, …) are registered too, for at most 19 tools.
 
 | Tool | Purpose | Main arguments |
 | --- | --- | --- |
@@ -153,7 +153,8 @@ The table below lists the 12 tools registered by default. With evolution enabled
 | `memory_brief` | Memory health report | — |
 | `memory_dreaming` | Toggle idle consolidation, run it by hand, and recover over-retired nodes (including AI junk cleanup) | `action` (status/on/off/run/retired/restore), `apply?`, `force?`, `ids?` |
 | `persona` | Reply style | `action` (get/set/custom/disable), `preset?`, `text?` |
-| `coding_rules` | Coding conventions | `action` (show/list/add/forget), `text?` |
+| `coding_rules` | Coding conventions (editable in a dialog, duplicate-detecting) | `action` (show/list/add/propose/pending/approve/reject/forget/dupes), `text?`, `ids?` |
+| `memory_tier` | Memory tiers and safe collection (🔴🟡🟢, reversible) | `action` (status/collect/restore), `apply?`, `minAgeDays?`, `ids?` |
 | `lessons` | Mistake notes | `action` (list/forget/clear), `text?`, `limit?` (default 50, max 200) |
 | `soul_recall` | Recall from the session graph / raw history | `query`, `k?` |
 | `soul_expand` | Expand raw text by seq range (default 2000 bytes / 200 events, max 20000 / 1000); when the first event is clipped continue with `from=resume.seq` + `offset=resume.offset`, otherwise continue with `from=to+1`; `next` on a zero budget is the resume point | `from`, `to` (required, 0–1000000); `limit?`, `maxEvents?`, `offset?` (default 2000 / 200 / 0) |
@@ -171,6 +172,20 @@ The style settings page calls the local route `/dsh-soul-memory/persona` over sa
 - `POST` requires `Content-Type: application/json` and a body of at most 16KB; only `GET`/`POST` are accepted (other methods return 405 with `Allow: GET, POST`); an empty `{}` returns 204 and writes nothing; otherwise it answers 200 (parameter, method and permission failures use 400/403/405/413/415; write and internal failures use 500);
 - only loopback hosts (`localhost`, `127.0.0.1`, `[::1]`) are accepted, and any Origin must match the Host — this blocks DNS rebinding and cross-site prompt injection; requests without a Host header (HTTP/1.0) bypass the Host allowlist;
 - responses carry `Cache-Control: no-store`; style is personal data and is never cached.
+### Soul Memory settings page
+
+Settings → Soul Memory is registered by `client.js` into the host settings slot with four tabs: pending rules, rules, name & style, memory tiers. Data comes from six same-origin `fetch` routes (also registered only when the host provides `webServer`, with the same baseline guard as `/persona`: loopback Host, same Origin, `x-dsh-soul-memory: 1` header):
+
+| Route | Method | Purpose |
+| --- | --- | --- |
+| `/dsh-soul-memory/state` | GET | Everything at once: UI settings, pending rules, rules list, tiers, health, dreaming state, plus the write token |
+| `/dsh-soul-memory/ui` | POST | Display mode (composer bar / right panel / overlay / off), name, temporary mute, pause memory writes, rules budget |
+| `/dsh-soul-memory/pending` | POST | `approve` / `reject` / `edit` pending rules |
+| `/dsh-soul-memory/rules` | POST | `forget` to delete a rule, `edit` to change one (text / why / pitfall) |
+| `/dsh-soul-memory/tier` | POST | `preview` / `collect` / `restore` tier collection |
+| `/dsh-soul-memory/dreaming` | POST | Enable / disable idle consolidation |
+
+Writes additionally require an `x-dsh-soul-memory-token` header; the token is generated by `/state` and lives only in process memory (it changes on restart). A missing or wrong token returns 403.
 
 When a tool fails, the returned text ends with a machine-readable `[err:CODE]` suffix (for example `[err:E_NOT_FOUND]` or `[err:E_GUARD]`). The host still reports these results as successful (`isError` stays false), so callers must inspect the suffix to branch on failures.
 
@@ -190,7 +205,7 @@ config:
     maintenance: true       # dedupe and edge decay every 20 turns
   coding:
     enabled: true
-    budget: 2000            # coding-convention injection budget (400–8000)
+    budget: 3500            # coding-convention injection budget (400–8000; overridable in settings)
   lessons:
     enabled: true
     budget: 600             # mistake-note injection budget (200–4000)
@@ -311,7 +326,7 @@ npm run preflight
 npm test          # every self-check script; any failure exits non-zero
 ```
 
-The checks ship in `scripts/`: 85 core assertions, 10 coding, 15 mistake notes, 11 event-replay, 14 billion-context bridge and 26 regression assertions — 161 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
+The checks ship in `scripts/`: 85 core assertions, 14 coding, 15 mistake notes, 30 remember-intent, 11 event-replay, 14 billion-context bridge, 26 regression, 16 memory-tiering, 15 rule-promotion and 19 settings-page assertions — 245 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
 
 ---
 
