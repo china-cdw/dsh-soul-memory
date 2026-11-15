@@ -13,7 +13,9 @@
 import { readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { codingPath, proposedRules, approveRules, rejectRules, editPendingRule, editRule, forgetRule, readGlobalRuleBlocks, collectRules } from './coding.js';
+import { codingPath, proposedRules, approveRules, rejectRules, editPendingRule, editRule, forgetRule, addRule, readGlobalRules, similarRules, readGlobalRuleBlocks, collectRules } from './coding.js';
+import { exportBundle, listBackups, readBundle, importBundle } from './backup.js';
+import { runDreaming } from './core-memory.js';
 import { readUiSettings, writeUiSettings, validateUiPatch, MAX_NICKNAME, MIN_RULES_BUDGET, MAX_RULES_BUDGET } from './ui-settings.js';
 import { readPersona, listPresets, MAX_CUSTOM_TEXT } from './persona.js';
 import { GC_DEFAULTS, tierCounts, collectionCandidates } from './tiering.js';
@@ -527,15 +529,16 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
           return sendJson(res, 200, { ok: true, action, candidates, count: candidates.length, minAgeDays: opts.minAgeDays });
         }
         if (action === 'collect') {
-          const candidates = tierCandidatesOf(store);
-          if (candidates && candidates.error) return sendJson(res, 500, { error: '统计失败，详情见宿主日志' });
+          const opts = { ...GC_DEFAULTS };
+          if (Number.isFinite(minAgeDays) && minAgeDays > 0) opts.minAgeDays = Math.max(7, Math.round(minAgeDays));
+          const nodes = tierNodesOf(store);
+          const allowed = new Set(collectionCandidates(nodes, opts).map((n) => n.id));
           // 只允许回收当前候选里的：传了 ids 也不能越过判据。
-          const allowed = new Set(candidates.map((c) => c.id));
           const target = Array.isArray(wanted) && wanted.length
             ? wanted.filter((id) => typeof id === 'string' && allowed.has(id))
-            : candidates.map((c) => c.id);
+            : [...allowed];
           const collected = retireIds(store, target);
-          return sendJson(res, 200, { ok: true, action, collected, ids: target });
+          return sendJson(res, 200, { ok: true, action, collected, ids: target, minAgeDays: opts.minAgeDays });
         }
         if (action === 'restore') {
           if (!Array.isArray(wanted) || !wanted.length) return sendJson(res, 400, { error: 'restore 需要 ids' });
@@ -568,6 +571,23 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
         if (body.tooLarge) return sendJson(res, 413, { error: '请求体过大' });
         if (!body.body) return sendJson(res, 400, { error: '请求体必须是 JSON 对象' });
         const { action, text, nextText, why, pitfall } = body.body;
+        if (action === 'add') {
+          if (typeof text !== 'string' || !text.trim()) return sendJson(res, 400, { error: 'add 需要 text' });
+          const result = await addRule(text, { why, pitfall });
+          if (!result.ok) return sendJson(res, 400, { error: result.error, code: result.code, similar: result.similar });
+          return sendJson(res, 200, { ok: true, rule: result.rule, similar: result.similar, usage: rulesUsageOf(budget) });
+        }
+        if (action === 'dupes') {
+          const rules = readGlobalRules().map((row) => row.rule);
+          const pairs = [];
+          for (let i = 0; i < rules.length && pairs.length < 8; i += 1) {
+            const rest = rules.filter((_, j) => j !== i);
+            for (const hit of similarRules(rules[i], rest, { threshold: 0.25, limit: 1 })) {
+              pairs.push({ a: rules[i].slice(0, 60), b: hit.rule.slice(0, 60), score: Math.round(hit.score * 100) / 100 });
+            }
+          }
+          return sendJson(res, 200, { ok: true, count: rules.length, pairs });
+        }
         if (action === 'forget') {
           if (typeof text !== 'string' || !text.trim()) return sendJson(res, 400, { error: 'forget 需要 text' });
           const result = await forgetRule(text);
@@ -581,7 +601,7 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
           if (!result.ok) return sendJson(res, 400, { error: result.error, code: result.code, result });
           return sendJson(res, 200, { ok: true, rule: result.rule, similar: result.similar, usage: rulesUsageOf(budget) });
         }
-        sendJson(res, 400, { error: 'action 只能是 forget / edit' });
+        sendJson(res, 400, { error: 'action 只能是 forget / edit / add / dupes' });
       } catch (error) {
         console.error('dsh-soul-memory: 删除规则失败', error);
         sendJson(res, 500, { error: '服务器内部错误，详情见宿主日志' });
@@ -605,7 +625,18 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
         if (body.error) return sendJson(res, 400, { error: '请求体读取失败' });
         if (body.tooLarge) return sendJson(res, 413, { error: '请求体过大' });
         if (!body.body) return sendJson(res, 400, { error: '请求体必须是 JSON 对象' });
-        const { enabled } = body.body;
+        const { enabled, action } = body.body;
+        if (action === 'run') {
+          const apply = body.body.apply === true;
+          let result;
+          try {
+            // runDreaming 内部已经持锁（进程内 + 跨进程），这里再包一层会永远拿不到锁。
+            result = await runDreaming({ apply });
+          } catch {
+            return sendJson(res, 409, { error: '正在整理中，稍后再试' });
+          }
+          return sendJson(res, 200, { ok: true, action: 'run', result, usage: rulesUsageOf(budget) });
+        }
         if (typeof enabled !== 'boolean') return sendJson(res, 400, { error: 'enabled 必须是布尔值' });
         let next;
         try {
@@ -616,6 +647,48 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
         sendJson(res, 200, { ok: true, dreaming: { enabled: !!next.enabled } });
       } catch (error) {
         console.error('dsh-soul-memory: 闲时整理开关失败', error);
+        sendJson(res, 500, { error: '服务器内部错误，详情见宿主日志' });
+      }
+    },
+  }));
+
+  // /dsh-soul-memory/backup —— 备份：GET 列表；POST 导出 / 预演导入 / 真正导入
+  disposers.push(route({
+    kind: 'exact',
+    path: PREFIX + 'backup',
+    async handler(req, res) {
+      try {
+        if (!guard(req, res, req.method === 'POST')) return;
+        if (req.method === 'GET') {
+          return sendJson(res, 200, { ok: true, backups: await listBackups({ limit: 20 }) });
+        }
+        if (req.method !== 'POST') {
+          return sendJson(res, 405, { error: '该接口只支持 GET / POST' });
+        }
+        if (!requireToken(req, res)) return;
+        const body = await readJsonBody(req);
+        if (body.error) return sendJson(res, 400, { error: '请求体读取失败' });
+        if (body.tooLarge) return sendJson(res, 413, { error: '请求体过大' });
+        if (!body.body) return sendJson(res, 400, { error: '请求体必须是 JSON 对象' });
+        const { action, file, apply } = body.body;
+        if (action === 'export') {
+          const result = await exportBundle();
+          return sendJson(res, 200, { ok: true, action, result });
+        }
+        if (action === 'import') {
+          if (typeof file !== 'string' || !file.trim()) return sendJson(res, 400, { error: 'import 需要 file' });
+          let bundle;
+          try {
+            bundle = await readBundle(file.trim());
+          } catch (error) {
+            return sendJson(res, 400, { error: String(error && error.message ? error.message : error) });
+          }
+          const result = await importBundle(bundle, { apply: apply === true });
+          return sendJson(res, 200, { ok: true, action, apply: apply === true, result });
+        }
+        return sendJson(res, 400, { error: 'action 只能是 export / import' });
+      } catch (error) {
+        console.error('dsh-soul-memory: 备份操作失败', error);
         sendJson(res, 500, { error: '服务器内部错误，详情见宿主日志' });
       }
     },

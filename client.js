@@ -674,6 +674,11 @@ window.__ModuleLoader__.load({
         data.ui && Number(data.ui.rulesBudget) > 0 ? String(data.ui.rulesBudget) : '',
       )
       const [budgetBusy, setBudgetBusy] = useState(false)
+      // 新建规则：表单内联展开，不弹窗（弹窗留给编辑，避免两个弹窗抢焦点）。
+      const [adding, setAdding] = useState(null)
+      const [addBusy, setAddBusy] = useState(false)
+      const [dupes, setDupes] = useState(null)
+      const [dupesBusy, setDupesBusy] = useState(false)
 
       useEffect(() => {
         if (!editingOpen) return undefined
@@ -759,6 +764,43 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const submitAdd = async () => {
+        if (!adding || addBusy) return
+        const text = String(adding.text || '').trim()
+        if (!text) { setNotice({ tone: 'error', text: '规则内容不能为空。' }); return }
+        setAddBusy(true)
+        setNotice(null)
+        try {
+          const res = await call('dsh-soul-memory/rules', { action: 'add', text, why: adding.why || '', pitfall: adding.pitfall || '' })
+          setAdding(null)
+          const use = res && res.usage
+          setNotice({
+            tone: 'ok',
+            text: '已新增一条规则' + (use ? '，现在注入 ' + use.used + '/' + use.budget + ' 字' : '') + '，下一轮生效。'
+              + (res && Array.isArray(res.similar) && res.similar.length ? ' ⚠️ 与已有规则可能重复，考虑合并。' : ''),
+          })
+          await store.refresh({ force: true })
+        } catch (error) {
+          setNotice({ tone: 'error', text: String(error.message || error) })
+        } finally {
+          setAddBusy(false)
+        }
+      }
+
+      const scanDupes = async () => {
+        if (dupesBusy) return
+        setDupesBusy(true)
+        setNotice(null)
+        try {
+          const res = await call('dsh-soul-memory/rules', { action: 'dupes' })
+          setDupes(Array.isArray(res && res.pairs) ? res.pairs : [])
+        } catch (error) {
+          setNotice({ tone: 'error', text: String(error.message || error) })
+        } finally {
+          setDupesBusy(false)
+        }
+      }
+
       const meter = usage
         ? h('div', { className: 'dsm-meter', role: 'img', 'aria-label': '规则用量 ' + usage.pct + '%' },
             h('div', { className: 'dsm-meter-fill', 'data-warn': usage.warn ? '1' : '0', style: { width: Math.max(2, Math.min(100, usage.pct)) + '%' } }),
@@ -792,6 +834,16 @@ window.__ModuleLoader__.load({
             ),
           ),
           h(Button, {
+            tone: 'primary',
+            disabled: addBusy || busy,
+            onClick: () => setAdding({ text: '', why: '', pitfall: '' }),
+          }, '新建规则'),
+          h(Button, {
+            tone: 'ghost',
+            disabled: dupesBusy || list.length < 2,
+            onClick: scanDupes,
+          }, dupesBusy ? '扫描中…' : '查重'),
+          h(Button, {
             tone: 'ghost',
             disabled: !text,
             onClick: () => {
@@ -808,6 +860,56 @@ window.__ModuleLoader__.load({
         ),
         meter,
         notice ? h('div', { style: { marginBottom: 10 } }, h(Banner, { tone: notice.tone }, notice.text)) : null,
+        adding
+          ? h('div', { style: { marginBottom: 14 } },
+            h('label', { className: 'dsm-field' },
+              h('span', { className: 'dsm-field-label' }, '新规则（一句话，说清什么场景必须遵守）'),
+              h('textarea', {
+                className: 'dsm-textarea',
+                rows: 3,
+                value: adding.text,
+                onChange: (event) => setAdding({ ...adding, text: event.target.value }),
+              }),
+            ),
+            h('label', { className: 'dsm-field' },
+              h('span', { className: 'dsm-field-label' }, '为什么（可选，写给模型看的理由）'),
+              h('textarea', {
+                className: 'dsm-textarea',
+                rows: 2,
+                value: adding.why,
+                onChange: (event) => setAdding({ ...adding, why: event.target.value }),
+              }),
+            ),
+            h('label', { className: 'dsm-field' },
+              h('span', { className: 'dsm-field-label' }, '陷阱（可选，什么时候会踩坑）'),
+              h('textarea', {
+                className: 'dsm-textarea',
+                rows: 2,
+                value: adding.pitfall,
+                onChange: (event) => setAdding({ ...adding, pitfall: event.target.value }),
+              }),
+            ),
+            h('div', { className: 'dsm-row' },
+              h(Button, { tone: 'primary', disabled: addBusy || !String(adding.text || '').trim(), onClick: submitAdd }, addBusy ? '保存中…' : '保存'),
+              h(Button, { tone: 'ghost', disabled: addBusy, onClick: () => setAdding(null) }, '取消'),
+            ),
+          )
+          : null,
+        dupes
+          ? h('div', { style: { marginBottom: 12 } },
+            h(Banner, { tone: 'ok' }, dupes.length
+              ? '发现 ' + dupes.length + ' 对措辞相近的规则，考虑合并成一条：'
+              : '没有发现措辞相近的规则。'),
+            dupes.length
+              ? h('div', { className: 'dsm-rule-list', style: { marginTop: 8 } },
+                dupes.map((pair, index) => h('div', { key: 'dupe' + index, className: 'dsm-rule-row' },
+                  h('span', { className: 'dsm-rule-text' }, pair.a + '  ／  ' + pair.b),
+                  h('span', { className: 'dsm-meta-soft' }, String(pair.score)),
+                )),
+              )
+              : null,
+          )
+          : null,
         list.length
           ? h('div', { className: 'dsm-rule-list' },
             list.map((rule, index) => h('div', { key: 'r' + index, className: 'dsm-rule-row' },
@@ -1079,6 +1181,13 @@ window.__ModuleLoader__.load({
       // 先预演拿到候选，确认后才真回收；lastIds 留着给「撤销」。
       const [candidates, setCandidates] = useState(null)
       const [lastIds, setLastIds] = useState(null)
+      // 回收门槛天数：默认跟当前统计一致，用户可改；最低 7（与 SQL 判据一致）。
+      const [days, setDays] = useState(String(tiers.minAgeDays || 90))
+      const [draining, setDraining] = useState(false)
+      const ageDays = () => {
+        const value = Number(days)
+        return Number.isFinite(value) && value >= 7 ? Math.round(value) : undefined
+      }
 
       const run = async (body, after) => {
         if (busy) return
@@ -1095,13 +1204,13 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const preview = () => run({ action: 'preview' }, (res) => {
+      const preview = () => run({ action: 'preview', minAgeDays: ageDays() }, (res) => {
         const list = res.candidates || []
         setCandidates(list)
         setNotice({ tone: 'ok', text: list.length ? '找到 ' + list.length + ' 条可回收，看一眼再决定。' : '没有符合条件的记忆。' })
       })
 
-      const collect = () => run({ action: 'collect', ids: (candidates || []).map((c) => c.id) }, (res) => {
+      const collect = () => run({ action: 'collect', ids: (candidates || []).map((c) => c.id), minAgeDays: ageDays() }, (res) => {
         setCandidates(null)
         setLastIds(res.ids || [])
         setNotice({ tone: 'ok', text: '已回收 ' + (res.collected || 0) + ' 条（标记为 retired，可撤销）。' })
@@ -1152,6 +1261,19 @@ window.__ModuleLoader__.load({
           ),
           h('p', { className: 'dsm-hint', style: { marginTop: 14 } },
             '可回收 ' + (tiers.collectable || 0) + ' 条（低层 + 未被命中 + 超过 ' + (tiers.minAgeDays || 90) + ' 天）。'),
+          h('div', { className: 'dsm-budget' },
+            h('span', { className: 'dsm-hint' }, '回收门槛'),
+            h('input', {
+              className: 'dsm-input dsm-budget-input',
+              type: 'number',
+              min: 7,
+              step: 10,
+              value: days,
+              'aria-label': '回收门槛天数',
+              onChange: (event) => setDays(event.target.value),
+            }),
+            h('span', { className: 'dsm-hint' }, '天没动过才回收（最低 7）'),
+          ),
           h('div', { className: 'dsm-row' },
             h(Button, { tone: 'primary', disabled: busy, onClick: preview }, '看看能回收哪些'),
             candidates && candidates.length
@@ -1193,6 +1315,26 @@ window.__ModuleLoader__.load({
           !dreaming.configured
             ? h('p', { className: 'dsm-hint' }, '当前没有配置模型路由，开启后只做本地聚合，不做 AI 判断。')
             : null,
+          h('div', { className: 'dsm-row', style: { marginTop: 10 } },
+            h(Button, {
+              tone: 'ghost',
+              disabled: busy || draining,
+              onClick: async () => {
+                if (draining) return
+                setDraining(true)
+                setNotice(null)
+                try {
+                  await call('dsh-soul-memory/dreaming', { action: 'run', apply: false })
+                  setNotice({ tone: 'ok', text: '已预演一次整理（只列候选，不写盘）。要看候选请直接让我跑 memory_dreaming。' })
+                  await store.refresh({ force: true })
+                } catch (error) {
+                  setNotice({ tone: 'error', text: String(error.message || error) })
+                } finally {
+                  setDraining(false)
+                }
+              },
+            }, draining ? '整理中…' : '现在整理一次（只预演）'),
+          ),
         ),
       )
     }
@@ -1216,6 +1358,51 @@ window.__ModuleLoader__.load({
         }
       }
       useEffect(() => { load() }, [])
+      // 备份：列表走 GET，导出/导入走 POST（要写令牌）。导入默认预演。
+      const [backups, setBackups] = useState(null)
+      const [backupBusy, setBackupBusy] = useState(false)
+      const [backupNote, setBackupNote] = useState(null)
+      const loadBackups = async () => {
+        try {
+          const res = await call('dsh-soul-memory/backup')
+          setBackups(Array.isArray(res && res.backups) ? res.backups : [])
+        } catch (error) {
+          setBackupNote({ tone: 'error', text: String(error.message || error) })
+        }
+      }
+      useEffect(() => { loadBackups() }, [])
+      const doExport = async () => {
+        if (backupBusy) return
+        setBackupBusy(true)
+        setBackupNote(null)
+        try {
+          const res = await call('dsh-soul-memory/backup', { action: 'export' })
+          const result = (res && res.result) || {}
+          setBackupNote({ tone: 'ok', text: '已导出 ' + (result.files || 0) + ' 个文件（' + (result.bytes || 0) + ' 字节）：' + (result.path || '') })
+          await loadBackups()
+        } catch (error) {
+          setBackupNote({ tone: 'error', text: String(error.message || error) })
+        } finally {
+          setBackupBusy(false)
+        }
+      }
+      const doImport = async (file, apply) => {
+        if (backupBusy) return
+        setBackupBusy(true)
+        setBackupNote(null)
+        try {
+          const res = await call('dsh-soul-memory/backup', { action: 'import', file, apply })
+          const result = (res && res.result) || {}
+          setBackupNote({
+            tone: 'ok',
+            text: (apply ? '已导入：' : '预演结果：') + '新增 ' + (result.added || []).length + '、改动 ' + (result.changed || []).length + '、相同 ' + (result.same || 0) + (apply ? '（原文件已快照）' : '（还没写盘）'),
+          })
+        } catch (error) {
+          setBackupNote({ tone: 'error', text: String(error.message || error) })
+        } finally {
+          setBackupBusy(false)
+        }
+      }
       if (error) return h(Empty, null, '读不到记忆内容：' + error)
       if (!data) return h(Empty, null, busy ? '正在读取…' : '加载中…')
       const notes = data.notes || []
@@ -1236,6 +1423,30 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'dsm-meta-soft' }, note.chars + ' 字'),
               )))
             : h(Empty, null, '还没有归档笔记。'),
+        ),
+        h('div', { className: 'dsm-card', style: { marginTop: 14 } },
+          h('div', { className: 'dsm-head' },
+            h('div', null,
+              h('h3', null, '备份与搬家'),
+              h('p', { className: 'dsm-hint' }, '把记忆打包成一个 JSON 带走，换电脑或误删时放回来。导入前会自动给现有文件留一份快照。'),
+            ),
+            h(Button, { tone: 'primary', disabled: backupBusy, onClick: doExport }, backupBusy ? '处理中…' : '现在备份'),
+          ),
+          backupNote ? h('div', { style: { marginTop: 10 } }, h(Banner, { tone: backupNote.tone }, backupNote.text)) : null,
+          backups === null
+            ? h('p', { className: 'dsm-hint' }, '正在读取备份列表…')
+            : backups.length
+              ? h('div', { className: 'dsm-rule-list', style: { marginTop: 10 } },
+                backups.slice(0, 10).map((item) => h('div', { key: item.name, className: 'dsm-rule-row' },
+                  h('span', { className: 'dsm-rule-text' }, item.name),
+                  h('span', { className: 'dsm-meta-soft' }, (item.bytes || 0) + ' 字节'),
+                  h('span', { className: 'dsm-row' },
+                    h(Button, { tone: 'ghost', disabled: backupBusy, onClick: () => doImport(item.name, false) }, '预演导入'),
+                    h(Button, { tone: 'danger', disabled: backupBusy, onClick: () => doImport(item.name, true) }, '真正导入'),
+                  ),
+                )),
+              )
+              : h(Empty, null, '还没有备份，点右上角「现在备份」。'),
         ),
         h('div', { className: 'dsm-card', style: { marginTop: 14 } },
           h('h3', null, '踩坑记录'),

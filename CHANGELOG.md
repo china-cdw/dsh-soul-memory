@@ -1,5 +1,10 @@
 # 变更日志
 
+## 0.4.5
+
+- 设置页补齐此前只在工具层的能力：新建规则、查重扫描、备份导出/导入（含预演）、回收门槛天数、手动整理一次。
+- 新增路由 `POST /dsh-soul-memory/backup`、`GET` 同路径列表；`/rules` 支持 `add` 与 `dupes`；`/tier` 的 `collect` 支持 `minAgeDays`；`/dreaming` 支持 `action=run`。
+
 ## 0.4.4
 
 按两份设计审查（信息架构 + 界面细节）改设置页：
