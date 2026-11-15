@@ -78,15 +78,20 @@ export function ingest(store, scope, session, { max = MAX_INGEST_PER_CALL, budge
  * FTS5 first (bm25 ranking), substring second for queries the tokenizer cannot express —
  * a Windows path is one "word" to FTS and a literal to LIKE.
  */
-export function searchIndex(store, scope, query, { limit = 3, maxBytes = 4000, maxSpanBytes = 1200, sessionId = null } = {}) {
+export function searchIndex(store, scope, query, { limit = 3, maxBytes = 4000, maxSpanBytes = 1200, sessionId = null, externalOnly = false } = {}) {
   const coverage = store.spanCoverage(scope)
   const terms = termSet(query)
   if (!terms.length || !coverage.spans) return { spans: [], bytes: 0, coverage }
 
   const match = terms.slice(0, 12).map(phrase).join(' OR ')
+  // Spans imported from another agent carry a `agent:session` id. Filtering after the
+  // query rather than inside SQL keeps the schema untouched; the over-fetch covers the
+  // mixed case, where most rows belong to this conversation.
+  const isExternal = (row) => String(row.session ?? '').includes(':')
+  const keep = (rows) => (externalOnly ? rows.filter(isExternal) : rows)
   let rows = []
-  try { rows = store.searchSpans(scope, match, limit * 4) } catch { rows = [] }
-  if (!rows.length) rows = store.findSpans(scope, String(query ?? '').trim(), limit * 2)
+  try { rows = keep(store.searchSpans(scope, match, externalOnly ? limit * 8 : limit * 4)) } catch { rows = [] }
+  if (!rows.length) rows = keep(store.findSpans(scope, String(query ?? '').trim(), externalOnly ? limit * 8 : limit * 2))
 
   const needles = String(query ?? '').toLowerCase().split(/\s+/).filter(token => token.length >= 2)
   const spans = []
@@ -99,9 +104,10 @@ export function searchIndex(store, scope, query, { limit = 3, maxBytes = 4000, m
     spans.push({
       seq: row.seq,
       // A hit from an earlier session is labelled as such: the model must know it cannot
-      // expand it, only read what is quoted here.
+      // expand it, only read what is quoted here. An external hit is never "current",
+      // even when the caller asked only for external rows.
       session: row.session ?? null,
-      current: sessionId === null ? true : row.session === sessionId,
+      current: externalOnly ? false : (sessionId === null ? true : row.session === sessionId),
       score: Math.round((Number(row.score) || 0) * 1000) / 1000,
       text,
     })

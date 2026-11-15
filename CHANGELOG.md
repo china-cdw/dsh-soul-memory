@@ -1,5 +1,13 @@
 # 变更日志
 
+## 0.4.1
+
+- **跨工具会话索引**：`soul_recall` 新增 `source=external`，把本机其他 AI 工具的对话转录读进已有的 span 索引，和本插件的原文一起检索。当前识别 QClaw / OpenClaw（`~/.qclaw/agents/**/sessions/*.jsonl`）与 Claude Code（`~/.claude/projects/**/*.jsonl`），存在才读、不存在不报错。
+  - 增量靠 span 水位（`spanWatermark`），同一文件重复调用只补新行；单文件上限 8MB、单次最多 4000 行，默认给 400ms 预算，超时留到下次。
+  - 结果带 `session`（形如 `qclaw:<id>`）与 `current: false`，`external.agents` 给出各来源命中数。
+  - 这对应 deja-vu 的「跨 47 个 AI 工具共享历史」能力，但不依赖 Go 二进制：只在 Node 里解析 JSONL。
+- 新增自检 `scripts/dsh-memory-external-test.mjs`（5 项：发现转录、导入、外部独检、水位去重、追加只补新增），断言总数 249 → 254。
+
 ## 0.4.0
 
 - **衰减默认开**：`memory.dynamics` 从默认 `false` 改为 `true`，检索按 ACT-R 激活值排序，久不命中的旧节点自然靠后（不删除）；关掉恢复固定权重。

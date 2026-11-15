@@ -252,14 +252,42 @@ window.__ModuleLoader__.load({
 
     const store = createStore()
 
-    // useSyncExternalStore 会在提交阶段补一次快照比对，
-    // 手写 get()+effect 订阅会漏掉「订阅建立前刚落地」的那次 publish。
+    // 不用 useSyncExternalStore：宿主提供的 React 若没有这个 API，
+    // 整个设置页会渲染失败、外壳只显示一句通用错误，很难定位。
+    // useState + 订阅已经足够（subscribe 回调里总是取最新快照）。
     function useSoul() {
-      const snap = React.useSyncExternalStore(store.subscribe, store.get)
+      const [snap, setSnap] = useState(() => store.get())
       useEffect(() => {
+        const off = store.subscribe(() => setSnap(store.get()))
         if (!store.get().state && !store.get().loading) store.refresh()
+        return off
       }, [])
       return snap
+    }
+
+    // 渲染出错时把真实原因显示出来，而不是让外壳兜底成「系统错误」。
+    class ErrorGuard extends React.Component {
+      constructor(props) {
+        super(props)
+        this.state = { error: null }
+      }
+
+      static getDerivedStateFromError(error) {
+        return { error }
+      }
+
+      componentDidCatch(error) {
+        console.error('[dsh-soul-memory] render failed', error)
+      }
+
+      render() {
+        if (this.state.error) {
+          const detail = String((this.state.error && this.state.error.message) || this.state.error)
+          return h('div', { className: 'dsm-banner', 'data-tone': 'error' },
+            '灵魂记忆渲染失败：' + detail + '（详细信息见浏览器控制台）')
+        }
+        return this.props.children
+      }
     }
 
     // ---------------------------------------------------------------- 小组件
@@ -1346,7 +1374,7 @@ window.__ModuleLoader__.load({
           id: 'soul-memory',
           order: 60,
           label: () => '灵魂记忆',
-        }, SoulSection))
+        }, (props) => h(ErrorGuard, null, h(SoulSection, props))))
 
         ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
           name: 'settings.section.icon',
@@ -1358,13 +1386,13 @@ window.__ModuleLoader__.load({
           name: 'conversation.composer.dock',
           id: 'soul-memory-inline',
           order: 30,
-        }, InlineNotice))
+        }, (props) => h(ErrorGuard, null, h(InlineNotice, props))))
 
         ctx.slots.inject('shell.overlay', () => ctx.slots.register({
           name: 'shell.overlay',
           id: 'soul-memory-floating',
           order: 40,
-        }, FloatingPanel))
+        }, (props) => h(ErrorGuard, null, h(FloatingPanel, props))))
       },
     }
   },

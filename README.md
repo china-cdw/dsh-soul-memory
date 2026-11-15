@@ -23,6 +23,7 @@
 | 长会话被压缩后，旧过程细节消失 | 桥接 billion-context 的会话压缩摘要，只读检索 |
 | 不知道前几天到底在做什么 | 回合日志按天记一行「要了什么、写了什么、产物在哪」，`memory_journal` 直接读 |
 | 想换电脑或怕误删 | `memory_backup` 一键导出 JSON，导入默认只预演、写前自动快照 |
+| 在别的 AI 工具里干过的活找不回来 | `soul_recall source=external` 读 QClaw/OpenClaw 与 Claude Code 的对话转录，和本插件原文一起检索 |
 
 ## 0.4.0 的记忆行为
 
@@ -167,7 +168,7 @@ dsh plugin --profile desktop add "$PWD"
 | `memory_backup` | 备份/搬家：导出 JSON、列备份、从备份恢复 | `action`（export/list/import）、`file?`、`apply?` |
 | `memory_journal` | 回合日志：按天看「这一轮做了什么」 | `action`（read/list）、`days?` |
 | `lessons` | 踩坑记录 | `action`（list/forget/clear）、`text?`、`limit?`（默认 50，上限 200） |
-| `soul_recall` | 从会话图谱/历史原文回捞（结果带 `confidence`：exact/partial/related） | `query`、`k?`、`source?`（auto/quote/graph） |
+| `soul_recall` | 从会话图谱/历史原文/其他 AI 工具的转录里回捞（结果带 `confidence`：exact/partial/related） | `query`、`k?`、`source?`（auto/quote/graph/external） |
 | `soul_expand` | 按 seq 区间展开原文（默认 2000 字节 / 200 条，上限 20000 / 1000）；首条事件被裁剪时用 `from=resume.seq` + `offset=resume.offset` 续读，其他截断用 `from=to+1`；零预算返回的 `next` 即续读起点 | `from`、`to`（必填，0–1000000）；`limit?`、`maxEvents?`、`offset?`（默认 2000 / 200 / 0） |
 
 写入规则：`memory_write` 会做近重复检查（相似度 ≥0.55 拒写，加 `force: true` 可强写）。
