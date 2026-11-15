@@ -101,6 +101,11 @@ window.__ModuleLoader__.load({
 .dsm-rule-row{display:flex;align-items:flex-start;gap:8px;justify-content:space-between;padding:8px 12px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l3)}
 .dsm-rule-text{font-size:12px;line-height:1.5;flex:1;min-width:0;word-break:break-word}
 .dsm-rule-main{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
+    .dsm-sess{display:flex;align-items:center;gap:6px;padding:2px 0 0}
+    .dsm-sess-btn{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:var(--dsw-alias-label-secondary,#666);border-radius:999px;font-size:11px;line-height:1;padding:3px 8px;cursor:pointer}
+    .dsm-sess-btn[data-mode="readonly"]{color:var(--dsw-alias-state-warning-primary,#b8860b);border-color:currentColor}
+    .dsm-sess-btn[data-mode="off"]{color:var(--dsw-alias-label-tertiary,#999);border-style:dashed}
+    .dsm-sess-btn:disabled{opacity:.6;cursor:default}
 .dsm-meta-soft{font-size:11px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
 .dsm-banner{border-radius:var(--dsw-radius-md);padding:8px 12px;font-size:12px}
 .dsm-banner[data-tone="error"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 12%,transparent);color:var(--dsw-alias-state-error-primary)}
@@ -1008,6 +1013,12 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = useState(null)
       // 暂停写记忆单独一条，免得它的反馈出现在上面两张卡片的提示位。
       const [pauseNotice, setPauseNotice] = useState(null)
+      const [sessions, setSessions] = useState([])
+      useEffect(() => {
+        call('dsh-soul-memory/session')
+          .then((res) => setSessions(Array.isArray(res.modes) ? res.modes : []))
+          .catch(() => {})
+      }, [])
       // 暂停会静默关掉自动记忆，点一次就生效太容易误触：先进入确认态，再点一次才写。
       const [confirmingPause, setConfirmingPause] = useState(false)
 
@@ -1168,6 +1179,27 @@ window.__ModuleLoader__.load({
           ),
           paused ? h('div', { className: 'dsm-meta', style: { marginTop: 8 } }, '下一轮生效') : null,
           pauseNotice ? h('div', { style: { marginTop: 10 } }, h(Banner, { tone: pauseNotice.tone }, pauseNotice.text)) : null,
+        ),
+
+        h('div', { className: 'dsm-card' },
+          h('h3', null, '跨会话记忆'),
+          h('p', { className: 'dsm-hint' }, '只影响单个对话：关掉后这次对话不写新记忆，也不再主动带出旧的；换新对话自动恢复。也可以直接对模型说「关闭跨会话记忆」，或点输入框下方的「记忆：正常」胶囊切换。'),
+          sessions.length === 0
+            ? h('div', { className: 'dsm-meta' }, '目前没有对话处于只读或关闭状态。')
+            : h('div', { className: 'dsm-rule-list' }, sessions.map((item) => h('div', { className: 'dsm-rule-row', key: item.session },
+                h('div', { className: 'dsm-rule-main' },
+                  h('div', { className: 'dsm-rule-text' }, String(item.session || '').slice(0, 12) + '…'),
+                  h('div', { className: 'dsm-meta' }, item.mode === 'off' ? '已关闭' : '只读'),
+                ),
+                h(Button, {
+                  tone: 'ghost',
+                  onClick: () => {
+                    call('dsh-soul-memory/session', { session: item.session, mode: 'normal' })
+                      .then(() => setSessions((cur) => cur.filter((x) => x.session !== item.session)))
+                      .catch(() => {})
+                  },
+                }, '恢复'),
+              ))),
         ),
       )
     }
@@ -1678,6 +1710,45 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------------------------------------------------------- 提示条
+    // 当前会话 id：不同宿主版本暴露的位置不一样，按顺序试。
+    function sessionIdOf(ctx) {
+      try {
+        const id = ctx?.session?.id ?? ctx?.sessionId ?? globalThis.__DSH_BOOT__?.session?.id ?? ''
+        return String(id || '')
+      } catch { return '' }
+    }
+
+    function SessionBadge(props) {
+      const sid = String(props?.sessionId || '')
+      const [mode, setMode] = React.useState('')
+      const [busy, setBusy] = React.useState(false)
+      const load = React.useCallback(() => {
+        if (!sid) return
+        call('dsh-soul-memory/session?session=' + encodeURIComponent(sid))
+          .then((res) => setMode(String(res.mode || 'normal')))
+          .catch(() => {})
+      }, [sid])
+      React.useEffect(() => { load() }, [load])
+      if (!sid) return null
+      const next = mode === 'normal' ? 'readonly' : mode === 'readonly' ? 'off' : 'normal'
+      const label = mode === 'readonly' ? '记忆：只读' : mode === 'off' ? '记忆：已关闭' : '记忆：正常'
+      return h('div', { className: 'dsm-sess' },
+        h('button', {
+          type: 'button',
+          className: 'dsm-sess-btn',
+          'data-mode': mode || 'normal',
+          disabled: busy,
+          title: '点一下切换：正常 → 只读 → 关闭（只影响这个对话）',
+          onClick: () => {
+            setBusy(true)
+            call('dsh-soul-memory/session', { session: sid, mode: next })
+              .then(() => { setMode(next); store.refresh({ force: true }) })
+              .catch(() => {})
+              .finally(() => setBusy(false))
+          },
+        }, busy ? '切换中…' : label))
+    }
+
     function InlineNotice() {
       const snap = useSoul()
       const data = snap.state
@@ -1832,6 +1903,12 @@ window.__ModuleLoader__.load({
           id: 'soul-memory',
           order: 60,
         }, SoulIcon))
+
+        ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+          name: 'conversation.composer.dock',
+          id: 'soul-memory-mode',
+          order: 31,
+        }, (props) => h(ErrorGuard, null, h(SessionBadge, { sessionId: sessionIdOf(ctx) || props?.sessionId || '' }))))
 
         ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
           name: 'conversation.composer.dock',

@@ -24,6 +24,7 @@ import { runChecks } from './src/probe.js'
 import { registerCoreMemory, runDreaming, setDreamGenerator, setDreamNodeProvider, setDreamRestoreProvider, setDreamRetiredListProvider, setDreamRetireProvider, setSessionSeqProvider } from './src/core-memory.js'
 import { snapshotGraph } from './src/memory/util.js'
 import { appendTurn, readTurns } from './src/turnlog.js'
+import { modeOf, setMode } from './src/session-modes.js'
 import { withNotes } from './src/tool-notes.js'
 import { rememberMatch, rememberReminder } from './src/memory/remember.js'
 import { readUiSettings } from './src/ui-settings.js'
@@ -547,6 +548,18 @@ export function apply(ctx, input = {}) {
   const safe = fn => (...args) => { try { return fn(...args) } catch { /* observation must never break a turn */ } }
   const listen = (event, handler) => disposers.push(ctx.on(event, handler))
 
+// 会话级记忆开关：用户当面说一句就能切，不依赖模型记得调用工具。
+const MODE_RULES = [
+  { mode: 'off', re: /(关闭|关掉|停用|关死)(一下)?(跨会话)?(的)?记忆/ },
+  { mode: 'off', re: /(这次|本会话|当前对话|这个对话)[^。！？]{0,8}(别记|不要记|不用记|不记)/ },
+  { mode: 'normal', re: /(恢复|打开|开启|重新开启|重新打开)(一下)?(跨会话)?(的)?记忆/ },
+]
+function sessionModeIntent(text) {
+  const raw = String(text || '')
+  for (const rule of MODE_RULES) if (rule.re.test(raw)) return rule.mode
+  return ''
+}
+
     // ---- observation ------------------------------------------------------
     listen('agent/pre-step', async (payload, next) => {
       const decision = await next()
@@ -564,7 +577,11 @@ export function apply(ctx, input = {}) {
           if (!text.trim()) continue
           // 宿主注入的运行时上下文/技能目录不是人的话：不猜意图、不当纠正、不进缓冲。
           if (injected(text)) continue
-          if (config.memory.enabled && !memoryPaused) {
+          // 用户当面说「关闭跨会话记忆」：立刻切档，不等模型决定。
+          const modeWanted = sessionModeIntent(text)
+          if (modeWanted) { safe(() => { setMode(sid, modeWanted).catch(() => {}) })() }
+          const sessionWritable = modeOf(sid) === 'normal'
+          if (config.memory.enabled && !memoryPaused && sessionWritable) {
             const hit = rememberMatch(text)
             if (hit) rememberCue.arm(sid, bounded(text, 8000), hit.index)
             // 每个 step 只推进一格（同一 step 可能排了多条人类消息）；text() 只读，避免 assemble + refreshContext 双扣。
@@ -572,7 +589,7 @@ export function apply(ctx, input = {}) {
           }
           // Buffer the raw message: one normalizer decides what a block is, and it is the
           // same one that the offline bench exercises.
-          if (config.memory.enabled && !memoryPaused) memory.push(sid, { type: 'user/message', data: { message } })
+          if (config.memory.enabled && !memoryPaused && sessionWritable) memory.push(sid, { type: 'user/message', data: { message } })
           if (config.memory.enabled) {
             // Rule-based sufficiency router: no model call, just "does this question touch
             // anything the card already says?". Below the threshold the model is about to
@@ -662,7 +679,7 @@ export function apply(ctx, input = {}) {
         }
         // Compile the finished turn into the skeleton. Free, local, and outside the prompt:
         // the model never sees an experience until the projection decides it is worth bytes.
-        if (state?.scope && config.memory.enabled) {
+        if (state?.scope && config.memory.enabled && modeOf(sid) === 'normal') {
           const events = memory.take(sid)
           const cwd = cwdBySession.get(sid) ?? null
           let captured = null
@@ -743,6 +760,10 @@ export function apply(ctx, input = {}) {
             const cwd = components.cwdFor(agent)
             if (!cwd) return ''
             try {
+              // 会话级开关：关掉/只读时不再把旧记忆带进提示，只留一行说明。
+              const turnMode = modeOf(String(agent.session.id))
+              if (turnMode === 'off') return '## 跨会话记忆\n- 本会话已关闭跨会话记忆：不要写入新记忆，也不要主动检索旧记忆；用户明确让你查时再说。\n'
+              if (turnMode === 'readonly') return '## 跨会话记忆\n- 本会话处于只读：不要写入新记忆，可以检索和引用旧记忆。\n'
               const scope = projectScope({ id: agent.session.id, header: { cwd } })
               const card = projectionText(store, scope, config.memory.projectionBytes, { sessionId: String(agent.session.id), dynamics: config.memory.dynamics, promote: config.memory.promote, cues: cues.get(String(agent.session.id)) ?? null })
               const cue = rememberCue.read(String(agent.session.id))

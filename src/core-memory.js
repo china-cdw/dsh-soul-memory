@@ -32,6 +32,7 @@ import {
 } from './persona.js';
 import { registerCodingRules } from './coding.js';
 import { readUiSettings, uiSettingsPath } from './ui-settings.js';
+import { MODE_LABELS, SESSION_MODES, modeOf, setMode } from './session-modes.js';
 import { registerLessons } from './lessons.js';
 import { biliStatus, searchBili } from './memory/bili.js'
 import { DREAMING_DEFAULTS, buildCleanupRequest, chunkItems, dreamCandidates, parseCleanupVerdicts, pickDigests, readDreamingState, withDreamingRunLock, writeDreamingState } from './dreaming.js';
@@ -684,7 +685,35 @@ async function fingerprintPaths(paths) {
   return out;
 }
 
+function modeHint(mode) {
+  if (mode === 'readonly') return '不写新记忆，仍然能读到旧记忆。';
+  if (mode === 'off') return '不写新记忆，也不再主动带出旧记忆；手动让我查仍然可以。';
+  return '读写都正常。';
+}
+
+async function modeTool(args, exec = null) {
+  const sid = String(args.session || exec?.agent?.session?.id || '').trim();
+  if (!sid) return failMessage('E_ARG', '拿不到会话 id，请在这个会话里直接设置。');
+  const action = String(args.action || 'get');
+  if (action === 'get') {
+    const mode = modeOf(sid);
+    return '本会话记忆模式：' + MODE_LABELS[mode] + '（' + mode + '）';
+  }
+  if (action === 'set') {
+    const mode = String(args.mode || '');
+    if (!SESSION_MODES.includes(mode)) return failMessage('E_ARG', 'mode 只能是 normal / readonly / off。');
+    await setMode(sid, mode);
+    return '已切到「' + MODE_LABELS[mode] + '」：' + modeHint(mode) + '（只影响这个会话）';
+  }
+  return failMessage('E_ARG', 'action 只能是 get / set。');
+}
+
 async function writeNote(args, exec = null) {
+  // 会话级关闭：这次对话不想被记住，连归档都不写。
+  const modeSession = String(exec?.agent?.session?.id ?? args.session ?? "").trim();
+  if (modeSession && modeOf(modeSession) !== "normal") {
+    return failMessage("E_DISABLED", "本会话已关闭跨会话记忆，这条没有保存。");
+  }
   // 用户可一键暂停「写记忆」（灵魂记忆设置页）：聊私事时不该落盘。
   // 放在最前面，连查重和指纹计算都不做，避免任何副作用。
   if (readUiSettings().memoryPaused) {
@@ -928,7 +957,11 @@ async function deleteNote(ref) {
   } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
 
-async function editCore(args) {
+async function editCore(args, exec = null) {
+  const coreSession = String(exec?.agent?.session?.id ?? "").trim();
+  if (coreSession && modeOf(coreSession) !== "normal") {
+    return failMessage("E_DISABLED", "本会话已关闭跨会话记忆，核心记忆没有改动。");
+  }
   const action = args.action;
   if (action !== 'append' && action !== 'replace' && action !== 'remove') {
     return failMessage('E_ARG', '编辑失败：action 必须是 append / replace / remove。');
@@ -1343,6 +1376,21 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
   }).catch((e) => console.error('dsh-soul-memory: bootstrap failed', e));
 
   const defs = [
+    {
+      name: 'memory_mode',
+      description: '会话级记忆开关（只影响当前这次对话，换新会话自动恢复）。三档：normal 正常读写；readonly 不写新记忆但仍能读到旧的；off 不写也不再主动带出旧记忆。用户说「这次别记」「关闭跨会话记忆」「临时聊聊」时调用 set off；说「恢复记忆」时调 set normal。',
+      notes: '写 <DSH home>/memory/SESSION-MODES.json；只影响本会话；不调用模型、不花钱。',
+      parameters: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          action: { type: 'string', enum: ['get', 'set'], description: 'get=查看；set=切换' },
+          mode: { type: 'string', enum: ['normal', 'readonly', 'off'], description: 'set 时必填' },
+          session: { type: 'string', description: '可选：会话 id' },
+        },
+        required: ['action'],
+      },
+      execute: (args, exec) => modeTool(args, exec),
+    },
     {
       name: 'memory_write',
       description: '保存一条归档记忆（episodic note），跨所有会话持久。适用：用户偏好/纠正、项目决策、环境事实、重要结论等未来会话可能需要的内容。内容要自包含（未来会话看不到当前对话）。疑似重复时不会写入，会返回已有候选；确认要新增时带 force=true；若是修正某条旧记忆（而不是新增），带 supersedes=<旧 id>，旧条目会被标记为「已被取代」。',

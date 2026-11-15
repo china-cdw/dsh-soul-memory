@@ -19,6 +19,7 @@ import { runDreaming } from './core-memory.js';
 import { readUiSettings, writeUiSettings, validateUiPatch, MAX_NICKNAME, MIN_RULES_BUDGET, MAX_RULES_BUDGET } from './ui-settings.js';
 import { readPersona, listPresets, MAX_CUSTOM_TEXT } from './persona.js';
 import { GC_DEFAULTS, tierCounts, collectionCandidates } from './tiering.js';
+import { MODE_LABELS, SESSION_MODES, listModes, modeOf, setMode } from './session-modes.js';
 import { memoryPath } from './memory/util.js';
 import { readDreamingState, writeDreamingState, withDreamingRunLock } from './dreaming.js';
 import { readTurns } from './turnlog.js';
@@ -767,6 +768,46 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
         sendJson(res, 200, await memoriesOf());
       } catch (error) {
         console.error('dsh-soul-memory: 读取记忆内容失败', error);
+        sendJson(res, 500, { error: '服务器内部错误，详情见宿主日志' });
+      }
+    },
+  }));
+
+  // 会话级记忆开关：只影响单个会话，换新会话自动回到正常。
+  disposers.push(route({
+    kind: 'exact',
+    path: PREFIX + 'session',
+    async handler(req, res) {
+      try {
+        if (!guard(req, res, req.method === 'POST')) return;
+        if (req.method === 'GET') {
+          const sid = new URL(req.url ?? '/', 'http://dsh.internal').searchParams.get('session') || '';
+          sendJson(res, 200, {
+            modes: listModes(),
+            labels: MODE_LABELS,
+            options: SESSION_MODES,
+            session: sid,
+            mode: sid ? modeOf(sid) : 'normal',
+          });
+          return;
+        }
+        if (req.method !== 'POST') { sendJson(res, 405, { error: '该接口只支持 GET / POST' }); return; }
+        if (!requireToken(req, res)) return;
+        const body = await readJsonBody(req);
+        if (body.error) return sendJson(res, 400, { error: '请求体读取失败' });
+        if (body.tooLarge) return sendJson(res, 413, { error: '请求体过大' });
+        if (!body.body) return sendJson(res, 400, { error: '请求体必须是 JSON 对象' });
+        const sid = String(body.body.session ?? '').trim();
+        const mode = String(body.body.mode ?? '').trim();
+        if (!sid) { sendJson(res, 400, { error: 'session 必填' }); return; }
+        if (!SESSION_MODES.includes(mode)) {
+          sendJson(res, 400, { error: 'mode 只能是 normal / readonly / off' });
+          return;
+        }
+        await setMode(sid, mode);
+        sendJson(res, 200, { session: sid, mode, label: MODE_LABELS[mode] });
+      } catch (error) {
+        console.error('dsh-soul-memory: 会话记忆开关失败', error);
         sendJson(res, 500, { error: '服务器内部错误，详情见宿主日志' });
       }
     },

@@ -110,7 +110,7 @@ try {
   // 与 index.js 接线方式一致：webServer 是可选的注入服务，回调参数才是带它的 ctx。
   ctx.inject(['webServer'], (c) => { registerSoulUiRoutes(c, { store: null }) });
 
-  await s.test('注册九条 exact 路由', () => {
+  await s.test('注册十条 exact 路由', () => {
     const paths = routes.map((r) => r.path).sort();
     assert.deepEqual(paths, [
       '/dsh-soul-memory/backup',
@@ -119,6 +119,7 @@ try {
       '/dsh-soul-memory/notes',
       '/dsh-soul-memory/pending',
       '/dsh-soul-memory/rules',
+      '/dsh-soul-memory/session',
       '/dsh-soul-memory/state',
       '/dsh-soul-memory/tier',
       '/dsh-soul-memory/ui',

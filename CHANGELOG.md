@@ -1,5 +1,11 @@
 # 变更日志
 
+## 0.4.7
+
+- 会话级记忆开关：三档（正常 / 只读 / 关闭），只影响单个对话，换新会话自动恢复。
+- 三种触发：设置页「跨会话记忆」卡、输入框下方的「记忆：正常」胶囊、对话里直接说「关闭跨会话记忆」。
+- 关闭或只读时，系统提示只留一行说明，不再注入旧记忆卡片；`memory_write` / `memory_archive` 等写操作直接返回 E_DISABLED。
+- 新增 `memory_mode` 工具与 `GET / POST /dsh-soul-memory/session` 接口。
 ## 0.4.6
 
 - 归档笔记可以直接看正文、改正文、删除：新增 `POST /dsh-soul-memory/notes`（read / save / delete），删除写墓碑不物理删，保存前留 `.bak`。
