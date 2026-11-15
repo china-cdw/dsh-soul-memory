@@ -694,6 +694,65 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
     },
   }));
 
+  // POST /dsh-soul-memory/notes —— 单条归档笔记：读正文 / 保存正文 / 删除（写墓碑，不物理删）
+  disposers.push(route({
+    kind: 'exact',
+    path: PREFIX + 'notes',
+    async handler(req, res) {
+      try {
+        if (!guard(req, res, true)) return;
+        if (!requireToken(req, res)) return;
+        if (req.method !== 'POST') return sendJson(res, 405, { error: '该接口只支持 POST' });
+        const body = await readJsonBody(req);
+        if (body.error) return sendJson(res, 400, { error: '请求体读取失败' });
+        if (body.tooLarge) return sendJson(res, 413, { error: '请求体过大' });
+        if (!body.body) return sendJson(res, 400, { error: '请求体必须是 JSON 对象' });
+        const { action, id } = body.body;
+        if (typeof id !== 'string' || !/^[A-Za-z0-9._-]+$/.test(id) || id.includes('..')) {
+          return sendJson(res, 400, { error: 'id 不合法' });
+        }
+        const name = id.endsWith('.md') ? id : id + '.md';
+        const file = join(memoryPath('notes'), name);
+        let text;
+        try {
+          text = readFileSync(file, 'utf8');
+        } catch {
+          return sendJson(res, 404, { error: '没有这条笔记' });
+        }
+        const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+        const head = match ? match[0] : '';
+        const meta = match ? match[1] : '';
+        const bodyText = match ? text.slice(match[0].length) : text;
+        if (action === 'read') {
+          return sendJson(res, 200, { ok: true, id, meta, body: bodyText.replace(/^\r?\n/, ''), deleted: /^deleted:\s*true/m.test(meta) });
+        }
+        if (action === 'save') {
+          if (typeof body.body.bodyText !== 'string') return sendJson(res, 400, { error: 'save 需要 bodyText' });
+          if (body.body.bodyText.length > 60000) return sendJson(res, 400, { error: '正文太长（上限 6 万字符）' });
+          const stamp = new Date().toISOString();
+          let nextMeta = meta;
+          if (/^updated:.*$/m.test(nextMeta)) nextMeta = nextMeta.replace(/^updated:.*$/m, 'updated: ' + stamp);
+          else nextMeta = nextMeta + '\nupdated: ' + stamp;
+          writeFileSync(file + '.bak', text);
+          writeFileSync(file, '---\n' + nextMeta + '\n---\n\n' + body.body.bodyText);
+          return sendJson(res, 200, { ok: true, id, saved: true });
+        }
+        if (action === 'delete') {
+          let nextMeta = /^deleted:.*$/m.test(meta)
+            ? meta.replace(/^deleted:.*$/m, 'deleted: true')
+            : meta + '\ndeleted: true';
+          writeFileSync(file + '.bak', text);
+          writeFileSync(file, '---\n' + nextMeta + '\n---\n\n（此记忆已删除）');
+          return sendJson(res, 200, { ok: true, id, deleted: true });
+        }
+        return sendJson(res, 400, { error: 'action 只能是 read / save / delete' });
+      } catch (error) {
+        console.error('dsh-soul-memory: 笔记操作失败', error);
+        sendJson(res, 500, { error: '服务器内部错误，详情见宿主日志' });
+      }
+    },
+  }));
+
   // GET /dsh-soul-memory/memories —— 记忆内容只读快照
   disposers.push(route({
     kind: 'exact',

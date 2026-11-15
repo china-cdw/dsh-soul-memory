@@ -1371,6 +1371,67 @@ window.__ModuleLoader__.load({
         }
       }
       useEffect(() => { loadBackups() }, [])
+      // 单条笔记：查看正文 / 编辑正文 / 删除（后端写墓碑，文件里留 .bak）
+      const [opened, setOpened] = useState(null)
+      const [noteBody, setNoteBody] = useState(null)
+      const [editing, setEditing] = useState(null)
+      const [noteBusy, setNoteBusy] = useState(false)
+      const [confirmingDelete, setConfirmingDelete] = useState(null)
+      const [noteNote, setNoteNote] = useState(null)
+      const readNote = async (id) => {
+        if (opened === id) { setOpened(null); return }
+        setOpened(id)
+        setNoteBody(null)
+        try {
+          const res = await call('dsh-soul-memory/notes', { action: 'read', id })
+          const result = (res && res.result) || res || {}
+          setNoteBody({ id, body: String(result.body || '') })
+        } catch (error) {
+          setNoteNote({ tone: 'error', text: String(error.message || error) })
+          setOpened(null)
+        }
+      }
+      const startEdit = async (note) => {
+        setNoteNote(null)
+        setEditing({ id: note.id, title: note.title, body: '', loading: true })
+        try {
+          const res = await call('dsh-soul-memory/notes', { action: 'read', id: note.id })
+          const result = (res && res.result) || res || {}
+          setEditing({ id: note.id, title: note.title, body: String(result.body || '') })
+        } catch (error) {
+          setNoteNote({ tone: 'error', text: String(error.message || error) })
+          setEditing(null)
+        }
+      }
+      const saveNote = async () => {
+        if (!editing || noteBusy) return
+        setNoteBusy(true)
+        try {
+          await call('dsh-soul-memory/notes', { action: 'save', id: editing.id, bodyText: editing.body })
+          setNoteNote({ tone: 'ok', text: '已保存，下一轮生效。' })
+          setEditing(null)
+          await load()
+        } catch (error) {
+          setNoteNote({ tone: 'error', text: String(error.message || error) })
+        } finally {
+          setNoteBusy(false)
+        }
+      }
+      const deleteNote = async (id) => {
+        if (noteBusy) return
+        setNoteBusy(true)
+        try {
+          await call('dsh-soul-memory/notes', { action: 'delete', id })
+          setNoteNote({ tone: 'ok', text: '已删除（文件里留了墓碑，旧内容在 .bak 和备份里还能找回）。' })
+          setConfirmingDelete(null)
+          setOpened(null)
+          await load()
+        } catch (error) {
+          setNoteNote({ tone: 'error', text: String(error.message || error) })
+        } finally {
+          setNoteBusy(false)
+        }
+      }
       const doExport = async () => {
         if (backupBusy) return
         setBackupBusy(true)
@@ -1418,9 +1479,23 @@ window.__ModuleLoader__.load({
           ),
           notes.length
             ? h('div', { className: 'dsm-rule-list' },
-              notes.slice(0, 120).map((note) => h('div', { key: note.id, className: 'dsm-rule-row' },
-                h('span', { className: 'dsm-rule-text' }, note.title),
-                h('span', { className: 'dsm-meta-soft' }, note.chars + ' 字'),
+              notes.slice(0, 120).map((note) => h('div', { key: note.id, className: 'dsm-note' },
+                h('div', { className: 'dsm-rule-row' },
+                  h('span', { className: 'dsm-rule-text' }, note.title),
+                  h('span', { className: 'dsm-meta-soft' }, note.chars + ' 字'),
+                  h('span', { className: 'dsm-row' },
+                    h(Button, { tone: 'ghost', onClick: () => readNote(note.id) }, opened === note.id ? '收起' : '查看'),
+                    h(Button, { tone: 'ghost', onClick: () => startEdit(note) }, '编辑'),
+                    confirmingDelete === note.id
+                      ? h(Button, { tone: 'danger', onClick: () => deleteNote(note.id) }, '确认删除')
+                      : h(Button, { tone: 'danger', onClick: () => setConfirmingDelete(note.id) }, '删除'),
+                  ),
+                ),
+                opened === note.id
+                  ? (noteBody && noteBody.id === note.id
+                    ? h('pre', { className: 'dsm-rules', style: { marginTop: 8, maxHeight: 320, overflow: 'auto' } }, noteBody.body)
+                    : h('p', { className: 'dsm-hint', style: { marginTop: 8 } }, '正在读取…'))
+                  : null,
               )))
             : h(Empty, null, '还没有归档笔记。'),
         ),
@@ -1462,6 +1537,36 @@ window.__ModuleLoader__.load({
             ))
             : h(Empty, null, '还没有回合日志。'),
         ),
+        noteNote ? h('div', { style: { marginTop: 12 } }, h(Banner, { tone: noteNote.tone }, noteNote.text)) : null,
+        editing ? h('div', { className: 'dsm-modal-mask', onClick: () => setEditing(null) },
+          h('div', {
+            className: 'dsm-modal',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': '编辑笔记',
+            onClick: (event) => event.stopPropagation(),
+          },
+            h('div', { className: 'dsm-modal-head' },
+              h('div', { className: 'dsm-modal-title' }, editing.title || '编辑笔记'),
+              h(Button, { tone: 'ghost', onClick: () => setEditing(null) }, '关闭'),
+            ),
+            h('label', { className: 'dsm-field-label' }, '正文'),
+            editing.loading
+              ? h('p', { className: 'dsm-hint' }, '正在读取…')
+              : h('textarea', {
+                className: 'dsm-input',
+                rows: 14,
+                style: { width: '100%', resize: 'vertical', lineHeight: 1.7 },
+                value: editing.body,
+                onChange: (event) => setEditing({ ...editing, body: event.target.value }),
+              }),
+            h('p', { className: 'dsm-hint' }, '只改正文；标题、标签和创建时间不动。保存后下一轮生效。'),
+            h('div', { className: 'dsm-modal-actions' },
+              h(Button, { tone: 'ghost', onClick: () => setEditing(null) }, '取消'),
+              h(Button, { tone: 'primary', disabled: noteBusy || editing.loading, onClick: saveNote }, noteBusy ? '保存中…' : '保存'),
+            ),
+          ),
+        ) : null,
       )
     }
 
