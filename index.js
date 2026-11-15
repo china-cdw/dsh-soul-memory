@@ -203,7 +203,7 @@ const tools = [
     properties: {
       query: str('要回捞的关键词、路径、命令或错误码'),
       k: int('可选：原文片段条数，默认 3，最多 5（0 等同默认）', { minimum: 0, maximum: 5 }),
-      source: str('可选：auto（默认，先查图谱，命中少时翻原文）/ quote（只翻原文，含历史会话）/ graph（只查图谱）/ external（翻本机其他 AI 工具的对话记录）'),
+      source: str('可选：auto（默认，先查图谱，命中少时翻原文）/ quote（只翻原文，含历史会话）/ graph（只查图谱，不读不写原文）/ external（翻本机其他 AI 工具的对话记录）', { enum: ['auto', 'quote', 'graph', 'external'] }),
     },
     required: ['query'],
   },
@@ -815,11 +815,12 @@ export function apply(ctx, input = {}) {
                   external = refreshExternal(store, scope, { budgetMs: 500 })
                   external.agents = externalCoverage(store, scope)
                 }
-                if (wanted === 'quote' || wanted === 'external' || graph.hits.length < 2) {
+                // source=graph 是「只查图谱」：既不写 span、也不记 lookup，短路掉整段原文检索。
+                if (wanted !== 'graph' && (wanted === 'quote' || wanted === 'external' || graph.hits.length < 2)) {
                   if (wanted !== 'external') indexed = ingest(store, scope, session)
                   const found = searchIndex(store, scope, args.query, {
                     limit: Math.max(1, Math.min(5, Number(args.k) || 3)),
-                    sessionId: wanted === 'quote' || wanted === 'external' ? null : sid,
+                    currentSession: sid,
                     externalOnly: wanted === 'external',
                   })
                   spans = found.spans

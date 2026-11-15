@@ -118,6 +118,10 @@ export function importExternal(store, scope, source, { maxLines = MAX_LINES_PER_
   let line = from
   let rows = []
   for (; line < lines.length && rows.length < maxLines; line++) {
+    // Under a store with months of history the caller's budget has to bound the parse too,
+    // not just the number of files: an 8 MB transcript is a synchronous read away from
+    // making a "fast" recall feel hung.
+    if ((line & 63) === 0 && performance.now() - started > budgetMs) break
     const turn = turnOfLine(lines[line])
     if (!turn) continue
     const body = redact(turn.text).trim()

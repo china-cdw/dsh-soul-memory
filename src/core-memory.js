@@ -1475,17 +1475,17 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
               `- ${row.name}（${(row.bytes / 1024).toFixed(1)} KB，${row.mtime.slice(0, 16).replace('T', ' ')}）`).join('\n')
           }
           if (args.action === 'import') {
-            if (!args.file) return '缺少 file：先用 action=list 拿到文件名。'
+            if (!args.file) return '缺少 file：先用 action=list 拿到文件名。\n[err:E_ARG]'
             const bundle = await readBundle(args.file)
-            const result = await importBundle(bundle, { apply: Boolean(args.apply) })
+            const result = await importBundle(bundle, { apply: args.apply === true })
             const head = result.apply
-              ? `已导入 ${result.written} 个文件（导入前快照：${result.snapshot}）`
+              ? `已导入 ${result.written} 个文件${result.snapshot ? `（导入前快照：${result.snapshot}）` : ''}`
               : '预演（没有写入；加 apply=true 才执行）'
             return `${head}\n新增 ${result.added.length} 个、覆盖 ${result.changed.length} 个、未变 ${result.same} 个，共 ${result.total} 个。`
           }
-          return 'action 只能是 export / list / import'
+          return 'action 只能是 export / list / import\n[err:E_ARG]'
         } catch (error) {
-          return '备份操作失败：' + (error?.message ?? String(error))
+          return '备份操作失败：' + (error?.message ?? String(error)) + '\n[err:E_IO]'
         }
       },
     },
@@ -1502,13 +1502,19 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
         required: ['action'],
       },
       async execute(args) {
+        const action = String(args.action || 'read')
+        if (action !== 'read' && action !== 'list') return 'action 只能是 read / list\n[err:E_ARG]'
         try {
+          if (action === 'list') {
+            const names = await readTurns({ days: 60 })
+            if (!names.length) return '还没有回合日志。完成一轮有写入的任务后才会产生。'
+            return '回合日志：\n' + names.map(row => '- ' + row.name).join('\n')
+          }
           const rows = await readTurns({ days: Math.min(60, Number(args.days) || 7) })
           if (!rows.length) return '还没有回合日志。完成一轮有写入的任务后才会产生。'
-          if (args.action === 'list') return '回合日志：\n' + rows.map(row => '- ' + row.name).join('\n')
           return rows.map(row => `## ${row.name}\n${row.text}`).join('\n')
         } catch (error) {
-          return '读回合日志失败：' + (error?.message ?? String(error))
+          return '读回合日志失败：' + (error?.message ?? String(error)) + '\n[err:E_IO]'
         }
       },
     },

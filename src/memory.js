@@ -63,10 +63,12 @@ export function capture(store, scope, events, { hashOf = null } = {}) {
   const nodes = [...unique.values()]
   const edges = extracted.edges
   if (!nodes.length) return { nodes: 0, edges: 0, superseded: 0 }
-  // Close the validity interval of whatever these claims replace *before* writing, so the old
-  // row is already out of the card by the time the new one is projected in the same turn.
-  edges.push(...supersedeConflicts(store, scope, nodes))
-  store.recordNodes(scope, { nodes, edges })
+  // Close the validity interval of whatever these claims replace in the SAME transaction as
+  // the new rows: writing one and then the other leaves a window where a crash drops the old
+  // claim and never lands the new one, and the intake buffer is already drained by then.
+  const closing = new Set()
+  edges.push(...supersedeConflicts(store, scope, nodes, { collect: closing }))
+  store.recordNodes(scope, { nodes, edges, close: closing })
   const related = linkSemantically(store, scope, nodes)
   return { nodes: nodes.length, edges: edges.length + related, superseded: edges.filter(e => e.rel === 'supersedes').length }
 }
@@ -90,7 +92,7 @@ export function capture(store, scope, events, { hashOf = null } = {}) {
  */
 const REPLACES = /(?:改成|改用|换成|换成|不再|不用|改掉|作废|废弃|取代|替换|而不是|替换为|instead|switch(?:ed)? to|no longer|replace)/i
 
-export function supersedeConflicts(store, scope, nodes, { now = Date.now() } = {}) {
+export function supersedeConflicts(store, scope, nodes, { now = Date.now(), collect = null } = {}) {
   const candidates = nodes.filter(node => !node.pin || node.kind === 'constraint')
   if (!candidates.length) return []
   const existing = store.activeNodes(scope, 400)
@@ -120,8 +122,10 @@ export function supersedeConflicts(store, scope, nodes, { now = Date.now() } = {
       edges.push({ src: node.id, dst: other.id, rel: 'supersedes', w: 1 })
     }
   }
-  // Validity is closed after the edge list is complete: one write, one transaction.
-  for (const id of closed) store.supersede(id, now)
+  // Validity is closed by the caller, in the same transaction as the new nodes: closing here
+  // and writing after leaves a window where the old claim is gone and the new one never lands.
+  if (collect) for (const id of closed) collect.add(id)
+  else for (const id of closed) store.supersede(id, now)
   return edges
 }
 

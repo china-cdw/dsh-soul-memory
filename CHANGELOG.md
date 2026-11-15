@@ -1,5 +1,19 @@
 # 变更日志
 
+## 0.4.2
+
+- 修复备份导入的路径穿越：`files` 的 key 只允许 7 个已知文件名与 `notes/<安全名>.md`。
+- 修复 `current` 标记：跨会话与外部转录的命中不再被标成「本会话原话」。
+- 修复 `source=graph` 仍会写库（ingest / recordLookup）。
+- `source` 加 enum，拼错不再静默降级成 auto。
+- 修复外部来源检索：`session LIKE '%:%'` 下推到 SQL，本地行不再把外部命中挤出窗口。
+- 修复 `capture` 的两次写入：被取代的节点与新节点在同一事务里关闭与写入。
+- `/mem sleep` 只退役低层（不再收掉 progress），与 `memory_tier` 的「中层不回收」一致。
+- 路由注册失败会回滚已注册的路径，不再让下次热重载连锁失败。
+- `importExternal` 的 `budgetMs` 现在真的生效。
+- `memory_backup` / `memory_journal` 的错误带 `[err:CODE]`；`apply` 只认布尔真值；`memory_journal` 校验 action。
+- 测试 249 → 254。
+
 ## 0.4.1
 
 - **跨工具会话索引**：`soul_recall` 新增 `source=external`，把本机其他 AI 工具的对话转录读进已有的 span 索引，和本插件的原文一起检索。当前识别 QClaw / OpenClaw（`~/.qclaw/agents/**/sessions/*.jsonl`）与 Claude Code（`~/.claude/projects/**/*.jsonl`），存在才读、不存在不报错。

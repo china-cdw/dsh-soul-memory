@@ -77,21 +77,25 @@ export function ingest(store, scope, session, { max = MAX_INGEST_PER_CALL, budge
  *
  * FTS5 first (bm25 ranking), substring second for queries the tokenizer cannot express —
  * a Windows path is one "word" to FTS and a literal to LIKE.
+ *
+ * `currentSession` is the id of the conversation asking. A span from any other session —
+ * an earlier DSH conversation, or another agent's transcript — must not be marked
+ * `current`, because `soul_expand` can only reopen the current conversation: a seq from
+ * else­where would read a different passage.
  */
-export function searchIndex(store, scope, query, { limit = 3, maxBytes = 4000, maxSpanBytes = 1200, sessionId = null, externalOnly = false } = {}) {
+export function searchIndex(store, scope, query, { limit = 3, maxBytes = 4000, maxSpanBytes = 1200, currentSession = null, externalOnly = false } = {}) {
   const coverage = store.spanCoverage(scope)
   const terms = termSet(query)
   if (!terms.length || !coverage.spans) return { spans: [], bytes: 0, coverage }
 
   const match = terms.slice(0, 12).map(phrase).join(' OR ')
-  // Spans imported from another agent carry a `agent:session` id. Filtering after the
-  // query rather than inside SQL keeps the schema untouched; the over-fetch covers the
-  // mixed case, where most rows belong to this conversation.
-  const isExternal = (row) => String(row.session ?? '').includes(':')
-  const keep = (rows) => (externalOnly ? rows.filter(isExternal) : rows)
+  // Spans imported from another agent carry a `agent:session` id. The filter has to run
+  // inside the query (store.searchSpans `external`), not after LIMIT: otherwise local rows
+  // fill the window and an external-only search reports "nothing" while hits exist.
+  const external = externalOnly ? true : null
   let rows = []
-  try { rows = keep(store.searchSpans(scope, match, externalOnly ? limit * 8 : limit * 4)) } catch { rows = [] }
-  if (!rows.length) rows = keep(store.findSpans(scope, String(query ?? '').trim(), externalOnly ? limit * 8 : limit * 2))
+  try { rows = store.searchSpans(scope, match, externalOnly ? limit * 8 : limit * 4, { external }) } catch { rows = [] }
+  if (!rows.length) rows = store.findSpans(scope, String(query ?? '').trim(), externalOnly ? limit * 8 : limit * 2, { external })
 
   const needles = String(query ?? '').toLowerCase().split(/\s+/).filter(token => token.length >= 2)
   const spans = []
@@ -107,7 +111,7 @@ export function searchIndex(store, scope, query, { limit = 3, maxBytes = 4000, m
       // expand it, only read what is quoted here. An external hit is never "current",
       // even when the caller asked only for external rows.
       session: row.session ?? null,
-      current: externalOnly ? false : (sessionId === null ? true : row.session === sessionId),
+      current: externalOnly ? false : (currentSession !== null && row.session === currentSession),
       score: Math.round((Number(row.score) || 0) * 1000) / 1000,
       text,
     })

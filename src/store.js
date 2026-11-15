@@ -635,10 +635,16 @@ export class Store {
    * Persist extracted nodes and edges. Repeating the same node only raises its support:
    * recurrence is evidence, but it must never create a second copy of the same claim.
    */
-  recordNodes(scope, { nodes = [], edges = [] } = {}) {
+  recordNodes(scope, { nodes = [], edges = [], close = null } = {}) {
     if (!scope || (!nodes.length && !edges.length)) return 0
     const now = this.now()
     this.tx(() => {
+      // Claims this batch replaces are closed inside the same transaction: closing before
+      // writing meant a crash in between lost the old row without gaining the new one.
+      if (close && close.size) {
+        const closing = this.db.prepare('UPDATE node SET valid_to=?, seen=? WHERE id=? AND valid_to IS NULL')
+        for (const id of close) closing.run(now, now, id)
+      }
       // retired 的节点不在这里复活：否则重放同一批抽取会静默撤销 retire / merge 去重。
       // 恢复只走显式的 dreaming restore。
       const insert = this.db.prepare(`INSERT INTO node(
@@ -924,17 +930,27 @@ export class Store {
     return { spans: row?.n ?? 0, from: row?.a ?? null, to: row?.b ?? null, sessions: row?.s ?? 0 }
   }
 
-  /** Full-text search over stored spans. bm25 is lower-is-better. */
-  searchSpans(scope, match, limit) {
+  /**
+   * Full-text search over stored spans. bm25 is lower-is-better.
+   *
+   * `external` filters by session shape *inside* the query: another agent's transcript
+   * carries a `agent:session` id. Filtering after LIMIT would let local rows push external
+   * hits out of the window, which reads to the caller as "that store has nothing".
+   */
+  searchSpans(scope, match, limit, { external = null } = {}) {
+    const filter = external === true ? " AND s.session LIKE '%:%'"
+      : external === false ? " AND s.session NOT LIKE '%:%'" : ''
     return this.db.prepare(`SELECT s.seq, s.session, s.text, bm25(span_fts) score
       FROM span_fts JOIN span s ON s.id = span_fts.rowid
-      WHERE span_fts MATCH ? AND span_fts.scope=?
+      WHERE span_fts MATCH ? AND span_fts.scope=?${filter}
       ORDER BY score LIMIT ?`).all(match, scope, limit)
   }
 
   /** Substring fallback for queries the tokenizer cannot express (paths, mixed scripts). */
-  findSpans(scope, needle, limit) {
-    return this.db.prepare('SELECT seq, session, text FROM span WHERE scope=? AND text LIKE ? ORDER BY seq LIMIT ?')
+  findSpans(scope, needle, limit, { external = null } = {}) {
+    const filter = external === true ? " AND session LIKE '%:%'"
+      : external === false ? " AND session NOT LIKE '%:%'" : ''
+    return this.db.prepare(`SELECT seq, session, text FROM span WHERE scope=? AND text LIKE ?${filter} ORDER BY seq LIMIT ?`)
       .all(scope, `%${String(needle).replaceAll('%', '')}%`, limit)
   }
 

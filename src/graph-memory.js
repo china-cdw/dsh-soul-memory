@@ -411,8 +411,12 @@ export function propagate(nodes, edges, seeds, { alpha = 0.5, iterations = 3, mi
  */
 export function periphery(view, { aQuantile = 0.25, degFloor = 1, minAgeDays = 7, maxImportance = 3 } = {}) {
   const floor = view.q25
+  // progress is a note about what happened, not a disposable artifact: memory_tier keeps it
+  // in the middle tier, so sleep must not retire it either. Its importance defaults to 2,
+  // which maxImportance alone lets through.
   return view.list.filter(entry =>
-    !entry.pin
+    entry.kind !== 'progress'
+    && !entry.pin
     && entry.importance <= maxImportance
     && entry.hits === 0
     && entry.ageDays >= minAgeDays

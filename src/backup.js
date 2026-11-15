@@ -108,7 +108,12 @@ export async function readBundle(name) {
  * 导入。dry-run 只对比「新增 / 覆盖 / 未变」，apply 才写。
  * 写之前整目录快照到 pre-import-<stamp>，用文件名做版本，覆盖错了能翻回来。
  */
+const SAFE_NAME = /^(?:MEMORY\.md|CODING\.md|CODING\.pending\.json|PERSONA\.md|LESSONS\.jsonl|SOUL-UI\.json|DREAMING\.json|notes\/[^\\/]+\.md)$/
+
 export async function importBundle(bundle, { apply = false } = {}) {
+  const names = Object.keys(bundle.files ?? {})
+  const unsafe = names.filter(name => !SAFE_NAME.test(name))
+  if (unsafe.length) throw new Error(`备份里含不允许的文件名（会写到记忆目录之外）：${unsafe[0]}`)
   const incoming = Object.entries(bundle.files).filter(([, text]) => typeof text === 'string')
   const current = await collectFiles()
   const added = []

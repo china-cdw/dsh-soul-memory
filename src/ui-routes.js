@@ -323,10 +323,24 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
     };
   };
 
-  const disposers = [];
+  const disposers = []
+
+  // Registering six routes by hand means a throw on the Nth leaks the first N-1, and the next
+  // hot reload then fails because those paths are still taken. Roll back and rethrow.
+  const mounted = []
+  const route = (spec) => {
+    try {
+      const dispose = ctx.webServer.register(spec)
+      mounted.push(dispose)
+      return dispose
+    } catch (error) {
+      for (const stop of mounted.splice(0).reverse()) { try { stop() } catch { /* best effort */ } }
+      throw error
+    }
+  };
 
   // GET /dsh-soul-memory/state
-  disposers.push(ctx.webServer.register({
+  disposers.push(route({
     kind: 'exact',
     path: PREFIX + 'state',
     async handler(req, res) {
@@ -345,7 +359,7 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
   }));
 
   // POST /dsh-soul-memory/ui
-  disposers.push(ctx.webServer.register({
+  disposers.push(route({
     kind: 'exact',
     path: PREFIX + 'ui',
     async handler(req, res) {
@@ -377,7 +391,7 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
   }));
 
   // POST /dsh-soul-memory/pending
-  disposers.push(ctx.webServer.register({
+  disposers.push(route({
     kind: 'exact',
     path: PREFIX + 'pending',
     async handler(req, res) {
@@ -421,7 +435,7 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
   }));
 
   // POST /dsh-soul-memory/tier —— 分级回收：预演 / 回收 / 恢复
-  disposers.push(ctx.webServer.register({
+  disposers.push(route({
     kind: 'exact',
     path: PREFIX + 'tier',
     async handler(req, res) {
@@ -473,7 +487,7 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
   }));
 
   // POST /dsh-soul-memory/rules —— 删除一条全局规则（完全匹配）
-  disposers.push(ctx.webServer.register({
+  disposers.push(route({
     kind: 'exact',
     path: PREFIX + 'rules',
     async handler(req, res) {
@@ -511,7 +525,7 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
   }));
 
   // POST /dsh-soul-memory/dreaming —— 闲时整理开关
-  disposers.push(ctx.webServer.register({
+  disposers.push(route({
     kind: 'exact',
     path: PREFIX + 'dreaming',
     async handler(req, res) {
