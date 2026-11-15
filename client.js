@@ -101,11 +101,12 @@ window.__ModuleLoader__.load({
 .dsm-rule-row{display:flex;align-items:flex-start;gap:8px;justify-content:space-between;padding:8px 12px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l3)}
 .dsm-rule-text{font-size:12px;line-height:1.5;flex:1;min-width:0;word-break:break-word}
 .dsm-rule-main{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
-    .dsm-sess{display:flex;align-items:center;gap:6px;padding:2px 0 0}
-    .dsm-sess-btn{border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:transparent;color:var(--dsw-alias-label-secondary,#666);border-radius:999px;font-size:11px;line-height:1;padding:3px 8px;cursor:pointer}
-    .dsm-sess-btn[data-mode="readonly"]{color:var(--dsw-alias-state-warning-primary,#b8860b);border-color:currentColor}
-    .dsm-sess-btn[data-mode="off"]{color:var(--dsw-alias-label-tertiary,#999);border-style:dashed}
-    .dsm-sess-btn:disabled{opacity:.6;cursor:default}
+    .dsm-sess{display:flex;align-items:center;gap:6px;padding:2px 0 0;font-size:11px;color:var(--dsw-alias-label-secondary,#666)}
+    .dsm-sess-select{height:22px;padding:0 4px;font-size:11px;line-height:20px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.3));background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#222);cursor:pointer}
+    .dsm-sess-select[data-mode="readonly"]{color:var(--dsw-alias-state-warning-primary,#b8860b)}
+    .dsm-sess-select[data-mode="off"]{color:var(--dsw-alias-label-tertiary,#999)}
+    .dsm-sess-select:disabled{opacity:.6;cursor:default}
+    .dsm-sess-select:focus-visible{outline:2px solid var(--dsw-alias-border-l2,rgba(127,127,127,.4));outline-offset:1px}
 .dsm-meta-soft{font-size:11px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
 .dsm-banner{border-radius:var(--dsw-radius-md);padding:8px 12px;font-size:12px}
 .dsm-banner[data-tone="error"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 12%,transparent);color:var(--dsw-alias-state-error-primary)}
@@ -1730,23 +1731,31 @@ window.__ModuleLoader__.load({
       }, [sid])
       React.useEffect(() => { load() }, [load])
       if (!sid) return null
-      const next = mode === 'normal' ? 'readonly' : mode === 'readonly' ? 'off' : 'normal'
-      const label = mode === 'readonly' ? '记忆：只读' : mode === 'off' ? '记忆：已关闭' : '记忆：正常'
+      const change = (value) => {
+        const next = value === 'readonly' || value === 'off' ? value : 'normal'
+        setBusy(true)
+        call('dsh-soul-memory/session', { session: sid, mode: next })
+          .then(() => { setMode(next); store.refresh({ force: true }) })
+          .catch(() => {})
+          .finally(() => setBusy(false))
+      }
       return h('div', { className: 'dsm-sess' },
-        h('button', {
-          type: 'button',
-          className: 'dsm-sess-btn',
+        h('span', null, '记忆'),
+        h('select', {
+          className: 'dsm-sess-select',
           'data-mode': mode || 'normal',
+          value: mode || 'normal',
           disabled: busy,
-          title: '点一下切换：正常 → 只读 → 关闭（只影响这个对话）',
-          onClick: () => {
-            setBusy(true)
-            call('dsh-soul-memory/session', { session: sid, mode: next })
-              .then(() => { setMode(next); store.refresh({ force: true }) })
-              .catch(() => {})
-              .finally(() => setBusy(false))
-          },
-        }, busy ? '切换中…' : label))
+          'aria-label': '本会话的跨会话记忆模式',
+          title: '只影响这个对话；开新对话自动回到正常',
+          onChange: (event) => change(event.target.value),
+        },
+          h('option', { value: 'normal' }, '正常'),
+          h('option', { value: 'readonly' }, '只读'),
+          h('option', { value: 'off' }, '已关闭'),
+        ),
+        busy ? h('span', null, '切换中…') : null,
+      )
     }
 
     function InlineNotice() {
