@@ -60,6 +60,9 @@ export function collectionCandidates(nodes, opts = {}) {
   return (Array.isArray(nodes) ? nodes : []).filter(node => {
     if (!node || tierOf(node) !== 'low') return false
     if (node.pin) return false
+    // Low tier is defined as importance <= 2, so with the default maxImportance=3 this can
+    // never fire. It stays because callers may lower the bound (maxImportance: 1), and an
+    // explicit "do not touch anything worth more than N" is the honest way to say that.
     if (Number(node.importance ?? 2) > maxImportance) return false
     if (requireZeroHits && (Number(node.hits) || 0) > 0) return false
     return Number(node.ageDays) >= minAgeDays

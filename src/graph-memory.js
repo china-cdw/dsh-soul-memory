@@ -160,6 +160,17 @@ export function importanceOf(node) {
 }
 
 /** Per-turn value of a memory: high when it is about to be lost, low when it is safe. */
+/**
+ * Rotation weight: a memory shown last turn has high A and a low due, so the next card
+ * yields to one that was not shown. Two things to keep in mind when reading the number:
+ *
+ * - It is inverted on purpose relative to activation. Low A means "not seen recently", which
+ *   is exactly the one worth showing again; 0.2 scores 1.8, 0.98 scores 0.89.
+ * - A card being displayed is observation, not use: it does not bump hits, and the GC
+ *   candidate test still requires zero hits. So a node on the card every day for 90 days
+ *   can still be collected — that is the honest reading of the rule, not a bug; pinning is
+ *   how to keep something the card keeps showing.
+ */
 export function due(A, { aHigh = 0.95 } = {}) {
   return A <= aHigh ? 1 + (1 - A) : 1 / (1 + 4 * (A - aHigh))
 }

@@ -675,6 +675,8 @@ export function apply(ctx, input = {}) {
             const files = events
               .map(event => event?.type === 'tool/call' ? (event.data?.args?.path ?? event.data?.args?.file_path) : null)
               .filter(value => typeof value === 'string' && value)
+            // Not awaited on purpose: the turn is over and the user is waiting, so a slow or
+            // failing log write must never hold up the response.
             appendTurn({ ask, nodes: captured.nodes, files }).catch(() => {})
           }
           // Then, and only then, close the coverage gap: whatever extraction did not turn into a
@@ -767,7 +769,7 @@ export function apply(ctx, input = {}) {
           for (const key of Object.keys(args ?? {})) if (!(key in definition.properties)) return { text: '不支持的参数\n[err:E_ARG]' }
           for (const key of definition.required) {
             const v = args?.[key]
-            if (typeof v !== 'string' && !Number.isFinite(v)) return { text: `缺少参数 ${key}\n[err:E_ARG]` }
+            if (v === undefined || v === null || v === '') return { text: `缺少参数 ${key}\n[err:E_ARG]` }
           }
           if (definition.name === 'soul_recall' && args.k !== undefined) {
             const k = Number(args.k)
@@ -823,9 +825,15 @@ export function apply(ctx, input = {}) {
                     currentSession: sid,
                     externalOnly: wanted === 'external',
                   })
-                  spans = found.spans
+                  // The quote layer is the most literal evidence there is; say so, since it
+                  // used to come back with no provenance label at all.
+                  spans = found.spans.map(row => ({ ...row, match: 'quote' }))
                   // Write the pointer back so the same question becomes a card hit next time.
-                  if (spans.length && wanted !== 'external') recordLookup(store, scope, args.query, spans)
+                  // Only this session's own spans may seed a pointer: an external transcript's
+                  // seq is a line number in someone else's file, and writing it into an anchor
+                  // makes the next expansion jump to the wrong text.
+                  const localSpans = spans.filter(row => !String(row.session ?? '').includes(':'))
+                  if (localSpans.length && wanted !== 'external') recordLookup(store, scope, args.query, localSpans)
                 }
                 value = {
                   query: args.query,
@@ -1127,7 +1135,7 @@ export function apply(ctx, input = {}) {
     ctx.inject(['webServer'], (c) => {
       c.effect(() => {
         try {
-          return registerSoulUiRoutes(c, { store })
+          return registerSoulUiRoutes(c, { store, budget: config.coding?.budget ?? null })
         } catch (e) {
           console.error('dsh-soul-memory: 设置页接口注册失败（不影响记忆功能）：' + (e?.message ?? e))
           return () => {}

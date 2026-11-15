@@ -95,7 +95,12 @@ export async function listBackups({ limit = 20 } = {}) {
 }
 
 export async function readBundle(name) {
-  const safe = String(name ?? '').replace(/[\\/]/g, '')
+  const raw = String(name ?? '')
+  // The name is joined onto the backup directory, so a path separator or a drive letter
+  // would silently leave it — report that instead of failing later with ENOENT on a
+  // mangled name, which read like "the file is missing".
+  if (/[\\/:]/.test(raw)) throw new Error('file 只能是备份目录里的文件名（用 action=list 看有哪些），不是路径')
+  const safe = raw
   if (!safe.endsWith('.json')) throw new Error('备份文件名必须以 .json 结尾')
   const text = await readFile(join(backupsDir(), safe), 'utf8')
   const parsed = JSON.parse(text)

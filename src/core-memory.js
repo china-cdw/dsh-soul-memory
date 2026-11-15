@@ -1257,7 +1257,9 @@ async function tierTool(args = {}, exec = null, hooks = {}) {
       const nodes = await graphNodes(agent)
       if (!Array.isArray(nodes)) return failMessage('E_INTERNAL', '会话图谱不可用。')
       const counts = tierCounts(nodes)
-      const minAgeDays = Number.isFinite(args.minAgeDays) ? Math.max(1, Math.floor(args.minAgeDays)) : null
+      // The retire SQL also demands 7 days, so a lower override would preview candidates that
+      // the collector then refuses to touch. Clamp both at the same floor.
+      const minAgeDays = Number.isFinite(args.minAgeDays) ? Math.max(7, Math.floor(args.minAgeDays)) : null
       const candidates = collectionCandidates(nodes, minAgeDays == null ? {} : { minAgeDays })
       if (action === 'status') {
         const rows = candidates.slice(0, 20).map(n => '- [' + n.id + '] ' + n.kind + ' · ' + Math.floor(n.ageDays) + ' 天 · ' + n.claim)
@@ -1442,7 +1444,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
         properties: {
           action: { type: 'string', enum: ['status', 'collect', 'restore'], description: 'status=看分级与可回收候选；collect=执行/预演回收；restore=恢复误回收的节点' },
           apply: { type: 'boolean', description: 'action=collect 时是否真正回收；默认 false（只预演）' },
-          minAgeDays: { type: 'integer', description: '回收门槛：节点至少存在多少天，默认 90' },
+          minAgeDays: { type: 'integer', description: '回收门槛：节点至少存在多少天（最低 7，默认 90）' },
           ids: { type: 'array', items: { type: 'string' }, description: 'action=restore 时要恢复的节点 id（来自 status 或 memory_dreaming action=retired）' },
         },
         required: ['action'],
@@ -1451,7 +1453,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     },
     {
       name: 'memory_backup',
-      description: '记忆备份与搬家：把记忆目录里可读的那部分（核心记忆、编码规范与待批、风格、踩坑教训、设置、归档笔记）打成一个 JSON 带走，换电脑或误删时用 import 放回。action=export 生成备份；action=list 看已有备份；action=import 预演或真正写入（默认只预演）。不备份 SQLite 图谱库——它是派生数据，可从这些文件重建。',
+      description: '记忆备份与搬家：把记忆目录里可读的那部分（核心记忆、编码规范与待批、风格、踩坑教训、设置、归档笔记）打成一个 JSON 带走，换电脑或误删时用 import 放回。action=export 生成备份；action=list 看已有备份；action=import 预演或真正写入（默认只预演，file 只认备份目录里的文件名，用 list 看有哪些）。不备份 SQLite 图谱库——它是派生数据，可从这些文件重建。',
       notes: 'export 只读已知文件、不遍历整个目录；import 默认 dry-run，apply=true 才写，写前自动快照；不调用模型、不花钱。',
       parameters: {
         type: 'object', additionalProperties: false,

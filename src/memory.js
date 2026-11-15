@@ -335,29 +335,33 @@ export function recall(store, scope, query, { limit = 8, dynamicsView = null, sp
     const sb = strengthOf(store, scope, b.id, hits)
     return sb - sa || (spreadRank.get(b.id) ?? 0) - (spreadRank.get(a.id) ?? 0) || b.weight - a.weight
   })
-  // 这条命中是「原话就是它」还是「字面撞上了」。词问几个、命中几个，是最便宜也最诚实的一档
-  // 把握度：宁可说「大概是」，也不要把相近当成确定。只影响措辞，不影响排序。
+  // Two questions used to be crammed into one "confidence" label: where the row came from,
+  // and how much of the query it actually carries. They are different axes — a node found
+  // through graph association has the same confidence as a literal hit with one shared word,
+  // and users could not tell "related" from "weak". So: `match` says where it came from,
+  // `share` (only for literal/spread) says how much of the query it holds.
+  //
+  // `share` is the Jaccard score, the same number `store.searchNodes` ranks by. Labelling by
+  // query coverage instead made 「ranked first but weak」 a normal outcome: a short node that
+  // shares one of three words ranks first by Jaccard and scores 0.33 by coverage.
   const wanted = new Set(queryTerms)
-  // 三档不够用：图谱召回是按激活/关联算的，字面命中率天然低，全判「weak」等于没说。
-  // 所以补一档 related——字面没撞上，但是靠图谱关联捞回来的。
-  const confidenceOf = (node, activation) => {
+  const shareOf = (node) => {
     const own = new Set(node.terms ?? [])
+    if (!own.size || !wanted.size) return 0
     let shared = 0
     for (const term of wanted) if (own.has(term)) shared++
-    const ratio = wanted.size ? shared / wanted.size : 0
-    if (ratio >= 0.999) return 'exact'
-    if (ratio >= 0.5) return 'partial'
-    const a = Number(activation)
-    return Number.isFinite(a) && a >= 0.3 ? 'related' : 'weak'
+    return shared / (own.size + wanted.size - shared)
   }
-  const tagged = (row, base) => {
-    const activation = base.A ?? base.strength ?? 0
-    return { ...base, confidence: confidenceOf(row, activation) }
+  const literal = (row, base) => {
+    const share = shareOf(row)
+    // A full match is the default case; only say the number when it is not the whole query.
+    return { ...base, match: 'literal', ...(share < 0.999 ? { share: Number(share.toFixed(2)) } : {}) }
   }
   return {
     query: String(query ?? ''),
-    hits: hits.map(row => tagged(row, dynamicsView ? withActivation(dynamicsView, row) : view(row))),
-    neighbours: ordered.map(row => tagged(row, { ...view(row), strength: strengthOf(store, scope, row.id, hits),
+    hits: hits.map(row => literal(row, dynamicsView ? withActivation(dynamicsView, row) : view(row))),
+    neighbours: ordered.map(row => ({ ...view(row), strength: strengthOf(store, scope, row.id, hits),
+      match: spreadRank.has(row.id) ? 'spread' : 'graph',
       ...(spreadRank.has(row.id) ? { reach: Number(spreadRank.get(row.id).toFixed(3)) } : {}) })),
     links: pairs.length,
     spread: spreadRank.size,

@@ -1,5 +1,15 @@
 # 变更日志
 
+## 0.4.3
+
+- 检索结果标签拆成两轴：`match`（quote / literal / spread / graph）说明来源，`share`（Jaccard，满匹配时省略）说明命中量，取代原先的四档 `confidence`。
+- `hits` 的 `share` 与排序同一把尺子（Jaccard），不再出现「排第一但 weak」。
+- `spans` 现在带 `match: quote`；FTS 的 bm25 取负，所有 `score` 统一成「越大越相关」。
+- 修 `recordLookup` 在 auto 模式下用外部转录的行号写锚点。
+- `memory_backup` 的 `file` 只认备份目录里的文件名，传路径会直接报错说明。
+- 补齐共享模块的注释：`due` 的倒置、low 层 `maxImportance` 的死条件、回合日志不 await 的原因。
+
+
 ## 0.4.2
 
 - 修复备份导入的路径穿越：`files` 的 key 只允许 7 个已知文件名与 `notes/<安全名>.md`。

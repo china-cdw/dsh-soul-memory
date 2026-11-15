@@ -10,7 +10,8 @@
 // 安全模型与 persona 路由保持一致：只接受本机回环 Host、同源 Origin、
 // 自定义请求头 x-dsh-soul-memory: 1，POST 必须是 application/json。
 // 三条各自独立检查——少一条都会留下 CSRF / DNS rebinding 的口子。
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { codingPath, proposedRules, approveRules, rejectRules, editPendingRule, editRule, forgetRule, readGlobalRuleBlocks, collectRules } from './coding.js';
 import { readUiSettings, writeUiSettings, validateUiPatch, MAX_NICKNAME, MIN_RULES_BUDGET, MAX_RULES_BUDGET } from './ui-settings.js';
@@ -25,11 +26,29 @@ const MAX_PENDING_IDS = 40; // 待批上限 20，留一倍余量，防止构造�
 const GUARD_HEADER = 'x-dsh-soul-memory';
 const TOKEN_HEADER = 'x-dsh-soul-memory-token';
 /**
- * 进程内随机令牌：写接口要求带上它。
+ * 写操作令牌：写接口要求带上它。
  * GET /state 会返回它，所以它挡不住「先读再写」的本机脚本，只挡不知道要两步的顺手调用；
  * 真正的边界仍是回环 Host + 同源 Origin + 自定义头这三道。
+ *
+ * It is persisted rather than generated per module load: a hot reload used to mint a new
+ * token while the open page still held the old one, and every write the user then made was
+ * rejected with 403 until a manual refresh. Reading it back from the memory dir keeps the
+ * page working across reloads; the file is inside the user's own home, not world-readable.
  */
-const WRITE_TOKEN = randomBytes(16).toString('hex');
+function loadWriteToken() {
+  const file = join(memoryPath(), '.ui-token');
+  try {
+    const existing = readFileSync(file, 'utf8').trim();
+    if (/^[0-9a-f]{32}$/.test(existing)) return existing;
+  } catch { /* first run: mint one below */ }
+  const token = randomBytes(16).toString('hex');
+  try {
+    mkdirSync(memoryPath(), { recursive: true });
+    writeFileSync(file, token, 'utf8');
+  } catch { /* read-only home: the in-memory token still works for this process */ }
+  return token;
+}
+const WRITE_TOKEN = loadWriteToken();
 
 function sendJson(res, code, payload) {
   try {
@@ -181,9 +200,9 @@ function readRulesText() {
 }
 
 /** 规则用量（与 coding_rules show 同一口径）。 */
-function rulesUsageOf() {
+function rulesUsageOf(budget = null) {
   try {
-    const g = collectRules(null, {});
+    const g = collectRules(null, budget == null ? {} : { budget });
     const pct = g.budget ? Math.round((g.used / g.budget) * 100) : 0;
     return { used: g.used, budget: g.budget, pct, warn: g.used >= g.budget * 0.85 };
   } catch {
@@ -294,12 +313,13 @@ function healthOf(store, tiers, usage, pendingCount) {
  */
 export function registerSoulUiRoutes(ctx, deps = {}) {
   const store = deps.store || null;
+  const budget = deps.budget ?? null;
 
   const state = async () => {
     const pending = await proposedRules();
     const rules = readRulesText();
     const tiers = tierOverview(store);
-    const usage = rulesUsageOf();
+    const usage = rulesUsageOf(budget);
     const pendingList = pending.ok ? pending.list : [];
     const dreaming = await readDreamingState().catch(() => null);
     return {
@@ -507,14 +527,14 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
           if (typeof text !== 'string' || !text.trim()) return sendJson(res, 400, { error: 'forget 需要 text' });
           const result = await forgetRule(text);
           if (!result.ok) return sendJson(res, 400, { error: result.error, result });
-          return sendJson(res, 200, { ok: true, removed: result.removed, usage: rulesUsageOf() });
+          return sendJson(res, 200, { ok: true, removed: result.removed, usage: rulesUsageOf(budget) });
         }
         if (action === 'edit') {
           if (typeof text !== 'string' || !text.trim()) return sendJson(res, 400, { error: 'edit 需要 text（原规则）' });
           if (typeof nextText !== 'string' || !nextText.trim()) return sendJson(res, 400, { error: 'edit 需要 nextText（改后的规则）' });
           const result = await editRule(text, { text: nextText, why, pitfall });
           if (!result.ok) return sendJson(res, 400, { error: result.error, code: result.code, result });
-          return sendJson(res, 200, { ok: true, rule: result.rule, similar: result.similar, usage: rulesUsageOf() });
+          return sendJson(res, 200, { ok: true, rule: result.rule, similar: result.similar, usage: rulesUsageOf(budget) });
         }
         sendJson(res, 400, { error: 'action 只能是 forget / edit' });
       } catch (error) {

@@ -750,9 +750,9 @@ export function registerCodingRules(ctx, options = {}) {
             pairs.push({ a: list[i].rule, b: hit.rule, score: hit.score });
           }
         }
-        if (!pairs.length) return `共 ${list.length} 条规则，没有发现措辞相近的（阈值 0.4）。`;
+        if (!pairs.length) return `共 ${list.length} 条规则，没有发现措辞相近的（阈值 0.25）。`;
         pairs.sort((x, y) => y.score - x.score);
-        const lines = [`共 ${list.length} 条规则，发现 ${pairs.length} 对措辞相近（阈值 0.4，按相似度排序）：`];
+        const lines = [`共 ${list.length} 条规则，发现 ${pairs.length} 对措辞相近（阈值 0.25，按相似度排序）：`];
         for (const p of pairs.slice(0, 6)) {
           lines.push(`- ${p.score}  A：${clip(p.a, 40)}`);
           lines.push(`      B：${clip(p.b, 40)}`);

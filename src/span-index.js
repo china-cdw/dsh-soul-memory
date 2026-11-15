@@ -112,7 +112,10 @@ export function searchIndex(store, scope, query, { limit = 3, maxBytes = 4000, m
       // even when the caller asked only for external rows.
       session: row.session ?? null,
       current: externalOnly ? false : (currentSession !== null && row.session === currentSession),
-      score: Math.round((Number(row.score) || 0) * 1000) / 1000,
+      // FTS5's bm25 is negative and smaller-is-better; flipping it makes every score in the
+      // response read the same way (larger is more relevant), so a 0 fallback no longer looks
+      // better than a real -4.2 hit.
+      score: Math.round(-(Number(row.score) || 0) * 1000) / 1000,
       text,
     })
     bytes += price
