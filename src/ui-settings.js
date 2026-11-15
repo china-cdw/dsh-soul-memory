@@ -22,7 +22,13 @@ export const UI_DEFAULTS = Object.freeze({
   mutedUntil: 0,
   // 暂停写入记忆（所有会话）。聊私事时用；不影响读取与工具调用。
   memoryPaused: false,
+  // 编码规范注入预算（字）。0 = 跟随宿主配置（cordis.patch.yml 的 coding.budget）。
+  rulesBudget: 0,
 });
+
+/** 规则预算可填范围：与宿主配置一致，避免页面写进一个必然被钳回的值。 */
+export const MIN_RULES_BUDGET = 400;
+export const MAX_RULES_BUDGET = 8000;
 
 /** 静默最多 30 天，防止一次手滑写进一个离谱的时间戳。 */
 const MAX_MUTE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -47,6 +53,13 @@ export function normalizeUiSettings(input) {
     out.mutedUntil = muted <= now ? 0 : Math.min(muted, now + MAX_MUTE_MS);
   }
   if (typeof input.memoryPaused === 'boolean') out.memoryPaused = input.memoryPaused;
+  const rulesBudget = Number(input.rulesBudget);
+  if (Number.isFinite(rulesBudget) && rulesBudget >= MIN_RULES_BUDGET) {
+    out.rulesBudget = Math.min(MAX_RULES_BUDGET, Math.round(rulesBudget));
+  } else if (rulesBudget === 0) {
+    // 0 显式表示「回到宿主配置」。
+    out.rulesBudget = 0;
+  }
   return out;
 }
 
@@ -91,6 +104,14 @@ export function validateUiPatch(input) {
     } else if (key === 'memoryPaused') {
       if (typeof value !== 'boolean') return { ok: false, error: 'memoryPaused 必须是布尔值' };
       patch.memoryPaused = value;
+    } else if (key === 'rulesBudget') {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return { ok: false, error: 'rulesBudget 必须是数字（0 表示跟随宿主配置）' };
+      }
+      if (value !== 0 && (value < MIN_RULES_BUDGET || value > MAX_RULES_BUDGET)) {
+        return { ok: false, error: `rulesBudget 只能是 0 或 ${MIN_RULES_BUDGET}–${MAX_RULES_BUDGET} 之间的整数` };
+      }
+      patch.rulesBudget = value === 0 ? 0 : Math.round(value);
     } else {
       return { ok: false, error: '不支持的字段：' + key };
     }

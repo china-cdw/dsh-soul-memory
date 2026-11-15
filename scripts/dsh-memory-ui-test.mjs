@@ -81,11 +81,20 @@ try {
     assert.equal(validateUiPatch(null).ok, false);
   });
 
+  await s.test('rulesBudget 只能是 0 或 400–8000', async () => {
+    assert.equal(validateUiPatch({ rulesBudget: 0 }).ok, true);
+    assert.equal(validateUiPatch({ rulesBudget: 5000 }).patch.rulesBudget, 5000);
+    assert.equal(validateUiPatch({ rulesBudget: 399 }).ok, false);
+    assert.equal(validateUiPatch({ rulesBudget: 8001 }).ok, false);
+    assert.equal(validateUiPatch({ rulesBudget: '2000' }).ok, false);
+    assert.equal(validateUiPatch({ rulesBudget: 2500.4 }).patch.rulesBudget, 2500);
+  });
+
   await s.test('写入后读回一致，文件落在 memory/SOUL-UI.json', async () => {
     const saved = await writeUiSettings({ displayMode: 'sidebar', nickname: '山大王' });
     assert.equal(saved.displayMode, 'sidebar');
     assert.equal(saved.nickname, '山大王');
-    assert.deepEqual(readUiSettings(), { displayMode: 'sidebar', nickname: '山大王', mutedUntil: 0, memoryPaused: false });
+    assert.deepEqual(readUiSettings(), { displayMode: 'sidebar', nickname: '山大王', mutedUntil: 0, memoryPaused: false, rulesBudget: 0 });
     assert.ok(uiSettingsPath().replace(/\\/g, '/').endsWith('/memory/SOUL-UI.json'));
   });
 

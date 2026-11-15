@@ -77,7 +77,8 @@ window.__ModuleLoader__.load({
 .dsm-tier span{font-size:11px;color:var(--dsw-alias-label-tertiary)}
 .dsm-rules{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;white-space:pre-wrap;word-break:break-word;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);padding:12px 14px;margin:0;max-height:420px;overflow:auto}
 .dsm-meter{height:6px;border-radius:999px;background:rgba(127,127,127,.18);overflow:hidden;margin:8px 0 10px}
-.dsm-meter-fill{height:100%;border-radius:999px;background:var(--dsw-alias-accent-1,#4c8dff);transition:width .2s ease}
+.dsm-budget{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 4px}
+.dsm-budget-input{width:104px;padding:4px 8px;font-size:12px}.dsm-meter-fill{height:100%;border-radius:999px;background:var(--dsw-alias-accent-1,#4c8dff);transition:width .2s ease}
 .dsm-meter-fill[data-warn="1"]{background:#e0a100}
 .dsm-mute{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
 .dsm-mute-label{font-size:12px;color:var(--dsw-alias-label-tertiary);margin-right:2px}
@@ -612,6 +613,14 @@ window.__ModuleLoader__.load({
       const [editing, setEditing] = useState(null)
       const [editBusy, setEditBusy] = useState(false)
       const editingOpen = editing !== null
+      // 注入上限：留空 = 跟随宿主配置（0）；填数字就覆盖宿主配置。
+      const limits = data.limits || {}
+      const minBudget = Number(limits.minRulesBudget) || 400
+      const maxBudget = Number(limits.maxRulesBudget) || 8000
+      const [budgetDraft, setBudgetDraft] = useState(
+        data.ui && Number(data.ui.rulesBudget) > 0 ? String(data.ui.rulesBudget) : '',
+      )
+      const [budgetBusy, setBudgetBusy] = useState(false)
 
       useEffect(() => {
         if (!editingOpen) return undefined
@@ -669,6 +678,34 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // 保存注入上限：留空写 0（跟随宿主配置），否则写 400–8000 的整数。
+      const saveBudget = async () => {
+        if (budgetBusy) return
+        const raw = String(budgetDraft == null ? '' : budgetDraft).trim()
+        const value = raw === '' ? 0 : Number(raw)
+        const valid = Number.isFinite(value) && (value === 0 || (value >= minBudget && value <= maxBudget))
+        if (!valid) {
+          setNotice({ tone: 'error', text: `上限只能是 ${minBudget}–${maxBudget} 之间的整数，留空表示跟随宿主配置` })
+          return
+        }
+        setBudgetBusy(true)
+        setNotice(null)
+        try {
+          const res = await call('dsh-soul-memory/ui', { rulesBudget: Math.round(value) })
+          store.refresh({ force: true })
+          setNotice({
+            tone: 'ok',
+            text: res && Number(res.rulesBudget) > 0
+              ? '上限已改为 ' + res.rulesBudget + ' 字，下一轮生效。'
+              : '已恢复跟随宿主配置，下一轮生效。',
+          })
+        } catch (error) {
+          setNotice({ tone: 'error', text: String(error && error.message ? error.message : error) })
+        } finally {
+          setBudgetBusy(false)
+        }
+      }
+
       const meter = usage
         ? h('div', { className: 'dsm-meter', role: 'img', 'aria-label': '规则用量 ' + usage.pct + '%' },
             h('div', { className: 'dsm-meter-fill', 'data-warn': usage.warn ? '1' : '0', style: { width: Math.max(2, Math.min(100, usage.pct)) + '%' } }),
@@ -683,6 +720,23 @@ window.__ModuleLoader__.load({
             usage
               ? h('p', { className: 'dsm-hint' }, '注入用量 ' + usage.used + '/' + usage.budget + ' 字（' + usage.pct + '%）' + (usage.warn ? ' · 快满了，先合并或删几条旧规则' : ''))
               : null,
+            h('div', { className: 'dsm-budget' },
+              h('span', { className: 'dsm-hint' }, '注入上限'),
+              h('input', {
+                className: 'dsm-input dsm-budget-input',
+                type: 'number',
+                min: minBudget,
+                max: maxBudget,
+                step: 100,
+                value: budgetDraft,
+                placeholder: usage ? String(usage.budget) : '',
+                'aria-label': '编码规范注入上限字数',
+                onChange: (event) => setBudgetDraft(event.target.value),
+              }),
+              h('span', { className: 'dsm-hint' }, '字'),
+              h(Button, { tone: 'ghost', disabled: budgetBusy, onClick: saveBudget }, budgetBusy ? '保存中…' : '保存'),
+              h('span', { className: 'dsm-hint' }, '留空 = 跟随宿主配置'),
+            ),
           ),
           h(Button, { tone: 'ghost', disabled: !text, onClick: () => { if (text) navigator.clipboard?.writeText(text) } }, '复制全文'),
         ),

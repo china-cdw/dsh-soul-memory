@@ -70,7 +70,7 @@ await t.test('collectRules 按预算截断并标注', async () => {
 await t.test('预算过小时给出提示', async () => {
   const out = collectRules(null, { budget: 500, globalText: '一条规则。' });
   assert.match(out.text, /预算提示/);
-  assert.match(out.text, /coding\.budget/);
+  assert.match(out.text, /灵魂记忆/);
 });
 
 await t.test('项目内 AGENTS.md / CLAUDE.md / .cursor/rules 都参与收集', async () => {

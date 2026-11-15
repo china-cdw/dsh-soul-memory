@@ -13,7 +13,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { codingPath, proposedRules, approveRules, rejectRules, editPendingRule, editRule, forgetRule, readGlobalRuleBlocks, collectRules } from './coding.js';
-import { readUiSettings, writeUiSettings, validateUiPatch, MAX_NICKNAME } from './ui-settings.js';
+import { readUiSettings, writeUiSettings, validateUiPatch, MAX_NICKNAME, MIN_RULES_BUDGET, MAX_RULES_BUDGET } from './ui-settings.js';
 import { readPersona, listPresets, MAX_CUSTOM_TEXT } from './persona.js';
 import { GC_DEFAULTS, tierCounts, collectionCandidates } from './tiering.js';
 import { memoryPath } from './memory/util.js';
@@ -305,7 +305,7 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
     return {
       ui: readUiSettings(),
       token: WRITE_TOKEN,
-      limits: { maxNickname: MAX_NICKNAME, maxCustom: MAX_CUSTOM_TEXT },
+      limits: { maxNickname: MAX_NICKNAME, maxCustom: MAX_CUSTOM_TEXT, minRulesBudget: MIN_RULES_BUDGET, maxRulesBudget: MAX_RULES_BUDGET },
       pending: pendingList,
       pendingError: pending.ok ? null : pending.error,
       rules: rules.text,

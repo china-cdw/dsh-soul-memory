@@ -16,10 +16,29 @@ import { readFileSync, statSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWrite, createQueue, memoryHome, sliceSafe, withFileLock } from './memory/util.js';
 import { withNotes } from './tool-notes.js';
+import { readUiSettings, MIN_RULES_BUDGET, MAX_RULES_BUDGET } from './ui-settings.js';
 
 // 每轮系统提示都要重发这段规则，所以有预算上限；超出会截断。
 // 3500 是默认值，不是硬限制：插件配置 coding.budget 可调 400–8000。
 const DEFAULT_BUDGET = 3500;
+
+/**
+ * 预算优先级：页面设置 → 宿主配置（cordis.patch.yml 的 coding.budget）→ 默认值。
+ * 页面填 0 表示「跟随宿主配置」，不覆盖。
+ */
+function effectiveBudget(hostBudget) {
+  try {
+    const chosen = Number(readUiSettings().rulesBudget);
+    if (Number.isFinite(chosen) && chosen >= MIN_RULES_BUDGET) {
+      return Math.min(MAX_RULES_BUDGET, Math.round(chosen));
+    }
+  } catch {
+    // 设置文件坏了不该影响规则注入，退回宿主配置。
+  }
+  return Number.isFinite(hostBudget)
+    ? Math.max(MIN_RULES_BUDGET, Math.min(MAX_RULES_BUDGET, hostBudget))
+    : DEFAULT_BUDGET;
+}
 const FILE_CHAR_CAP = 6000;
 const MAX_RULE_TEXT = 2000;
 const MAX_DIR_FILES = 20;
@@ -116,6 +135,7 @@ function statSyncSafe(path) {
  * @returns {{ text: string, files: Array<{label: string, path: string, chars: number}>, used: number, budget: number }}
  */
 export function collectRules(cwd, { budget = DEFAULT_BUDGET, globalText = null } = {}) {
+  const cap = effectiveBudget(budget);
   const chunks = [];
   const global = globalText ?? readCapped(codingPath());
   if (global) chunks.push({ label: '全局编码规范（CODING.md）', path: codingPath(), body: global });
@@ -138,11 +158,11 @@ export function collectRules(cwd, { budget = DEFAULT_BUDGET, globalText = null }
   ];
   const pendingCount = countPending();
   if (pendingCount) headLines.push(`- 待批规则 ${pendingCount} 条：用 coding_rules action=pending 查看，approve 后才会注入。`);
-  if (budget < 800) {
-    headLines.push('（预算提示：编码规范注入预算只有 ' + budget + ' 字，规则会被大幅截断；可在插件设置里调大 coding.budget。）', '');
+  if (cap < 800) {
+    headLines.push('（预算提示：编码规范注入预算只有 ' + cap + ' 字，规则会被大幅截断；可在「灵魂记忆 → 规则」里调大上限。）', '');
   }
   const head = headLines.join('\n');
-  const room = Math.max(120, budget - head.length - 1);
+  const room = Math.max(120, cap - head.length - 1);
   let used = 0;
   let truncated = false;
 
@@ -151,11 +171,11 @@ export function collectRules(cwd, { budget = DEFAULT_BUDGET, globalText = null }
     const block = `${header}\n\n${chunk.body}`;
     const cost = block.length + (lines.length ? 2 : 0);
     if (used + cost > room) {
-      const note = `\n…（已按 ${budget} 字预算截断）`;
+      const note = `\n…（已按 ${cap} 字预算截断）`;
       const avail = room - used - (lines.length ? 2 : 0) - header.length - 2 - note.length;
       if (avail > 80) {
         const cut = sliceSafe(chunk.body, avail);
-        lines.push(`${header}\n\n${cut}\n…（已按 ${budget} 字预算截断）`);
+        lines.push(`${header}\n\n${cut}\n…（已按 ${cap} 字预算截断）`);
         files.push({ label: chunk.label, path: chunk.path, chars: cut.length });
         truncated = true;
       }
@@ -168,9 +188,9 @@ export function collectRules(cwd, { budget = DEFAULT_BUDGET, globalText = null }
 
   // 一条正式规则都没有时通常不注入以省 token；但有待批规则时必须注入头部，
   // 否则用户永远看不到「有待批规则」这条提示。
-  if (!lines.length && !pendingCount) return { text: '', files, used: 0, budget, truncated: false };
+  if (!lines.length && !pendingCount) return { text: '', files, used: 0, budget: cap, truncated: false };
   const text = head + (lines.length ? lines.join('\n\n') : '');
-  return { text, files, used: text.length, budget, truncated };
+  return { text, files, used: text.length, budget: cap, truncated };
 }
 
 // ---------- 写全局层 ----------
