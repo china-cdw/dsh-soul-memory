@@ -167,7 +167,7 @@ Mistake notes are captured automatically: within one session, if a tool errors a
 The style settings page calls the local route `/dsh-soul-memory/persona` over same-origin `fetch` (registered only when the host provides `webServer`):
 
 - `GET` returns `{ persona, presets, maxCustom }`;
-- every request (GET included) must carry the custom header `X-DSH-X-Memory: 1`: cross-site forms and links cannot forge it, and the browser sends a CORS preflight first, which blocks unapproved cross-origin reads;
+- every request (GET included) must carry the custom header `x-dsh-soul-memory: 1`: cross-site forms and links cannot forge it, and the browser sends a CORS preflight first, which blocks unapproved cross-origin reads;
 - `POST` requires `Content-Type: application/json` and a body of at most 16KB; only `GET`/`POST` are accepted (other methods return 405 with `Allow: GET, POST`); an empty `{}` returns 204 and writes nothing; otherwise it answers 200 (parameter, method and permission failures use 400/403/405/413/415; write and internal failures use 500);
 - only loopback hosts (`localhost`, `127.0.0.1`, `[::1]`) are accepted, and any Origin must match the Host — this blocks DNS rebinding and cross-site prompt injection; requests without a Host header (HTTP/1.0) bypass the Host allowlist;
 - responses carry `Cache-Control: no-store`; style is personal data and is never cached.

@@ -13,7 +13,7 @@
           maintenance: true
         coding:
           enabled: true
-          budget: 2000
+          budget: 3500
         lessons:
           enabled: true
           budget: 600

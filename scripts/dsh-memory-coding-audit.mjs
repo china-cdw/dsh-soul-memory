@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { assert, callTool, makeCtx, makeHome, suite } from './_testkit.mjs';
 import { readFileSync } from 'node:fs';
-import { addRule, codingPath, collectRules, forgetRule, registerCodingRules } from '../src/coding.js';
+import { addRule, codingPath, collectRules, editRule, forgetRule, readGlobalRuleBlocks, readGlobalRules, registerCodingRules, similarRules, usageLine } from '../src/coding.js';
 
 const home = await makeHome('dsh-mem-coding-');
 const t = suite('编码规范自检');
@@ -125,6 +125,68 @@ await t.test('P1 why/pitfall 子项写入，forget 时连子项一起删', async
   assert.equal(del.ok, true);
   assert.equal(del.removed, 3);
   assert.doesNotMatch(readFileSync(codingPath(), 'utf8'), /为什么：没有复现/);
+});
+
+await t.test('editRule 按原正文整条替换，子项跟着改，找不到报 E_NOT_FOUND', async () => {
+  const base = '编辑测试规则：先写断言再写实现。';
+  const add = await addRule(base, { why: '旧理由', pitfall: '旧陷阱' });
+  assert.equal(add.ok, true);
+  const edited = await editRule(base, { text: '编辑测试规则：先写断言再写实现，并跑一遍。', why: '新理由', pitfall: '' });
+  assert.equal(edited.ok, true);
+  const block = readGlobalRuleBlocks().find((item) => item.text.startsWith('编辑测试规则：'));
+  assert.ok(block, '编辑后没找到新规则');
+  assert.equal(block.why, '新理由');
+  assert.equal(block.pitfall, '');
+  // 改名后旧正文已不存在
+  assert.equal((await editRule(base, { text: '临时' })).code, 'E_NOT_FOUND');
+  const del = await forgetRule('编辑测试规则：先写断言再写实现，并跑一遍。');
+  assert.equal(del.ok, true);
+});
+
+await t.test('用量提示：低于 85% 不警告，达到 85% 给出截断警告', async () => {
+  const calm = usageLine({ used: 1685, budget: 3500 });
+  assert.match(calm, /1685\/3500 字（48%，剩 1815 字）/);
+  assert.doesNotMatch(calm, /⚠️/);
+
+  const near = usageLine({ used: 3000, budget: 3500 });
+  assert.match(near, /3000\/3500 字（86%/);
+  assert.match(near, /⚠️ 已用 86%，快到 3500 字上限/);
+
+  // 恰好 85% 也算「快满」，不该等到超出才提醒。
+  assert.match(usageLine({ used: 850, budget: 1000 }), /⚠️ 已用 85%/);
+});
+
+await t.test('新增规则时检测表述相近的已有规则', async () => {
+  const base = '改动前先跑一遍现有测试，确认基线是绿的。';
+  const first = await addRule(base);
+  assert.equal(first.ok, true);
+  assert.equal(first.similar.length, 0, '第一条没有可比较的对象');
+
+  const near = await addRule('动手改代码前先跑一遍现有测试，确保基线全绿。');
+  assert.equal(near.ok, true);
+  assert.ok(near.similar.length >= 1, '相似规则没有报出来');
+  assert.ok(near.similar[0].score >= 0.5, '相似度太低：' + near.similar[0].score);
+
+  const far = await addRule('异步回调里不要吞掉异常。');
+  assert.equal(far.ok, true);
+  assert.equal(far.similar.length, 0, '无关规则不该误报');
+
+  // 完全相同仍走 E_DUPLICATE，不进 similar 提示。
+  const dup = await addRule(base);
+  assert.equal(dup.ok, false);
+  assert.equal(dup.code, 'E_DUPLICATE');
+
+  const rules = readGlobalRules();
+  assert.ok(rules.some((r) => r.rule === base), 'readGlobalRules 没解析出规则');
+
+  await forgetRule(base);
+  await forgetRule('动手改代码前先跑一遍现有测试，确保基线全绿。');
+  await forgetRule('异步回调里不要吞掉异常。');
+});
+
+await t.test('短句不靠覆盖度加成误判为重复', async () => {
+  const hits = similarRules('改动尽量小', ['改动前先读完整实现再动手，改动要有边界，不顺手重构无关文件。']);
+  assert.equal(hits.length, 0, '短句被当成重复');
 });
 
 const result = t.finish();

@@ -321,7 +321,7 @@ await t.test('persona 路由：拒绝跨源与错误 Content-Type，同源 JSON 
   assert.match(state.custom, /先给结论/);
 });
 
-await t.test('persona 路由：缺少 X-DSH-X-Memory 头时拒绝', async () => {
+await t.test('persona 路由：缺少 x-dsh-soul-memory 头时拒绝', async () => {
   const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const res = fakeRes();
   await route.handler(fakeReq({

@@ -1,5 +1,33 @@
 # 变更日志
 
+## 0.3.49
+
+- 规则可编辑：设置页「灵魂记忆 → 规则」每条后面加「编辑」，弹窗改正文、为什么、陷阱，保存后下一轮组装生效；写入走 `readGlobalRuleBlocks()` / `editRule()`，找不到原规则回 `E_NOT_FOUND`，改完撞上别的规则回 `E_DUPLICATE`；`POST /dsh-soul-memory/rules` 新增 `action=edit`（原来只有 `forget`）。
+- 补九项界面能力：形态加「不提醒」第四档、临时静默（1 小时 / 今天 / 恢复）、页头记忆体检卡（核心记忆大小 / 归档 / 待批 / 规则用量 / 可回收 + 一句建议）、分级回收按钮（预演 → 回收 → 撤销）、暂停写记忆、规则逐条删、待批规则行内编辑、闲时整理开关、写接口令牌（页面加载时下发，缺令牌 403）。
+- 编码规范预算默认 2000 → 3500（真实值由 `cordis.patch.yml` 的 `coding.budget` 决定，改代码默认值不够）；`coding_rules` 的 add/approve/show 输出用量，用到 85% 带截断警告，设置页规则 tab 有进度条。
+- 新增规则时自动查重：add / propose / approve 都跟已有规则比对，提示「可能与已有规则重复或可合并」；新增 `action=dupes` 单独扫一遍。
+- 测试：编码规范 14 条、界面 18 条断言；全套 205 断言全绿。
+
+## 0.3.48
+
+- 新增「灵魂记忆」设置页（`client.js`）：注册 4 个 slot（设置页 + 图标 + 输入框下方提示条 + 浮层），四个 tab——待批区、规则、称呼与风格、记忆分级。
+- 待批提醒支持三种形态：输入框下方提示条（默认）、右侧面板、居中浮层；形态与称呼存 `memory/SOUL-UI.json`。
+- host 侧新增 `src/ui-settings.js`、`src/ui-routes.js`，注册 `GET /dsh-soul-memory/state`、`POST /dsh-soul-memory/ui`、`POST /dsh-soul-memory/pending`；安全模型：回环 Host + Origin 同源 + 头 `x-dsh-soul-memory: 1` + JSON + 64KB。
+- 称呼写进注入节 `## 称呼`，缓存键含 SOUL-UI.json，改称呼下一轮组装生效，不用重启。
+- 客户端插件改 `package.json` 的 `dsh.client` / `exports['./client']` / `files` 后必须重启 DSH（热重载只换已加载模块，不换包清单）。
+
+## 0.3.47
+
+- 规则晋升分流：用户当场明确要求的用 `coding_rules add` 直接写；模型自己归纳的用 `propose` 进待批（`memory/CODING.pending.json`，上限 20 条），`approve` 后才注入、`reject` 丢弃。
+- 晋升门槛成文并注入：跨项目适用、至少复现过两次、说得出必须遵守的场景；只出现一次的不进全局。
+- 修 `collectRules` 的空短路：没有任何正式规则时，刚 propose 完的待批提示显示不出来。
+
+## 0.3.46
+
+- 记忆分级 + GC：`src/tiering.js`（tierOf / tierCounts / collectionCandidates / tierSummary）；新工具 `memory_tier`（status 看分布与候选、collect 预演回收、apply=true 执行、restore 恢复）。
+- 分级：约束与钉住 → 🔴；决策与进度 → 🟡；产物、索引与其他 → 🟢。回收只动 🟢 且从没被命中、存在 ≥90 天；写 `state=retired`，可逆。
+- `memory_brief` 多一行分级分布；GC 与 dreaming 共用运行锁。
+
 ## 0.3.45
 
 - 修「记住」提醒的计数：宿主每个 model step 会把 systemPrompt 上下文组装两次（`assemble()` 与请求前的 `refreshContext()`），原来在 `text()` 里扣额度，一个 step 被扣两次，声明的「最多 3 轮」实际只显示 2 次，多步回合还会在同一轮里烧完。计数改到 `agent/pre-step`（每步一次），`text()` 纯读；新增 `src/memory/cue.js` 承载状态，默认显示 2 个 model step。

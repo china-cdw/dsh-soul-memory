@@ -29,10 +29,12 @@ import {
   PRESETS,
 } from './persona.js';
 import { registerCodingRules } from './coding.js';
+import { readUiSettings, uiSettingsPath } from './ui-settings.js';
 import { registerLessons } from './lessons.js';
 import { biliStatus, searchBili } from './memory/bili.js'
 import { DREAMING_DEFAULTS, buildCleanupRequest, chunkItems, dreamCandidates, parseCleanupVerdicts, pickDigests, readDreamingState, withDreamingRunLock, writeDreamingState } from './dreaming.js';
 import { withNotes } from './tool-notes.js';
+import { collectionCandidates, tierCounts, tierOf, tierSummary, TIERS, TIER_LABELS } from './tiering.js';
 
 // 当前会话的事件序号提供者：index.js 启动时注入（读 MemoryBuffer 的最新 seq）。
 // 抽出来是为了让 writeNote 不依赖 index.js，测试也能直接喂一个假的。
@@ -557,7 +559,7 @@ function readBody(req, limit = 16384) {
 
 // ---------- 召回节（同步读，每次模型组装永远新鲜） ----------
 // 节文本缓存：模型每次组装都会调用，但底层文件通常隔很久才变；
-// 用 core/index/persona 三个文件的 mtime+size 作键，任何一处手改都会重建。
+// 用 core/index/persona/soul-ui 四个文件的 mtime+size 作键，任何一处改动（含设置页写盘）都会重建。
 let sectionCache = null; // { key, text }
 
 function fileStamp(file) {
@@ -565,7 +567,7 @@ function fileStamp(file) {
 }
 
 function buildSectionText() {
-  const key = fileStamp(corePath()) + '|' + fileStamp(indexPath()) + '|' + fileStamp(personaPath());
+  const key = fileStamp(corePath()) + '|' + fileStamp(indexPath()) + '|' + fileStamp(personaPath()) + '|' + fileStamp(uiSettingsPath());
   if (sectionCache && sectionCache.key === key) return sectionCache.text;
   const text = renderSectionText();
   sectionCache = { key, text };
@@ -595,11 +597,14 @@ function renderSectionText() {
       (n.supersededBy ? '（已被取代）' : '')
     ).join('\n');
     const persona = buildPersonaText();
+    // 称呼是界面设置的一部分（设置 → 灵魂记忆 → 称呼），但它要影响每个会话的语气。
+    const nickname = readUiSettings().nickname;
     return [
       '# 跨会话记忆（dsh-soul-memory）',
       '',
       '你在本机的所有会话共享以下持久记忆。核心记忆常驻注入；归档记忆仅列索引，用 memory_search / memory_read 按需取用。',
       '会话过程记忆（约束、决策、产物、历史原文）由同一插件的 soul_recall 检索，两者互补。',
+      ...(nickname ? ['', '## 称呼', '- 用户希望被称呼为「' + sanitize(nickname) + '」。'] : []),
       '',
       '## 核心记忆（MEMORY.md）',
       sanitize(core) || '（空）',
@@ -678,6 +683,11 @@ async function fingerprintPaths(paths) {
 }
 
 async function writeNote(args, exec = null) {
+  // 用户可一键暂停「写记忆」（灵魂记忆设置页）：聊私事时不该落盘。
+  // 放在最前面，连查重和指纹计算都不做，避免任何副作用。
+  if (readUiSettings().memoryPaused) {
+    return failMessage('E_PAUSED', '记忆写入已暂停（设置 → 灵魂记忆 可关闭），本条没有保存。');
+  }
   const title = typeof args.title === 'string' ? args.title.replace(/\s+/g, ' ').trim() : '';
   const content = typeof args.content === 'string' ? args.content : '';
   if (!title || !content.trim()) return failMessage('E_ARG', '保存失败：title 和 content 均不能为空。');
@@ -964,7 +974,7 @@ async function editCore(args) {
   } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
 
-async function brief(graphStats, agent, bridge) {
+async function brief(graphStats, agent, bridge, graphNodes) {
   try {
     const core = readFileLoose(corePath());
     const notes = await loadIndex();
@@ -997,6 +1007,16 @@ async function brief(graphStats, agent, bridge) {
           if (stats.edges != null) parts.push('边 ' + stats.edges);
           if (stats.bytes != null) parts.push('正文 ' + (stats.bytes / 1024).toFixed(1) + 'KB');
           if (parts.length) lines.push('- 会话图谱：' + parts.join('，'));
+        }
+      } catch { /* 图谱不可用时省略这一行 */ }
+    }
+    if (graphNodes && agent) {
+      try {
+        const nodes = await graphNodes(agent);
+        if (Array.isArray(nodes) && nodes.length) {
+          const counts = tierCounts(nodes);
+          const collectible = collectionCandidates(nodes).length;
+          lines.push('- 分级：' + tierSummary(counts, collectible) + '（memory_tier 可查看与回收，回收可逆）');
         }
       } catch { /* 图谱不可用时省略这一行 */ }
     }
@@ -1218,7 +1238,78 @@ async function dreamingTool(args = {}, exec = null) {
   }
 }
 
-export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, coding = null, lessons = null, bridge = null, dreaming = null, generate = null, retireNodes = null, restoreNodes = null, listRetiredNodes = null, core = true } = {}) {
+/**
+ * 分级与回收（tier + GC）。
+ *
+ * 只做两件事：把节点按 kind 分成高/中/低三层让人看见；把长期没人用的低层节点标为 retired。
+ * 回收复用 dreaming 的可逆机制（state='retired'，soul_recall 仍能找回，restore 可恢复），
+ * 与 dreaming 共用一把运行锁，避免两个 writer 同时改同一批节点。
+ */
+async function tierTool(args = {}, exec = null, hooks = {}) {
+  const action = typeof args.action === 'string' ? args.action : 'status'
+  const { graphNodes = null, retireNodes = null, restoreNodes = null } = hooks
+  const agent = exec?.agent ?? null
+  try {
+    if (action === 'status' || action === 'collect') {
+      if (!graphNodes) return failMessage('E_INTERNAL', '当前环境没有可用的会话图谱。')
+      const nodes = await graphNodes(agent)
+      if (!Array.isArray(nodes)) return failMessage('E_INTERNAL', '会话图谱不可用。')
+      const counts = tierCounts(nodes)
+      const minAgeDays = Number.isFinite(args.minAgeDays) ? Math.max(1, Math.floor(args.minAgeDays)) : null
+      const candidates = collectionCandidates(nodes, minAgeDays == null ? {} : { minAgeDays })
+      if (action === 'status') {
+        const rows = candidates.slice(0, 20).map(n => '- [' + n.id + '] ' + n.kind + ' · ' + Math.floor(n.ageDays) + ' 天 · ' + n.claim)
+        return [
+          '记忆分级：' + tierSummary(counts, candidates.length),
+          '判定：约束/钉住 → 🔴；决策/进度 → 🟡；产物/索引/其他 → 🟢',
+          candidates.length
+            ? '可回收（🟢 层、无人命中、≥' + (minAgeDays ?? 90) + ' 天）：' + candidates.length + ' 条\n' + rows.join('\n') + (candidates.length > 20 ? '\n…还有 ' + (candidates.length - 20) + ' 条' : '')
+            : '当前没有可回收节点。',
+          '回收只是标记 retired（可逆），不会删除；action=collect apply=true 才执行，action=restore 可恢复。',
+        ].join('\n')
+      }
+      // collect：默认 dry-run，与 memory_dreaming 的 run 保持一致。
+      if (args.apply !== true) {
+        return [
+          '回收预演（dry-run，未改动任何节点）：',
+          '分级：' + tierSummary(counts, candidates.length),
+          candidates.length
+            ? candidates.slice(0, 50).map(n => '- [' + n.id + '] ' + n.kind + ' · ' + Math.floor(n.ageDays) + ' 天 · ' + n.claim).join('\n')
+            : '没有候选。',
+          '确认执行请传 apply=true。',
+        ].join('\n')
+      }
+      if (!retireNodes) return failMessage('E_INTERNAL', '当前环境没有可用的图谱回收器。')
+      if (!candidates.length) return '没有可回收的节点，未做任何改动。'
+      if (dreamingInFlight) return '回收失败：闲时整理正在运行，请稍后再试。\n[err:E_BUSY]'
+      let changed = 0
+      try {
+        changed = Number(await withDreamingRunLock(() => retireNodes(agent, candidates.map(n => n.id)))) || 0
+      } catch (e) {
+        if (e && e.code === 'E_LOCK') return '回收失败：闲时整理正在运行，请稍后再试。\n[err:E_BUSY]'
+        throw e
+      }
+      return '已回收 ' + changed + ' 个节点（state=retired，可逆）。\naction=restore 可恢复；soul_recall 仍能找回这些节点。'
+    }
+    if (action === 'restore') {
+      if (!restoreNodes) return failMessage('E_INTERNAL', '当前环境没有可用的图谱恢复器。')
+      const ids = Array.isArray(args.ids) ? args.ids.map(String).filter(Boolean) : []
+      if (!ids.length) return failMessage('E_ARG', '恢复失败：请传 ids 数组（可用 memory_tier action=status 或 memory_dreaming action=retired 查看）。')
+      if (dreamingInFlight) return '恢复失败：闲时整理正在运行，请稍后再试。\n[err:E_BUSY]'
+      let changed = 0
+      try {
+        changed = Number(await withDreamingRunLock(() => restoreNodes(agent, ids))) || 0
+      } catch (e) {
+        if (e && e.code === 'E_LOCK') return '恢复失败：闲时整理正在运行，请稍后再试。\n[err:E_BUSY]'
+        throw e
+      }
+      return '已恢复 ' + changed + ' 个节点（state=active）。未被恢复的 id 可能不存在、本来就不是 retired，或已被取代。'
+    }
+    return '未知 action：必须是 status / collect / restore。\n[err:E_ARG]'
+  } catch (e) { return failMessage('E_INTERNAL', errText(e)) }
+}
+
+export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, graphNodes = null, coding = null, lessons = null, bridge = null, dreaming = null, generate = null, retireNodes = null, restoreNodes = null, listRetiredNodes = null, core = true } = {}) {
   const bridgeCfg = bridge && typeof bridge === 'object' ? bridge : null
   dreamingCfg = { ...DREAMING_DEFAULTS, ...(dreaming && typeof dreaming === 'object' ? dreaming : {}) };
   setDreamGenerator(generate);
@@ -1338,7 +1429,23 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
       description: '一次返回记忆库体检：核心记忆大小与分节、归档条数与最近 5 条、回复风格、会话图谱规模。判断"我记住了什么/记忆是不是健康"时先调它，不要逐个工具试。',
       notes: '只读；四项体检一次返回；不调用模型、不花钱。',
       parameters: { type: 'object', additionalProperties: false, properties: {}, required: [] },
-      execute: (_args, exec) => brief(graphStats, exec?.agent ?? null, bridgeCfg),
+      execute: (_args, exec) => brief(graphStats, exec?.agent ?? null, bridgeCfg, graphNodes),
+    },
+    {
+      name: 'memory_tier',
+      description: '记忆分级与回收：把会话图谱节点按 kind 分成 🔴 高（约束/钉住）、🟡 中（决策/进度）、🟢 低（产物/索引/其他），并列出长期无人命中的 🟢 节点。action=status 查看分级与可回收数；action=collect 预演（默认 dry-run，apply=true 才执行回收）；action=restore 恢复误回收的节点。回收只是标记 retired（可逆），不删除。',
+      notes: '只读优先；collect 默认 dry-run，apply=true 才写库；回收可逆（soul_recall 仍可找回，restore 可恢复）；不调用模型、不花钱。',
+      parameters: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          action: { type: 'string', enum: ['status', 'collect', 'restore'], description: 'status=看分级与可回收候选；collect=执行/预演回收；restore=恢复误回收的节点' },
+          apply: { type: 'boolean', description: 'action=collect 时是否真正回收；默认 false（只预演）' },
+          minAgeDays: { type: 'integer', description: '回收门槛：节点至少存在多少天，默认 90' },
+          ids: { type: 'array', items: { type: 'string' }, description: 'action=restore 时要恢复的节点 id（来自 status 或 memory_dreaming action=retired）' },
+        },
+        required: ['action'],
+      },
+      execute: (args, exec) => tierTool(args, exec, { graphNodes, retireNodes, restoreNodes }),
     },
     {
       name: 'persona',
@@ -1491,7 +1598,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
           }
           // 同源页面必须带自定义请求头：跨站表单/链接无法伪造，且会触发 CORS 预检，挡住跨源读取。
           if (String(req.headers['x-dsh-soul-memory'] || '') !== '1') {
-            sendJson(403, { error: '缺少 X-DSH-X-Memory: 1 请求头' });
+            sendJson(403, { error: '缺少 x-dsh-soul-memory: 1 请求头' });
             return;
           }
           if (req.method === 'POST') {

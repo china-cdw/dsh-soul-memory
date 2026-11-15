@@ -1,6 +1,6 @@
 {
   "name": "dsh-soul-memory",
-  "version": "0.3.45",
+  "version": "0.3.49",
   "description": "DSH 分层记忆：核心记忆常驻 + 归档笔记 + 踩坑记录 + 编码规范 + 会话图谱 + billion-context 摘要桥接",
   "license": "MIT",
   "author": "china-cdw",
@@ -17,13 +17,14 @@
   "scripts": {
     "preflight": "node scripts/preflight.mjs",
     "prepublishOnly": "node scripts/preflight.mjs",
-    "test": "node scripts/dsh-memory-audit.mjs && node scripts/dsh-memory-coding-audit.mjs && node scripts/dsh-memory-lessons-audit.mjs && node scripts/dsh-memory-remember-test.mjs && node scripts/lessons-replay-test.mjs && node scripts/dsh-memory-bridge-audit.mjs && node scripts/dsh-memory-regression.mjs"
+    "test": "node scripts/dsh-memory-audit.mjs && node scripts/dsh-memory-coding-audit.mjs && node scripts/dsh-memory-lessons-audit.mjs && node scripts/dsh-memory-remember-test.mjs && node scripts/lessons-replay-test.mjs && node scripts/dsh-memory-bridge-audit.mjs && node scripts/dsh-memory-regression.mjs && node scripts/dsh-memory-tiering-test.mjs && node scripts/dsh-memory-promote-test.mjs && node scripts/dsh-memory-ui-test.mjs"
   },
   "exports": {
     ".": "./index.js",
     "./compaction": "./compaction.js",
     "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json"
+    "./locale/*.json": "./locale/*.json",
+    "./client": "./client.js"
   },
   "engines": {
     "node": ">=24",
@@ -32,9 +33,18 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
     }
   },
   "files": [
+    "client.js",
     "index.js",
     "compaction.js",
     "src/**/*.js",

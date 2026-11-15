@@ -138,7 +138,7 @@ export function buildLessonsText(rows, { budget = DEFAULT_BUDGET, limit = 6 } = 
   const head = [
     '# 踩过的坑（dsh-soul-memory 自动记录）',
     '',
-    '同一次会话里，某条命令报错后同类调用恢复，就会记在这里。只是线索，不一定精确；确认可长期复用的，可以用 coding_rules action=add 固化成规则。',
+    '同一次会话里，某条命令报错后同类调用恢复，就会记在这里。只是线索，不一定精确；确认可长期复用的，可以用 coding_rules action=propose 提议固化（用户批准后才生效）。',
     '',
   ].join('\n');
   const lines = [];

@@ -24,7 +24,9 @@ import { registerCoreMemory, runDreaming, setDreamGenerator, setDreamNodeProvide
 import { snapshotGraph } from './src/memory/util.js'
 import { withNotes } from './src/tool-notes.js'
 import { rememberMatch, rememberReminder } from './src/memory/remember.js'
+import { readUiSettings } from './src/ui-settings.js'
 import { createRememberCues } from './src/memory/cue.js'
+import { registerSoulUiRoutes } from './src/ui-routes.js'
 
 export const name = 'dsh-soul-memory'
 export const inject = ['tools', 'systemPrompt', 'commands']
@@ -59,7 +61,7 @@ export function settings(input = {}) {
     // 编码规范固定记忆：全局 CODING.md + 项目规则文件，注入系统提示（独立预算）。
     coding: {
       enabled: boolean(input.coding?.enabled, true, 'coding.enabled'),
-      budget: integer(input.coding?.budget, 2000, 400, 8000, 'coding.budget'),
+      budget: integer(input.coding?.budget, 3500, 400, 8000, 'coding.budget'),
     },
     // 自动踩坑记录：工具报错后同会话恢复 → 记一条，注入独立 section。
     lessons: {
@@ -332,6 +334,14 @@ export function apply(ctx, input = {}) {
       const nodes = Object.values(stats?.byKind ?? {}).reduce((a, b) => a + b, 0)
       return { nodes, edges: graph.edges, bytes: stats?.bytes ?? null }
     },
+    // 分级与回收的输入：memoryView 的条目已经带 kind/pin/hits/ageDays/importance，
+    // 正是 tierOf / collectionCandidates 需要的字段，不需要另开一条查询路径。
+    graphNodes: async agent => {
+      if (!config.memory.enabled || !store) return null
+      const scope = scopeForAgent(agent)
+      if (!scope) return null
+      try { return memoryView(store, scope, { now: Date.now() }).list } catch { return null }
+    },
   })
 
   try {
@@ -540,13 +550,15 @@ export function apply(ctx, input = {}) {
         const messages = decision?.messages ?? payload.messages ?? []
         cwdBySession.set(sid, components.cwdFor(payload.agent))
         let rememberAdvanced = false
+        // 用户可一键暂停记忆写入：这一轮不猜意图、不进缓冲（设置页开关，写盘很轻，直接读）。
+        const memoryPaused = readUiSettings().memoryPaused
         for (const message of messages) {
           if (!human(message)) continue
           const text = textBlocks(message.content)
           if (!text.trim()) continue
           // 宿主注入的运行时上下文/技能目录不是人的话：不猜意图、不当纠正、不进缓冲。
           if (injected(text)) continue
-          if (config.memory.enabled) {
+          if (config.memory.enabled && !memoryPaused) {
             const hit = rememberMatch(text)
             if (hit) rememberCue.arm(sid, bounded(text, 8000), hit.index)
             // 每个 step 只推进一格（同一 step 可能排了多条人类消息）；text() 只读，避免 assemble + refreshContext 双扣。
@@ -554,7 +566,7 @@ export function apply(ctx, input = {}) {
           }
           // Buffer the raw message: one normalizer decides what a block is, and it is the
           // same one that the offline bench exercises.
-          if (config.memory.enabled) memory.push(sid, { type: 'user/message', data: { message } })
+          if (config.memory.enabled && !memoryPaused) memory.push(sid, { type: 'user/message', data: { message } })
           if (config.memory.enabled) {
             // Rule-based sufficiency router: no model call, just "does this question touch
             // anything the card already says?". Below the threshold the model is about to
@@ -1078,6 +1090,20 @@ export function apply(ctx, input = {}) {
         }
       }),
     }))
+
+    // 灵魂记忆设置页的 Host 接口：形态 / 称呼 / 待批 / 分级。
+    // webServer 是可选服务——纯 CLI 宿主没有它时设置页不可用，其余记忆功能不受影响。
+    // 用 c.effect 托管：webServer 重新提供时先撤旧路由再注册，避免 exact 路由重复注册抛错。
+    ctx.inject(['webServer'], (c) => {
+      c.effect(() => {
+        try {
+          return registerSoulUiRoutes(c, { store })
+        } catch (e) {
+          console.error('dsh-soul-memory: 设置页接口注册失败（不影响记忆功能）：' + (e?.message ?? e))
+          return () => {}
+        }
+      })
+    })
 
     const stop = async () => {
       if (disposed) return
