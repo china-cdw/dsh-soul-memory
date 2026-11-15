@@ -22,6 +22,7 @@ import { assertVerifier, validationSettings } from './src/validation.js'
 import { runChecks } from './src/probe.js'
 import { registerCoreMemory, runDreaming, setDreamGenerator, setDreamNodeProvider, setDreamRestoreProvider, setDreamRetiredListProvider, setDreamRetireProvider, setSessionSeqProvider } from './src/core-memory.js'
 import { snapshotGraph } from './src/memory/util.js'
+import { appendTurn, readTurns } from './src/turnlog.js'
 import { withNotes } from './src/tool-notes.js'
 import { rememberMatch, rememberReminder } from './src/memory/remember.js'
 import { readUiSettings } from './src/ui-settings.js'
@@ -100,7 +101,10 @@ export function settings(input = {}) {
       // Off by default, deliberately: it changes what the model sees every turn, and a
       // scheduling policy that has not been observed on real sessions is a hypothesis, not a
       // default. Turning it on is one line; turning it off is the same line.
-      dynamics: boolean(input.memory?.dynamics, false, 'memory.dynamics'),
+      // 默认开：卡片的排序变成「什么时候最需要再看到它」，而不是「谁最旧」。关掉仍是一行。
+      dynamics: boolean(input.memory?.dynamics, true, 'memory.dynamics'),
+      // 回合日志：把「这一轮做了什么」按天记一行。纯规则拼接，不调模型。
+      turnLog: boolean(input.memory?.turnLog, true, 'memory.turnLog'),
       // Separate from `dynamics` on purpose. That one reorders the card; this one *writes rows*,
       // and a write is a different risk from a display change. It also does something the
       // ordering cannot: extraction is narrow by design, so an error code that lived only in a
@@ -198,6 +202,7 @@ const tools = [
     properties: {
       query: str('要回捞的关键词、路径、命令或错误码'),
       k: int('可选：原文片段条数，默认 3，最多 5（0 等同默认）', { minimum: 0, maximum: 5 }),
+      source: str('可选：auto（默认，先查图谱，命中少时翻原文）/ quote（只翻原文，含历史会话）/ graph（只查图谱）'),
     },
     required: ['query'],
   },
@@ -659,9 +664,18 @@ export function apply(ctx, input = {}) {
         if (state?.scope && config.memory.enabled) {
           const events = memory.take(sid)
           const cwd = cwdBySession.get(sid) ?? null
-          if (events.length) safe(() => capture(store, state.scope, events, {
+          let captured = null
+          if (events.length) captured = safe(() => capture(store, state.scope, events, {
             hashOf: config.memory.verifyArtifacts && cwd ? path => fileFingerprint(cwd, path) : null,
           }))()
+          // 回合日志：有落点的一轮记一行，闲聊不记。写失败只丢这一天的一行，不影响记忆。
+          if (captured?.nodes && config.memory.turnLog) {
+            const ask = lastTurn.get(sid)?.intent ?? ''
+            const files = events
+              .map(event => event?.type === 'tool/call' ? (event.data?.args?.path ?? event.data?.args?.file_path) : null)
+              .filter(value => typeof value === 'string' && value)
+            appendTurn({ ask, nodes: captured.nodes, files }).catch(() => {})
+          }
           // Then, and only then, close the coverage gap: whatever extraction did not turn into a
           // node gets a reference pointer, because a shadowed span with no node behind it is
           // findable only by guessing its wording. Zero checkpoint bytes; a handful of rows.
@@ -781,20 +795,22 @@ export function apply(ctx, input = {}) {
               lookups.set(sid, used + 1)
               if (definition.name === 'soul_expand') value = expandRange(session, Number(args.from), Number(args.to), { limit: args.limit, maxEvents: args.maxEvents, offset: args.offset })
               else {
-                // One tool, two layers. Asking the model to choose between "graph" and "raw
-                // text" made it alternate between them and give up; the layers are an
-                // implementation detail, so the tool always consults both.
-                const graph = recall(store, scope, args.query, {
-                  limit: 6,
-                  dynamicsView: config.memory.dynamics ? memoryView(store, scope, { now: Date.now() }) : null,
-                })
+                // 原话层：source=quote 时跳过图谱、直接翻原文（含历史会话），
+                // 用来回答「我当时到底怎么说的」——转述过的节点答不了这个问题。
+                const wanted = String(args.source || 'auto')
+                const graph = wanted === 'quote'
+                  ? { hits: [], neighbours: [], links: 0, spread: 0 }
+                  : recall(store, scope, args.query, {
+                      limit: 6,
+                      dynamicsView: config.memory.dynamics ? memoryView(store, scope, { now: Date.now() }) : null,
+                    })
                 let spans = []
                 let indexed = null
-                if (graph.hits.length < 2) {
+                if (wanted === 'quote' || graph.hits.length < 2) {
                   indexed = ingest(store, scope, session)
                   const found = searchIndex(store, scope, args.query, {
                     limit: Math.max(1, Math.min(5, Number(args.k) || 3)),
-                    sessionId: sid,
+                    sessionId: wanted === 'quote' ? null : sid,
                   })
                   spans = found.spans
                   // Write the pointer back so the same question becomes a card hit next time.

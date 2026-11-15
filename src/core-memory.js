@@ -18,6 +18,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWrite, createQueue, latestSnapshot, memoryPath, safeJson, sliceSafe, snapshotMemory, withFileLock } from './memory/util.js';
 import { checkGuard, isSensitive } from './memory/guard.js';
+import { exportBundle, importBundle, listBackups, readBundle } from './backup.js';
+import { readTurns } from './turnlog.js';
 import {
   buildPersonaText,
   listPresets,
@@ -1446,6 +1448,69 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
         required: ['action'],
       },
       execute: (args, exec) => tierTool(args, exec, { graphNodes, retireNodes, restoreNodes }),
+    },
+    {
+      name: 'memory_backup',
+      description: '记忆备份与搬家：把记忆目录里可读的那部分（核心记忆、编码规范与待批、风格、踩坑教训、设置、归档笔记）打成一个 JSON 带走，换电脑或误删时用 import 放回。action=export 生成备份；action=list 看已有备份；action=import 预演或真正写入（默认只预演）。不备份 SQLite 图谱库——它是派生数据，可从这些文件重建。',
+      notes: 'export 只读已知文件、不遍历整个目录；import 默认 dry-run，apply=true 才写，写前自动快照；不调用模型、不花钱。',
+      parameters: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          action: { type: 'string', enum: ['export', 'list', 'import'], description: 'export=生成备份；list=列出已有备份；import=从备份恢复' },
+          file: { type: 'string', description: 'action=import 时的备份文件名（先 list 拿）' },
+          apply: { type: 'boolean', description: 'action=import 时是否真正写入；默认 false 只预演' },
+        },
+        required: ['action'],
+      },
+      async execute(args) {
+        try {
+          if (args.action === 'export') {
+            const result = await exportBundle()
+            return `已导出 ${result.files} 个文件（${(result.bytes / 1024).toFixed(1)} KB）：\n${result.path}`
+          }
+          if (args.action === 'list') {
+            const rows = await listBackups()
+            if (!rows.length) return '还没有备份。用 memory_backup action=export 生成一份。'
+            return '备份列表（新→旧）：\n' + rows.map(row =>
+              `- ${row.name}（${(row.bytes / 1024).toFixed(1)} KB，${row.mtime.slice(0, 16).replace('T', ' ')}）`).join('\n')
+          }
+          if (args.action === 'import') {
+            if (!args.file) return '缺少 file：先用 action=list 拿到文件名。'
+            const bundle = await readBundle(args.file)
+            const result = await importBundle(bundle, { apply: Boolean(args.apply) })
+            const head = result.apply
+              ? `已导入 ${result.written} 个文件（导入前快照：${result.snapshot}）`
+              : '预演（没有写入；加 apply=true 才执行）'
+            return `${head}\n新增 ${result.added.length} 个、覆盖 ${result.changed.length} 个、未变 ${result.same} 个，共 ${result.total} 个。`
+          }
+          return 'action 只能是 export / list / import'
+        } catch (error) {
+          return '备份操作失败：' + (error?.message ?? String(error))
+        }
+      },
+    },
+    {
+      name: 'memory_journal',
+      description: '回合日志：按天记下「这一轮用户要了什么、写了几个记忆节点、产物落在哪」。回答「前几天在做什么」时用它，比翻会话原文快。action=read 读最近几天；action=list 看有哪些天的记录。',
+      notes: '纯规则拼接、零模型调用；只记有落点的轮次（闲聊不记）；不写进归档索引，不占提示预算。',
+      parameters: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          action: { type: 'string', enum: ['read', 'list'], description: 'read=读内容；list=列日期' },
+          days: { type: 'integer', description: 'action=read 时读最近几天，默认 7，最多 60' },
+        },
+        required: ['action'],
+      },
+      async execute(args) {
+        try {
+          const rows = await readTurns({ days: Math.min(60, Number(args.days) || 7) })
+          if (!rows.length) return '还没有回合日志。完成一轮有写入的任务后才会产生。'
+          if (args.action === 'list') return '回合日志：\n' + rows.map(row => '- ' + row.name).join('\n')
+          return rows.map(row => `## ${row.name}\n${row.text}`).join('\n')
+        } catch (error) {
+          return '读回合日志失败：' + (error?.message ?? String(error))
+        }
+      },
     },
     {
       name: 'persona',

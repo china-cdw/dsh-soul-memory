@@ -21,6 +21,15 @@
 | 同一个错反复犯 | 工具报错后自动记一条「错 + 当时怎么改对的」，下个会话提醒 |
 | 每次都要重新交代代码规范 | 自动读全局 `CODING.md` 和项目里的 `AGENTS.md` 等规则文件 |
 | 长会话被压缩后，旧过程细节消失 | 桥接 billion-context 的会话压缩摘要，只读检索 |
+| 不知道前几天到底在做什么 | 回合日志按天记一行「要了什么、写了什么、产物在哪」，`memory_journal` 直接读 |
+| 想换电脑或怕误删 | `memory_backup` 一键导出 JSON，导入默认只预演、写前自动快照 |
+
+## 0.4.0 的记忆行为
+
+- **衰减默认开**（`memory.dynamics`）：检索排序用 ACT-R 激活值，久不命中的旧节点自然靠后，但不删除；关掉就按固定权重排。
+- **置信度四档**（`soul_recall` 结果的 `confidence`）：`exact` 原话对上、`partial` 字面过半、`related` 靠图谱关联捞回、`weak` 仅字面擦边。
+- **只翻原文**（`soul_recall source=quote`）：跳过知识图谱，直接跨会话搜原始对话。
+- **回合日志**（`memory.turnLog`）：每轮只要有记忆写入，就在 `$DSH_HOME/memory/turns/YYYYMMDD.md` 记一行；闲聊不记。
 
 ## 为什么合成一个插件
 
@@ -140,7 +149,7 @@ dsh plugin --profile desktop add "$PWD"
 
 ## 工具
 
-下表是默认注册的 14 个工具；开启演化（`config.enabled: true` 并配置 provider/model）后还会注册 `evolve_status`、`evolve_diagnose`、`evolve_request`、`evolve_tree` 等 `evolve_*` 工具，总数最多 19 个。
+下表是默认注册的 16 个工具；开启演化（`config.enabled: true` 并配置 provider/model）后还会注册 `evolve_status`、`evolve_diagnose`、`evolve_request`、`evolve_tree` 等 `evolve_*` 工具，总数最多 21 个。
 
 | 工具 | 用途 | 主要参数 |
 | --- | --- | --- |
@@ -155,8 +164,10 @@ dsh plugin --profile desktop add "$PWD"
 | `persona` | 回复风格 | `action`（get/set/custom/disable）、`preset?`、`text?` |
 | `coding_rules` | 编码规范（可弹窗编辑、新增时自动查重） | `action`（show/list/add/propose/pending/approve/reject/forget/dupes）、`text?`、`ids?` |
 | `memory_tier` | 记忆分级与回收（🔴🟡🟢，回收可逆） | `action`（status/collect/restore）、`apply?`、`minAgeDays?`、`ids?` |
+| `memory_backup` | 备份/搬家：导出 JSON、列备份、从备份恢复 | `action`（export/list/import）、`file?`、`apply?` |
+| `memory_journal` | 回合日志：按天看「这一轮做了什么」 | `action`（read/list）、`days?` |
 | `lessons` | 踩坑记录 | `action`（list/forget/clear）、`text?`、`limit?`（默认 50，上限 200） |
-| `soul_recall` | 从会话图谱/历史原文回捞 | `query`、`k?` |
+| `soul_recall` | 从会话图谱/历史原文回捞（结果带 `confidence`：exact/partial/related） | `query`、`k?`、`source?`（auto/quote/graph） |
 | `soul_expand` | 按 seq 区间展开原文（默认 2000 字节 / 200 条，上限 20000 / 1000）；首条事件被裁剪时用 `from=resume.seq` + `offset=resume.offset` 续读，其他截断用 `from=to+1`；零预算返回的 `next` 即续读起点 | `from`、`to`（必填，0–1000000）；`limit?`、`maxEvents?`、`offset?`（默认 2000 / 200 / 0） |
 
 写入规则：`memory_write` 会做近重复检查（相似度 ≥0.55 拒写，加 `force: true` 可强写）。
@@ -326,7 +337,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 85 项、编码层 14 项、踩坑层 15 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 19 项，共 245 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 85 项、编码层 14 项、踩坑层 15 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 19 项、备份/回合日志 4 项，共 249 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

@@ -1,5 +1,14 @@
 # 变更日志
 
+## 0.4.0
+
+- **衰减默认开**：`memory.dynamics` 从默认 `false` 改为 `true`，检索按 ACT-R 激活值排序，久不命中的旧节点自然靠后（不删除）；关掉恢复固定权重。
+- **置信度四档**：`soul_recall` 的 `hits` / `neighbours` 增加 `confidence` —— `exact`（查询词全中）、`partial`（过半）、`related`（字面没撞上但靠图谱关联/激活捞回）、`weak`（仅擦边）。图谱召回本来按关联算，不补 `related` 会把结果全判弱。
+- **只翻原文**：`soul_recall` 新增 `source` 参数（`auto` / `quote` / `graph`），`quote` 跳过图谱直接跨会话搜原始对话。
+- **回合日志**：新增 `memory_journal` 工具与 `memory.turnLog` 开关（默认开），每轮有记忆写入时在 `$DSH_HOME/memory/turns/YYYYMMDD.md` 记一行「要了什么、写了什么、产物在哪」，闲聊不记。
+- **备份/搬家**：新增 `memory_backup` 工具 —— `export` 把核心记忆、编码规范与待批、风格、踩坑、设置、归档笔记打包成 JSON；`import` 默认只预演，`apply` 前自动快照到 `backups/pre-import-<时间>/`。不备份 SQLite 图谱库（派生数据）。
+- 新增自检 `scripts/dsh-memory-backup-test.mjs`（4 项），断言总数 245 → 249。
+
 ## 0.3.51
 
 - 协议从 MIT 改为 **AGPL-3.0-or-later + 商业授权** 双轨：修改后分发、或以网络服务形式提供给别人使用，都必须同样以 AGPL-3.0 开源；闭源商用需先取得商业授权（申请方式写进 README）。0.3.51 之前以 MIT 发布的版本不可撤回，不受影响。
