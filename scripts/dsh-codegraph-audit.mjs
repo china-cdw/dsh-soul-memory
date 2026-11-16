@@ -3,7 +3,7 @@
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assert, callTool, makeCtx, suite } from './_testkit.mjs';
-import { _resetCodeGraphCache, _setSdkCandidatesForTest, registerCodeGraph } from '../src/codegraph.js';
+import { _resetCodeGraphCache, _sdkCandidatePathsForTest, _setSdkCandidatesForTest, registerCodeGraph } from '../src/codegraph.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
@@ -284,6 +284,24 @@ await t.test('清理钩子真的挂上：触发后关句柄、摘工具，且只
   assert.equal(tools.size, 0, '清理钩子应该先摘掉工具');
   effects[0]();
   assert.equal(fake.state.closed, 1, '重复清理不应再关一次');
+});
+
+await t.test('SDK 装在 PATH 里的 node 目录时也能被找到', async () => {
+  const { mkdtemp } = await import('node:fs/promises');
+  const os = await import('node:os');
+  _resetCodeGraphCache();
+  _setSdkCandidatesForTest(null);
+  const oldPath = process.env.PATH;
+  const tmp = await mkdtemp(join(os.tmpdir(), 'codegraph-path-'));
+  try {
+    process.env.PATH = tmp;
+    const want = resolve(tmp, 'node_modules', '@colbymchenry', 'codegraph');
+    assert.ok(_sdkCandidatePathsForTest().includes(want), '候选里应该有 ' + want);
+  } finally {
+    process.env.PATH = oldPath;
+    _setSdkCandidatesForTest([fixtureDir]);
+    _resetCodeGraphCache();
+  }
 });
 
 // 真 SDK 验收：环境不满足时明确 skip 并单列，不冒充通过。

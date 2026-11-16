@@ -11,7 +11,8 @@
  * 路径逐个候选目录解析，且只缓存「没装」这个结论（装完不用重启）。
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { withNotes } from './tool-notes.js';
 import { redactSecrets, sliceSafe } from './memory/util.js';
@@ -77,11 +78,17 @@ function closeAllHandles() {
 /** 测试用：忘掉已加载的 SDK 与句柄。 */
 export function _resetCodeGraphCache() {
   sdk = { ns: null, at: 0, error: null };
+  npmRootCache = null;
   closeAllHandles();
 }
 
 export function _setSdkCandidatesForTest(list) {
   sdkCandidateOverride = Array.isArray(list) ? list.slice() : null;
+}
+
+/** 测试用：看默认的候选目录顺序（不真实加载）。 */
+export function _sdkCandidatePathsForTest() {
+  return sdkCandidates();
 }
 
 function sdkCandidates() {
@@ -106,6 +113,14 @@ function sdkCandidates() {
     const base = String(process.env[envKey] || '').trim();
     if (base) out.push(join(base, 'npm', 'node_modules', ...SDK_PARTS));
   }
+  // DSH 进程的 execPath 未必是装了包的那个 node：PATH 里的 node 目录也要看。
+  for (const raw of String(process.env.PATH || process.env.Path || '').split(delimiter)) {
+    const dir = raw.trim().replace(/^"|"$/g, '');
+    if (!dir) continue;
+    out.push(join(dir, 'node_modules', ...SDK_PARTS));
+    out.push(join(dir, '..', 'node_modules', ...SDK_PARTS));
+    out.push(join(dir, '..', 'lib', 'node_modules', ...SDK_PARTS));
+  }
   return [...new Set(out)];
 }
 
@@ -124,29 +139,53 @@ function entryFileOf(dir) {
   }
 }
 
-async function loadSdk() {
-  if (sdk.ns) return sdk.ns;
-  // 只缓存「没装」：装完或换路径后不必重启；加载失败每次重试一次。
-  if (sdk.error && sdk.error.kind === 'not-installed' && Date.now() - sdk.at < NOT_FOUND_TTL_MS) throw sdk.error;
-  let sawEntry = false;
-  let loadError = null;
-  for (const dir of sdkCandidates()) {
+let npmRootCache = null;
+
+/** 最后的兜底：问一次 npm 全局目录（npm 可能不在 PATH 的 node 目录里）。只问一次。 */
+function npmGlobalCandidate() {
+  if (npmRootCache !== null) return npmRootCache ? [npmRootCache] : [];
+  npmRootCache = '';
+  try {
+    const r = spawnSync('npm', ['root', '-g'], { encoding: 'utf8', timeout: 20000, shell: true, windowsHide: true });
+    const line = String((r && r.stdout) || '').trim().split(/\r?\n/).pop() || '';
+    if (line && existsSync(join(line, ...SDK_PARTS))) npmRootCache = line;
+  } catch { /* 没有 npm 就当没装 */ }
+  return npmRootCache ? [npmRootCache] : [];
+}
+
+async function loadFrom(list, state) {
+  for (const dir of list) {
     const entry = entryFileOf(dir);
     if (!entry) continue;
-    sawEntry = true;
+    state.sawEntry = true;
     try {
       const mod = await import(pathToFileURL(entry).href);
       const ns = mod && mod.default && typeof mod.default.CodeGraph === 'function' ? mod.default : mod;
       if (!ns || typeof ns.CodeGraph !== 'function') {
-        loadError = new Error('入口没有导出 CodeGraph：' + entry);
+        state.loadError = new Error('入口没有导出 CodeGraph：' + entry);
         continue;
       }
-      sdk = { ns, at: Date.now(), error: null };
       return ns;
     } catch (e) {
-      loadError = e;
+      state.loadError = e;
     }
   }
+  return null;
+}
+
+async function loadSdk() {
+  if (sdk.ns) return sdk.ns;
+  // 只缓存「没装」：装完或换路径后不必重启；加载失败每次重试一次。
+  if (sdk.error && sdk.error.kind === 'not-installed' && Date.now() - sdk.at < NOT_FOUND_TTL_MS) throw sdk.error;
+  const state = { sawEntry: false, loadError: null };
+  let ns = await loadFrom(sdkCandidates(), state);
+  // 常见候选都没找到时才问 npm：这一步要起子进程，别每次都付。
+  if (!ns && !state.sawEntry && !sdkCandidateOverride) ns = await loadFrom(npmGlobalCandidate(), state);
+  if (ns) {
+    sdk = { ns, at: Date.now(), error: null };
+    return ns;
+  }
+  const { sawEntry, loadError } = state;
   // 「找到包但加载失败」和「压根没装」是两件事：前者重装/修路径，后者给安装命令。
   if (sawEntry) {
     const err = new CodeGraphError('load-failed',
