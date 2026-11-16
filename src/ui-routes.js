@@ -24,6 +24,7 @@ import { memoryPath } from './memory/util.js';
 import { readDreamingState, writeDreamingState, withDreamingRunLock } from './dreaming.js';
 import { readTurns } from './turnlog.js';
 import { BAND_LABELS, scoreText } from './weighting.js';
+import { TOPIC_LABELS, TOPICS, normalizeTopic, topicOf } from './topics.js';
 
 const PREFIX = '/dsh-soul-memory/';
 const BODY_LIMIT = 64 * 1024; // 待批批量操作与规则预览；与 persona 的 16KB 不同是有意的（批量批准）。
@@ -332,12 +333,18 @@ async function memoriesOf() {
       const fallback = name.replace(/\.md$/, '');
       const body = text.replace(/^---[\s\S]*?---\r?\n?/, '');
       const weight = scoreText(String(titleLine || heading || fallback) + ' ' + body);
+      // 老笔记没有 topic 行：按同一套词表现算，但不回写文件（这里是只读快照）。
+      const topicLine = text.split('\n').find((line) => /^topic:\s*\S/.test(line)) || '';
+      const declared = topicLine ? topicLine.replace(/^topic:\s*/, '').trim() : '';
+      const topic = declared ? normalizeTopic(declared) : topicOf(String(titleLine || heading || fallback) + ' ' + body).topic;
       notes.push({
         id: fallback,
         title: titleLine
           ? titleLine.replace(/^title:\s*/, '').trim()
           : heading ? heading.replace(/^#\s*/, '').trim() : fallback,
         chars: text.length,
+        topic,
+        topicLabel: TOPIC_LABELS[topic] || TOPIC_LABELS.other,
         score: weight.score,
         band: weight.band,
         bandLabel: BAND_LABELS[weight.band] || weight.band,
@@ -359,8 +366,14 @@ async function memoriesOf() {
     journal = await readTurns({ days: 5 });
   } catch { journal = []; }
 
+  // 各主题的条数，供页面画筛选按钮；只列真正有笔记的主题。
+  const counts = new Map();
+  for (const note of notes) counts.set(note.topic, (counts.get(note.topic) || 0) + 1);
+  const topics = TOPICS.filter((id) => counts.get(id)).map((id) => ({ id, label: TOPIC_LABELS[id], count: counts.get(id) }));
+
   return {
     notes: notes.slice(0, 200),
+    topics,
     lessons,
     journal: journal.map((entry) => ({ name: entry.name.replace(/\.md$/, ''), text: entry.text })),
   };

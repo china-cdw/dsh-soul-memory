@@ -12,7 +12,7 @@
 // 设计参考：AGENTS.md 约定（https://agents.md/）、Cursor rules、以及 dsh-meow-memory 的
 // rules 层——但这里不做检索/嵌入，只做"小而常驻"，避免和 MEMORY.md 抢预算。
 import { createHash } from 'node:crypto';
-import { readFileSync, statSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWrite, createQueue, memoryHome, sliceSafe, withFileLock } from './memory/util.js';
 import { withNotes } from './tool-notes.js';
@@ -21,6 +21,24 @@ import { readUiSettings, MIN_RULES_BUDGET, MAX_RULES_BUDGET } from './ui-setting
 // 每轮系统提示都要重发这段规则，所以有预算上限；超出会截断。
 // 3500 是默认值，不是硬限制：插件配置 coding.budget 可调 400–8000。
 const DEFAULT_BUDGET = 3500;
+
+// 「这像不像一个代码目录」只看几个一眼能认出的标志物。
+// 判断不了（拿不到 cwd、读目录失败）时按「是代码目录」处理——宁可多注入，
+// 也不要因为判断失败把用户辛苦攒的规则悄悄吞掉。
+const CODE_MARKERS = ['package.json', 'pnpm-lock.yaml', 'yarn.lock', 'Cargo.toml', 'go.mod', 'pyproject.toml', 'pom.xml', 'AGENTS.md', 'CLAUDE.md', 'CODING.md', '.git'];
+
+export function isCodeDir(cwd) {
+  if (!cwd) return true;
+  try {
+    if (!statSync(cwd).isDirectory()) return true;
+    for (const name of CODE_MARKERS) {
+      if (existsSync(join(cwd, name))) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
 
 /**
  * 预算优先级：页面设置 → 宿主配置（cordis.patch.yml 的 coding.budget）→ 默认值。
@@ -665,6 +683,9 @@ export function registerCodingRules(ctx, options = {}) {
     text: ({ agent } = {}) => {
       try {
         const cwd = agent?.session?.header?.cwd || null;
+        // 只在像代码目录的会话里注入。纯聊天（生活、行业咨询）看到一屏
+        // 编码约定是噪音，还会挤掉用户画像这类真正该常驻的内容。
+        if (options.autoScope !== false && !isCodeDir(cwd)) return '';
         return collectRules(cwd, { budget }).text;
       } catch {
         return '';

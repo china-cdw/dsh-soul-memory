@@ -108,6 +108,16 @@ window.__ModuleLoader__.load({
     .dsm-sess-select:disabled{opacity:.6;cursor:default}
     .dsm-sess-select:focus-visible{outline:2px solid var(--dsw-alias-border-l2,rgba(127,127,127,.4));outline-offset:1px}
 .dsm-meta-soft{font-size:11px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
+.dsm-topics{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}
+.dsm-topic-chip{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 10px;font-size:11px;border-radius:999px;border:1px solid var(--dsw-alias-border-l3);background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit}
+.dsm-topic-chip[data-active="1"]{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-weight:600}
+.dsm-topic-chip:focus-visible{outline:2px solid var(--dsw-alias-accent-1);outline-offset:2px}
+.dsm-topic{flex:0 0 auto;font-size:10px;line-height:16px;padding:0 6px;border-radius:6px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary)}
+.dsm-topic[data-topic="work"]{color:#4c8dff}
+.dsm-topic[data-topic="life"]{color:#2aa45f}
+.dsm-topic[data-topic="health"]{color:#d97706}
+.dsm-topic[data-topic="study"]{color:#7c5cff}
+.dsm-topic[data-topic="family"]{color:#e0457b}
 .dsm-banner{border-radius:var(--dsw-radius-md);padding:8px 12px;font-size:12px}
 .dsm-banner[data-tone="error"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 12%,transparent);color:var(--dsw-alias-state-error-primary)}
 .dsm-banner[data-tone="ok"]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 12%,transparent);color:var(--dsw-alias-state-success-primary)}
@@ -1379,6 +1389,8 @@ window.__ModuleLoader__.load({
       const [data, setData] = useState(null)
       const [error, setError] = useState(null)
       const [busy, setBusy] = useState(false)
+      // 主题筛选：空串 = 全部。只影响显示，不改任何文件。
+      const [topicFilter, setTopicFilter] = useState('')
       const load = async () => {
         setBusy(true)
         setError(null)
@@ -1500,6 +1512,8 @@ window.__ModuleLoader__.load({
       if (error) return h(Empty, null, '读不到记忆内容：' + error)
       if (!data) return h(Empty, null, busy ? '正在读取…' : '加载中…')
       const notes = data.notes || []
+      const topics = data.topics || []
+      const shown = topicFilter ? notes.filter((note) => note.topic === topicFilter) : notes
       const journal = data.journal || []
       return h('div', null,
         h('div', { className: 'dsm-card' },
@@ -1510,10 +1524,28 @@ window.__ModuleLoader__.load({
             ),
             h(Button, { tone: 'ghost', disabled: busy, onClick: load }, busy ? '刷新中…' : '刷新'),
           ),
-          notes.length
+          topics.length > 1
+            ? h('div', { className: 'dsm-topics' },
+              h('button', {
+                type: 'button',
+                className: 'dsm-topic-chip',
+                'data-active': topicFilter === '' ? '1' : undefined,
+                onClick: () => setTopicFilter(''),
+              }, '全部 ', h('span', { className: 'dsm-count' }, notes.length)),
+              topics.map((item) => h('button', {
+                key: item.id,
+                type: 'button',
+                className: 'dsm-topic-chip',
+                'data-active': topicFilter === item.id ? '1' : undefined,
+                onClick: () => setTopicFilter(topicFilter === item.id ? '' : item.id),
+              }, item.label + ' ', h('span', { className: 'dsm-count' }, item.count))),
+            )
+            : null,
+          shown.length
             ? h('div', { className: 'dsm-rule-list' },
-              notes.slice(0, 120).map((note) => h('div', { key: note.id, className: 'dsm-note' },
+              shown.slice(0, 120).map((note) => h('div', { key: note.id, className: 'dsm-note' },
                 h('div', { className: 'dsm-rule-row' },
+                  h('span', { className: 'dsm-topic', 'data-topic': note.topic || 'other' }, note.topicLabel || '其他'),
                   h('span', { className: 'dsm-rule-text' }, note.title),
                   h('span', { className: 'dsm-meta-soft' },
                     (note.bandLabel || '中') + ' ' + Number(note.score ?? 0).toFixed(2) + ' · ' + note.chars + ' 字'),
@@ -1531,7 +1563,7 @@ window.__ModuleLoader__.load({
                     : h('p', { className: 'dsm-hint', style: { marginTop: 8 } }, '正在读取…'))
                   : null,
               )))
-            : h(Empty, null, '还没有归档笔记。'),
+            : h(Empty, null, topicFilter ? '这个主题下还没有笔记。' : '还没有归档笔记。'),
         ),
         h('div', { className: 'dsm-card', style: { marginTop: 14 } },
           h('div', { className: 'dsm-head' },

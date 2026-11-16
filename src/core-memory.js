@@ -21,6 +21,7 @@ import { checkGuard, isSensitive } from './memory/guard.js';
 import { exportBundle, importBundle, listBackups, readBundle } from './backup.js';
 import { readTurns } from './turnlog.js';
 import { BAND_LABELS, scoreText } from './weighting.js';
+import { TOPIC_LABELS, TOPICS, normalizeTopic, topicOf } from './topics.js';
 import {
   buildPersonaText,
   listPresets,
@@ -183,6 +184,7 @@ function noteFileText(meta, content) {
     'id: ' + meta.id + '\n' +
     'title: ' + meta.title + '\n' +
     'tags: ' + ((meta.tags || []).join(', ')) + '\n' +
+    (meta.topic && meta.topic !== 'other' ? 'topic: ' + meta.topic + '\n' : '') +
     'created: ' + meta.created + '\n' +
     'updated: ' + meta.updated + '\n' +
     (meta.session ? 'session: ' + meta.session + '\n' : '') +
@@ -766,8 +768,10 @@ async function writeNote(args, exec = null) {
       }
       const id = makeId(title, existing);
       const now = new Date().toISOString();
+      // 主题优先用调用方显式给的，否则按标题+正文的词表估一个。
+      const topic = args.topic ? normalizeTopic(args.topic) : topicOf(title + '\n' + content).topic;
       const meta = {
-        id, title, tags, created: now, updated: now, size: 0,
+        id, title, tags, topic, created: now, updated: now, size: 0,
         ...(sensitive ? { sensitive: true } : {}),
         ...(sources.length ? { sources } : {}),
         ...(session ? { session } : {}),
@@ -1419,6 +1423,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
           title: { type: 'string', description: '简短标题（用于生成文件名与检索）' },
           content: { type: 'string', description: '记忆正文，自包含，可多行 Markdown' },
           tags: { type: 'array', items: { type: 'string' }, description: '可选标签数组，便于检索' },
+          topic: { type: 'string', enum: TOPICS, description: '可选主题：work/life/health/study/family/other；不传时按标题与正文自动判断' },
           force: { type: 'boolean', description: '已确认不是重复时传 true，跳过重复检查' },
           supersedes: { type: 'string', description: '可选：被这条新记忆取代的旧记忆 id（旧条目会被标记为已被取代，不删除）' },
           paths: { type: 'array', items: { type: 'string' }, description: '可选：这条记忆依据的文件路径；之后文件改了，memory_read 会提示「已过时」' },
