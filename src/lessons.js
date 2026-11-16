@@ -11,6 +11,11 @@ const MAX_ROWS = 400;
 const GARBLED_RE = /\uFFFD/;
 const GARBLED_LABEL = '<乱码>';
 
+// 强制方式阶梯：从「结构」到「规则/文字」越来越弱。同一个坑重复出现，就该往左搬一格，
+// 因为只有前面的几种会自己响；写进文档的规则没人看就等于没修。
+export const ENFORCE_LEVELS = ['structure', 'type', 'check', 'test', 'rule'];
+export const LEVEL_LABEL = { structure: '结构', type: '类型', check: '检查', test: '测试', rule: '规则' };
+
 export const dshHome = memoryHome;
 
 export function lessonsPath() {
@@ -118,7 +123,10 @@ export function mergeRows(rows) {
   for (const row of rows) {
     const prev = byFp.get(row.fp);
     if (!prev) {
-      byFp.set(row.fp, { fp: row.fp, tool: row.tool ?? '', error: row.error ?? '', ok: row.ok ?? '', count: row.count ?? 1, at: row.at ?? 0 });
+      byFp.set(row.fp, {
+        fp: row.fp, tool: row.tool ?? '', error: row.error ?? '', ok: row.ok ?? '', count: row.count ?? 1, at: row.at ?? 0,
+        level: row.level || '', enforce: row.enforce || '', prove: row.prove || '', routedAt: 0,
+      });
       continue;
     }
     prev.count += row.count ?? 1;
@@ -127,6 +135,13 @@ export function mergeRows(rows) {
       if (row.ok) prev.ok = row.ok;
     }
     if (!prev.error && row.error) prev.error = row.error;
+    // 强制方式由 route 写回，按文件顺序以最后一条写过的为准。
+    if (row.level) {
+      prev.level = row.level;
+      prev.enforce = row.enforce || prev.enforce || '';
+      prev.prove = row.prove || prev.prove || '';
+      prev.routedAt = row.at ?? prev.routedAt ?? 0;
+    }
   }
   return [...byFp.values()].sort((a, b) => b.count - a.count || b.at - a.at);
 }
@@ -139,15 +154,22 @@ export function buildLessonsText(rows, { budget = DEFAULT_BUDGET, limit = 6 } = 
     '# 踩过的坑（dsh-soul-memory 自动记录）',
     '',
     '同一次会话里，某条命令报错后同类调用恢复，就会记在这里。只是线索，不一定精确；确认可长期复用的，可以用 coding_rules action=propose 提议固化（用户批准后才生效）。',
+    '只有标了「已强制」的才有东西在帮你拦；重复出现却都没强制的，说明光记下来没用——按阶梯换一种更硬的强制手段（结构 > 类型 > 检查 > 测试 > 规则/文字），再用 lessons action=route 记下靠什么强制、有没有验证过它会响。',
     '',
   ].join('\n');
   const lines = [];
   for (const row of merged) {
     const when = row.at ? new Date(row.at).toISOString().slice(0, 10) : '';
-    const times = row.count > 1 ? `（出现过 ${row.count} 次）` : '';
-    const ok = row.ok ? `；生效做法：${row.ok}` : '';
-    const line = `- [${row.tool}] ${row.error}${ok}${times}${when ? ` — ${when}` : ''}`;
-    lines.push(sliceSafe(line, 260));
+    const tail = [];
+    if (row.enforce) {
+      const level = LEVEL_LABEL[row.level] || row.level || '未分类';
+      tail.push(`已强制(${level})：${row.enforce}${row.prove ? '（已验证会响）' : '（还没验证会响）'}`);
+    } else if (row.count > 1) {
+      tail.push(`已重复 ${row.count} 次，还没有会响的检查`);
+    }
+    if (row.ok) tail.push(`生效做法：${row.ok}`);
+    const line = `- [${row.tool}] ${sliceSafe(row.error, 100)}${tail.length ? ' → ' + tail.join('；') : ''}${when ? ` — ${when}` : ''}`;
+    lines.push(sliceSafe(line, 300));
   }
   const text = head + lines.join('\n');
   return text.length > budget ? sliceSafe(text, budget) + '\n…（已截断）' : text;
@@ -164,6 +186,31 @@ export async function forgetLesson(fingerprint) {
     const kept = rows.filter((row) => row.fp !== needle && !row.fp.includes(needle));
     return kept.length === rows.length ? null : kept;
   });
+}
+
+/**
+ * 给一条坑标上「靠什么强制」：level=结构/类型/检查/测试/规则，enforce=具体手段，prove=怎么验证它会响。
+ * 只改已有记录、不新增；同一指纹的所有行一起改，保证合并视图拿到同一个值。
+ */
+export async function routeLesson({ fp, level, enforce, prove, now = Date.now() } = {}) {
+  const needle = String(fp ?? '').trim();
+  if (!needle) return { ok: false, error: '要标记的指纹不能为空（先用 action=list 找到 fp）。' };
+  const lvl = String(level ?? '').trim();
+  if (!ENFORCE_LEVELS.includes(lvl)) return { ok: false, error: `level 必须是 ${ENFORCE_LEVELS.join(' / ')} 之一。` };
+  const how = String(enforce ?? '').trim();
+  if (!how) return { ok: false, error: 'enforce 不能为空：写清靠什么强制（命令、检查名或 文件:行号）。' };
+  const proof = String(prove ?? '').trim();
+  let matched = 0;
+  const res = await rewriteRows((rows) => {
+    const hit = rows.filter((row) => row.fp === needle || row.fp.includes(needle));
+    if (!hit.length) return null;
+    matched = hit.length;
+    return rows.map((row) => (row.fp === needle || row.fp.includes(needle)
+      ? { ...row, level: lvl, enforce: sliceSafe(how, 200), prove: sliceSafe(proof, 200), routedAt: now }
+      : row));
+  });
+  if (!res.ok) return res;
+  return { ok: true, fp: needle, level: lvl, enforce: how, prove: proof, rows: matched };
 }
 
 export async function clearLessons() {
@@ -302,16 +349,20 @@ export function registerLessons(ctx, options = {}) {
 
   ctx.tools.register({
     name: 'lessons',
-    description: withNotes('自动踩坑记录：list=看记录（同类错误已合并计数）；forget=按错误文本或指纹删除一条；clear=清空。记录由插件在"工具报错后同会话恢复"时自动写入。',
+    description: withNotes('自动踩坑记录：list=看记录（同类错误已合并计数，并标出是否已有会响的强制手段）；route=给一条坑标上「靠什么强制」（level=结构/类型/检查/测试/规则，enforce=命令或文件:行号，prove=怎么验证它会响）；forget=按错误文本或指纹删除一条；clear=清空。记录由插件在"工具报错后同会话恢复"时自动写入。',
       '写入 <DSH home>/memory/LESSONS.jsonl（上限 ' + MAX_ROWS + ' 条，超出按旧→新淘汰）；不调用模型、不花钱。'),
     output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        action: { type: 'string', enum: ['list', 'forget', 'clear'] },
+        action: { type: 'string', enum: ['list', 'route', 'forget', 'clear'] },
         text: { type: 'string', description: 'forget 时的错误文本片段或指纹' },
         limit: { type: 'number', description: 'list 时最多显示多少类（默认 50，上限 200）' },
+        fp: { type: 'string', description: 'route 时的错误指纹（list 输出的 fp）' },
+        level: { type: 'string', enum: ENFORCE_LEVELS, description: 'route 时的强制方式：结构 / 类型 / 检查 / 测试 / 规则（越靠前越会响）' },
+        enforce: { type: 'string', description: 'route 时靠什么强制：命令、检查名或 文件:行号' },
+        prove: { type: 'string', description: 'route 时怎么验证它会响（把真实错误重新引入一次时看到的结果）' },
       },
       required: ['action'],
     },
@@ -320,6 +371,13 @@ export function registerLessons(ctx, options = {}) {
         const res = await clearLessons();
         refresh();
         return `已清空 ${res.removed} 条踩坑记录。`;
+      }
+      if (args.action === 'route') {
+        const res = await routeLesson({ fp: args.fp, level: args.level, enforce: args.enforce, prove: args.prove });
+        if (!res.ok) return `未标记：${res.error}\n[err:E_ARG]`;
+        refresh();
+        const warn = res.prove ? '' : '\n还没填 prove：这条只算「有地方强制」，还不能算「验证过会响」——把真实错误重新引入一次，看到它确实报警，再把那次结果写进 prove。';
+        return `已标记 ${res.rows} 条记录：${res.fp}\n- 强制方式（${LEVEL_LABEL[res.level] || res.level}）：${res.enforce}${res.prove ? `\n- 已验证会响：${res.prove}` : ''}${warn}`;
       }
       if (args.action === 'forget') {
         if (!String(args.text ?? '').trim()) return '参数错误：forget 需要 text（错误文本片段或指纹）。\n[err:E_ARG]';
@@ -335,10 +393,14 @@ export function registerLessons(ctx, options = {}) {
       const lines = shown.map((row) => {
         const times = row.count > 1 ? ` ×${row.count}` : '';
         const ok = row.ok ? `；生效做法：${row.ok}` : '';
-        return `- [${row.tool}]${times} ${row.error}${ok}\n  fp: ${row.fp}`;
+        const enforced = row.enforce
+          ? `\n  强制(${LEVEL_LABEL[row.level] || row.level || '未分类'})：${row.enforce}${row.prove ? '（已验证会响）' : '（还没验证会响）'}`
+          : '';
+        return `- [${row.tool}]${times} ${row.error}${ok}${enforced}\n  fp: ${row.fp}`;
       });
       const more = merged.length > shown.length ? `\n…（还有 ${merged.length - shown.length} 类未显示，可加 limit 参数）` : '';
-      return `共 ${merged.length} 类，${rows.length} 条原始记录（${lessonsPath()}）：\n${lines.join('\n')}${more}`;
+      const enforcedCount = merged.filter((row) => row.enforce).length;
+      return `共 ${merged.length} 类（已强制 ${enforcedCount} / 还只是线索 ${merged.length - enforcedCount}），${rows.length} 条原始记录（${lessonsPath()}）：\n${lines.join('\n')}${more}`;
     },
   });
 

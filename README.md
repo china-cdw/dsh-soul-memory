@@ -150,7 +150,7 @@ dsh plugin --profile desktop add "$PWD"
 
 ## 工具
 
-下表是默认注册的 16 个工具；开启演化（`config.enabled: true` 并配置 provider/model）后还会注册 `evolve_status`、`evolve_diagnose`、`evolve_request`、`evolve_tree` 等 `evolve_*` 工具，总数最多 21 个。
+下表是默认注册的 17 个工具；开启演化（`config.enabled: true` 并配置 provider/model）后还会注册 `evolve_status`、`evolve_diagnose`、`evolve_request`、`evolve_tree` 等 `evolve_*` 工具，总数最多 22 个。
 
 | 工具 | 用途 | 主要参数 |
 | --- | --- | --- |
@@ -167,7 +167,8 @@ dsh plugin --profile desktop add "$PWD"
 | `memory_tier` | 记忆分级与回收（🔴🟡🟢，回收可逆） | `action`（status/collect/restore）、`apply?`、`minAgeDays?`、`ids?` |
 | `memory_backup` | 备份/搬家：导出 JSON、列备份、从备份恢复 | `action`（export/list/import）、`file?`、`apply?` |
 | `memory_journal` | 回合日志：按天看「这一轮做了什么」 | `action`（read/list）、`days?` |
-| `lessons` | 踩坑记录 | `action`（list/forget/clear）、`text?`、`limit?`（默认 50，上限 200） |
+| `lessons` | 踩坑记录（可给每条标「靠什么强制」，并区分已强制/还只是线索） | `action`（list/route/forget/clear）、`text?`、`limit?`（默认 50，上限 200）、`fp?`、`level?`（structure/type/check/test/rule）、`enforce?`、`prove?` |
+| `review_brief` | 生成只读评审的 brief：写死只读边界、`文件:行号 + 严重度 + 改法` 格式、超时不算通过、最多 4 轮 | `goal?`、`repo?`、`base?`、`diff?`、`outOfScope?`、`checks?`、`focus?`、`round?` |
 | `soul_recall` | 从会话图谱/历史原文/其他 AI 工具的转录里回捞（结果带 `confidence`：exact/partial/related） | `query`、`k?`、`source?`（auto/quote/graph/external） |
 | `soul_expand` | 按 seq 区间展开原文（默认 2000 字节 / 200 条，上限 20000 / 1000）；首条事件被裁剪时用 `from=resume.seq` + `offset=resume.offset` 续读，其他截断用 `from=to+1`；零预算返回的 `next` 即续读起点 | `from`、`to`（必填，0–1000000）；`limit?`、`maxEvents?`、`offset?`（默认 2000 / 200 / 0） |
 

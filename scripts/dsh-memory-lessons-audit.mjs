@@ -200,5 +200,39 @@ await t.test('buildLessonsText 超预算时截断并标注', async () => {
   assert.match(text, /已截断/);
 });
 
+await t.test('route 标上强制级别，list 区分已强制与还只是线索', async () => {
+  await reset();
+  const rows = [
+    JSON.stringify({ fp: 'routed1', tool: 'ops_bash', error: 'errA', ok: '', count: 2, at: Date.now() }),
+    JSON.stringify({ fp: 'plain2', tool: 'read', error: 'errB', ok: '', count: 1, at: Date.now() - 10 }),
+  ];
+  await writeFile(file, rows.join('\n') + '\n');
+
+  const marked = await callTool(tools, 'lessons', {
+    action: 'route', fp: 'routed1', level: 'test', enforce: 'scripts/x.mjs 断言', prove: '重放一次真实错误，断言报错',
+  });
+  assert.match(marked, /已标记 1 条记录：routed1/);
+  assert.match(marked, /强制方式（测试）/);
+  assert.match(marked, /已验证会响：重放一次真实错误/);
+
+  // 缺 enforce 不算标记，也不新增记录
+  const noEnforce = await callTool(tools, 'lessons', { action: 'route', fp: 'plain2', level: 'check' });
+  assert.match(noEnforce, /未标记：enforce 不能为空/);
+  assert.equal((await listLessons()).length, 2);
+
+  const noProve = await callTool(tools, 'lessons', { action: 'route', fp: 'plain2', level: 'check', enforce: 'lint 规则' });
+  assert.match(noProve, /还没填 prove/);
+
+  const text = await callTool(tools, 'lessons', { action: 'list' });
+  assert.match(text, /共 2 类（已强制 2 \/ 还只是线索 0）/);
+  assert.match(text, /强制\(测试\)：scripts\/x\.mjs 断言（已验证会响）/);
+  assert.match(text, /强制\(检查\)：lint 规则（还没验证会响）/);
+
+  // 不存在的指纹：报未标记，不新增行
+  const miss = await callTool(tools, 'lessons', { action: 'route', fp: 'nohit', level: 'rule', enforce: 'r' });
+  assert.match(miss, /未标记/);
+  assert.equal((await listLessons()).length, 2);
+});
+
 const result = t.finish();
 process.exit(result.fail ? 1 : 0);

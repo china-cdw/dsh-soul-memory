@@ -36,6 +36,7 @@ import { registerCodingRules } from './coding.js';
 import { readUiSettings, uiSettingsPath } from './ui-settings.js';
 import { MODE_LABELS, SESSION_MODES, modeOf, setMode } from './session-modes.js';
 import { registerLessons } from './lessons.js';
+import { registerReview } from './review.js';
 import { biliStatus, searchBili } from './memory/bili.js'
 import { DREAMING_DEFAULTS, buildCleanupRequest, chunkItems, dreamCandidates, parseCleanupVerdicts, pickDigests, readDreamingState, withDreamingRunLock, writeDreamingState } from './dreaming.js';
 import { withNotes } from './tool-notes.js';
@@ -1810,6 +1811,13 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     registerLessons(ctx, lessons ?? {});
   } catch (e) {
     console.error('dsh-soul-memory: 踩坑记录层注册失败', e);
+  }
+
+  // 只读评审 brief：把「让新上下文挑毛病」固化成一段可直接派发的提示（review_brief）。
+  try {
+    registerReview(ctx);
+  } catch (e) {
+    console.error('dsh-soul-memory: 评审 brief 注册失败', e);
   }
 
   console.log('dsh-soul-memory: 核心记忆层已激活，记忆库 ' + memoryPath());
