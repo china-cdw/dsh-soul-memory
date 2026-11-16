@@ -17,7 +17,12 @@ import { dirname, join } from 'node:path';
  * 历史版本把裸词（token/password）整行删掉，导致 "SyntaxError: Unexpected token '<'"
  * 这类最常见的 JS 语法错误被当成敏感行丢弃、永远进不了记忆。
  */
-const SECRET_VALUE = /((?:password|passwd|secret|token|api[-_ ]?key|access[-_ ]?key|bearer|authorization)\s*[:=]\s*)([^\s'"]{6,})/gi;
+const SECRET_VALUE = /((?:password|passwd|secret|token|api[-_ ]?key|access[-_ ]?key|access[-_ ]?token|client[-_ ]?secret|private[-_ ]?key|bearer|authorization)\s*[:=]\s*)("[^"\n]{5,}"|'[^'\n]{5,}'|`[^`\n]{5,}`|[^\s'",;)]{6,})/gi;
+/** 与键值对无关、但一眼就是凭据的字面量：私钥块、JWT、云厂商 AccessKey ID。 */
+const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
+const JWT_VALUE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
+const CLOUD_KEY_ID = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g;
+const BEARER_VALUE = /(\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi;
 
 /** 按字符位置截断，不切断 emoji 等代理对（切一半会留下孤立 \ud83d）。 */
 export function sliceSafe(text, end) {
@@ -180,7 +185,13 @@ export function safeJson(raw, fallback = null) {
 
 /** 掩码凭据值并截断；用于错误文本、命令、笔记片段。不再整行丢弃。 */
 export function redactSecrets(text, limit = 600) {
-  return sliceSafe(String(text ?? '').replace(SECRET_VALUE, '$1[REDACTED]'), limit);
+  const redacted = String(text ?? '')
+    .replace(PRIVATE_KEY_BLOCK, '[REDACTED KEY]')
+    .replace(JWT_VALUE, '[REDACTED]')
+    .replace(CLOUD_KEY_ID, '[REDACTED]')
+    .replace(BEARER_VALUE, '$1[REDACTED]')
+    .replace(SECRET_VALUE, '$1[REDACTED]');
+  return sliceSafe(redacted, limit);
 }
 
 /** 统一的失败文案。 */

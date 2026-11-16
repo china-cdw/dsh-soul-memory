@@ -71,6 +71,11 @@ export function settings(input = {}) {
       enabled: boolean(input.lessons?.enabled, true, 'lessons.enabled'),
       budget: integer(input.lessons?.budget, 600, 200, 4000, 'lessons.budget'),
     },
+    // 代码知识图谱（CodeGraph）：两个只读工具按需查询，不注入系统提示。
+    codegraph: {
+      enabled: boolean(input.codegraph?.enabled, true, 'codegraph.enabled'),
+      maxChars: integer(input.codegraph?.maxChars, 8000, 1000, 40000, 'codegraph.maxChars'),
+    },
     // billion-context 桥接（只读）：把它的会话压缩摘要并入 memory_search / memory_brief。
     bridge: {
       enabled: boolean(input.bridge?.enabled, true, 'bridge.enabled'),
@@ -317,6 +322,7 @@ export function apply(ctx, input = {}) {
     core: config.memory.enabled,
     coding: config.coding,
     lessons: config.lessons,
+    codegraph: config.codegraph,
     bridge: config.bridge,
     dreaming: config.dreaming,
     generate: dreamGenerate,

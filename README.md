@@ -150,7 +150,9 @@ dsh plugin --profile desktop add "$PWD"
 
 ## 工具
 
-下表是默认注册的 17 个工具；开启演化（`config.enabled: true` 并配置 provider/model）后还会注册 `evolve_status`、`evolve_diagnose`、`evolve_request`、`evolve_tree` 等 `evolve_*` 工具，总数最多 22 个。
+下表是默认注册的 20 个工具；开启演化（`config.enabled: true` 并配置 provider/model）后还会注册 `evolve_status`、`evolve_diagnose`、`evolve_request`、`evolve_tree` 等 `evolve_*` 工具，总数最多 24 个。
+
+代码图谱两个工具（`code_explore` / `code_impact`）是可选的：需要额外装一次 [CodeGraph](https://github.com/colbymchenry/codegraph)（`npm i -g @colbymchenry/codegraph`），并在目标仓库跑一次 `codegraph init`。没装或没建索引时它们只回复「怎么装 / 怎么建」，不影响其余记忆功能；`config.codegraph.enabled: false` 可以整个关掉。
 
 | 工具 | 用途 | 主要参数 |
 | --- | --- | --- |
@@ -161,6 +163,7 @@ dsh plugin --profile desktop add "$PWD"
 | `memory_delete` | 删除（写墓碑，不复活） | `id` |
 | `memory_core` | 改核心记忆分节 | `action`（append/replace/remove）、`section`、`text?` |
 | `memory_brief` | 记忆库体检 | — |
+| `memory_mode` | 本会话的记忆开关（正常读写 / 只读 / 关闭），换会话自动恢复 | `action`（get/set）、`mode?`（normal/readonly/off）、`session?` |
 | `memory_dreaming` | 闲时整理开关、手动执行与误删恢复（含 AI 垃圾清理） | `action`（status/on/off/run/retired/restore）、`apply?`、`force?`、`ids?` |
 | `persona` | 回复风格 | `action`（get/set/custom/disable）、`preset?`、`text?` |
 | `coding_rules` | 编码规范（可弹窗编辑、新增时自动查重） | `action`（show/list/add/propose/pending/approve/reject/forget/dupes）、`text?`、`ids?` |
@@ -171,6 +174,8 @@ dsh plugin --profile desktop add "$PWD"
 | `review_brief` | 生成只读评审的 brief：写死只读边界、`文件:行号 + 严重度 + 改法` 格式、超时不算通过、最多 4 轮 | `goal?`、`repo?`、`base?`、`diff?`、`outOfScope?`、`checks?`、`focus?`、`round?` |
 | `soul_recall` | 从会话图谱/历史原文/其他 AI 工具的转录里回捞（结果带 `confidence`：exact/partial/related） | `query`、`k?`、`source?`（auto/quote/graph/external） |
 | `soul_expand` | 按 seq 区间展开原文（默认 2000 字节 / 200 条，上限 20000 / 1000）；首条事件被裁剪时用 `from=resume.seq` + `offset=resume.offset` 续读，其他截断用 `from=to+1`；零预算返回的 `next` 即续读起点 | `from`、`to`（必填，0–1000000）；`limit?`、`maxEvents?`、`offset?`（默认 2000 / 200 / 0） |
+| `code_explore` | 在仓库的代码索引里查符号/文件/功能：返回源码片段、入口与调用关系，替代「先 grep 再逐个翻文件」 | `query`、`repo?`、`maxBlocks?`（默认 3、上限 6）、`maxChars?` |
+| `code_impact` | 查符号或文件的影响半径：谁依赖它、调用关系，改动前判断波及面 | `symbol?`、`file?`（二选一）、`repo?`、`depth?`（默认 3）、`maxChars?` |
 
 写入规则：`memory_write` 会做近重复检查（相似度 ≥0.55 拒写，加 `force: true` 可强写）。
 
@@ -339,7 +344,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 85 项、编码层 14 项、踩坑层 15 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 19 项、备份/回合日志 4 项，共 249 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 85 项、编码层 14 项、踩坑层 15 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 19 项、备份/回合日志 4 项、评审 brief 5 项、代码图谱 16 项，共 270 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

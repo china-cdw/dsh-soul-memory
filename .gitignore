@@ -3,6 +3,9 @@ node_modules/
 .env
 .env.*
 
+# 本地代码图谱索引（codegraph init 生成，不进仓库）
+.codegraph/
+
 # 本地快照与备份
 .snapshots/
 *.bak

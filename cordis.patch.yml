@@ -22,3 +22,7 @@
           sessionsDir: ''
           maxSessions: 4
           maxChars: 1200
+        # 代码知识图谱：只读工具，读仓库里的 .codegraph/ 索引。
+        codegraph:
+          enabled: true
+          maxChars: 8000

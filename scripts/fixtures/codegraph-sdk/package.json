@@ -1,0 +1,6 @@
+{
+  "name": "@colbymchenry/codegraph",
+  "version": "0.0.0-fake",
+  "type": "module",
+  "main": "fake.js"
+}

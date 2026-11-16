@@ -37,6 +37,7 @@ import { readUiSettings, uiSettingsPath } from './ui-settings.js';
 import { MODE_LABELS, SESSION_MODES, modeOf, setMode } from './session-modes.js';
 import { registerLessons } from './lessons.js';
 import { registerReview } from './review.js';
+import { registerCodeGraph } from './codegraph.js';
 import { biliStatus, searchBili } from './memory/bili.js'
 import { DREAMING_DEFAULTS, buildCleanupRequest, chunkItems, dreamCandidates, parseCleanupVerdicts, pickDigests, readDreamingState, withDreamingRunLock, writeDreamingState } from './dreaming.js';
 import { withNotes } from './tool-notes.js';
@@ -1369,7 +1370,7 @@ async function tierTool(args = {}, exec = null, hooks = {}) {
   } catch (e) { return failMessage('E_INTERNAL', errText(e)) }
 }
 
-export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, graphNodes = null, coding = null, lessons = null, bridge = null, dreaming = null, generate = null, retireNodes = null, restoreNodes = null, listRetiredNodes = null, core = true } = {}) {
+export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null, graphNodes = null, coding = null, lessons = null, codegraph = null, bridge = null, dreaming = null, generate = null, retireNodes = null, restoreNodes = null, listRetiredNodes = null, core = true } = {}) {
   const bridgeCfg = bridge && typeof bridge === 'object' ? bridge : null
   dreamingCfg = { ...DREAMING_DEFAULTS, ...(dreaming && typeof dreaming === 'object' ? dreaming : {}) };
   setDreamGenerator(generate);
@@ -1818,6 +1819,14 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     registerReview(ctx);
   } catch (e) {
     console.error('dsh-soul-memory: 评审 brief 注册失败', e);
+  }
+
+  // 代码知识图谱：两个只读工具（code_explore / code_impact），按需调用，不进系统提示。
+  // 没装 SDK 或仓库没索引时由工具自己说明怎么处理，不影响插件启动。
+  try {
+    registerCodeGraph(ctx, codegraph ?? {});
+  } catch (e) {
+    console.error('dsh-soul-memory: 代码图谱层注册失败', e);
   }
 
   console.log('dsh-soul-memory: 核心记忆层已激活，记忆库 ' + memoryPath());

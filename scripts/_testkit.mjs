@@ -20,8 +20,13 @@ export async function makeHome(prefix = 'dsh-soul-memory-test-') {
 
 /** 极简测试台：顺序执行、逐条打印、结束时汇总并以退出码表达结果。 */
 export function suite(name) {
-  const state = { pass: 0, fail: 0, failures: [] };
+  const state = { pass: 0, fail: 0, failures: [], skipped: [] };
   return {
+    /** 环境不满足时明确跳过，并在汇总里单列，不冒充通过。 */
+    skip(label) {
+      state.skipped.push(label);
+      console.log('  skip ' + label);
+    },
     async test(label, fn) {
       try {
         await fn();
@@ -35,7 +40,8 @@ export function suite(name) {
     },
     finish() {
       const total = state.pass + state.fail;
-      console.log(`\n${name}: ${state.pass}/${total} 通过，${state.fail} 失败`);
+      const skipNote = state.skipped.length ? `，${state.skipped.length} 跳过` : '';
+      console.log(`\n${name}: ${state.pass}/${total} 通过，${state.fail} 失败${skipNote}`);
       if (state.fail) {
         const first = state.failures[0];
         console.error('\n首个失败：' + first.label);
