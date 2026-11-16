@@ -40,7 +40,9 @@ export function scoreText(text) {
   if (chars < 60 && /[?？]\s*$/.test(body)) { score -= 0.1; reasons.push('像提问'); }
 
   score = Math.max(0, Math.min(1, score));
-  const band = score >= 0.6 ? 'strong' : score >= 0.4 ? 'normal' : 'light';
+  // 归档笔记天然「够长 + 有结论」，0.6 会让九成落进 strong、分档失去意义；
+  // 抬到 0.75/0.5 后 strong 只留给「长、有结论、还带纠正或具体对象」的那批。
+  const band = score >= 0.75 ? 'strong' : score >= 0.5 ? 'normal' : 'light';
   return { score: Math.round(score * 100) / 100, band, reasons };
 }
 
