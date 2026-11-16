@@ -20,6 +20,7 @@ import { atomicWrite, createQueue, latestSnapshot, memoryPath, safeJson, sliceSa
 import { checkGuard, isSensitive } from './memory/guard.js';
 import { exportBundle, importBundle, listBackups, readBundle } from './backup.js';
 import { readTurns } from './turnlog.js';
+import { BAND_LABELS, scoreText } from './weighting.js';
 import {
   buildPersonaText,
   listPresets,
@@ -917,6 +918,17 @@ async function readNote(ref) {
   } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
 
+/** 读一条笔记的正文并估分量；读不到就按标题估，不让一条坏文件挡住整个列表。 */
+function weighNote(note) {
+  const head = note.title || '';
+  try {
+    const text = readFileSync(join(memoryPath('notes'), note.id + '.md'), 'utf8');
+    return scoreText(head + '\n' + text);
+  } catch {
+    return scoreText(head);
+  }
+}
+
 async function listNotes(args) {
   const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.min(Math.floor(args.limit), 100) : 15;
   const tag = typeof args.tag === 'string' ? args.tag.trim().toLowerCase() : '';
@@ -924,14 +936,20 @@ async function listNotes(args) {
     let notes = await loadIndex();
     if (tag) notes = notes.filter((n) => (n.tags || []).some((t) => String(t).toLowerCase() === tag));
     if (notes.length === 0) return tag ? '没有带标签 #' + tag + ' 的记忆。' : '暂无归档记忆。';
-    const lines = notes.slice(0, limit).map((n) =>
+    // 只在最近的一批里按分量重排：读全量正文太贵，而顺序本身只影响「先看哪条」。
+    const pool = notes.slice(0, Math.min(notes.length, limit * 3));
+    const ranked = pool.map((n) => ({ n, w: weighNote(n) }));
+    ranked.sort((a, b) => b.w.score - a.w.score || String(b.n.created || '').localeCompare(String(a.n.created || '')));
+    const lines = ranked.slice(0, limit).map(({ n, w }) =>
       '- [' + n.id + '] ' + n.title + ((n.tags && n.tags.length) ? '  #' + n.tags.join(' #') : '') +
       (n.supersededBy ? '（已被 [' + n.supersededBy + '] 取代）' : '') +
       (n.sensitive ? '（敏感）' : '') +
       (n.missing ? '（文件缺失）' : '') +
-      '（' + (n.created || '').slice(0, 10) + '）'
+      '（' + (n.created || '').slice(0, 10) + '）' +
+      ' · ' + BAND_LABELS[w.band] + ' ' + w.score.toFixed(2) + (w.reasons.length ? '：' + w.reasons.join('/') : '')
     );
-    return '归档记忆共 ' + notes.length + ' 条（显示前 ' + Math.min(limit, notes.length) + ' 条，新→旧）：\n' + lines.join('\n');
+    return '归档记忆共 ' + notes.length + ' 条（按分量排，显示前 ' + Math.min(limit, ranked.length) + ' 条）：\n' + lines.join('\n') +
+      '\n\n分量只由文字样子估（长度/结论/纠正/具体对象/口语），只影响排序与回收门槛，不删任何东西。';
   } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
 

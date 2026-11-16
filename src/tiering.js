@@ -13,6 +13,9 @@ export const TIERS = ['high', 'medium', 'low']
 
 export const TIER_LABELS = { high: '🔴 高', medium: '🟡 中', low: '🟢 低' }
 
+// 回收判据里用文字样子做一层保守滤网（见 collectionCandidates）。循环依赖不存在：weighting 不 import 本文件。
+import { scoreText } from './weighting.js'
+
 /** kind → tier 的映射。新增 kind 时默认落 low，宁可少回收也不错收。 */
 const HIGH_KINDS = new Set(['constraint'])
 const MEDIUM_KINDS = new Set(['decision', 'progress'])
@@ -65,6 +68,8 @@ export function collectionCandidates(nodes, opts = {}) {
     // explicit "do not touch anything worth more than N" is the honest way to say that.
     if (Number(node.importance ?? 2) > maxImportance) return false
     if (requireZeroHits && (Number(node.hits) || 0) > 0) return false
+    // 文字看着像「一条定下来的东西」就先留着：样子分只是保守滤网，不参与决定删谁。
+    if (scoreText(node.claim).band === 'strong') return false
     return Number(node.ageDays) >= minAgeDays
   })
 }
