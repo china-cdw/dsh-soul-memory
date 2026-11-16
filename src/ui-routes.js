@@ -23,6 +23,7 @@ import { MODE_LABELS, SESSION_MODES, listModes, modeOf, setMode } from './sessio
 import { memoryPath } from './memory/util.js';
 import { readDreamingState, writeDreamingState, withDreamingRunLock } from './dreaming.js';
 import { readTurns } from './turnlog.js';
+import { BAND_LABELS, scoreText } from './weighting.js';
 
 const PREFIX = '/dsh-soul-memory/';
 const BODY_LIMIT = 64 * 1024; // 待批批量操作与规则预览；与 persona 的 16KB 不同是有意的（批量批准）。
@@ -329,18 +330,24 @@ async function memoriesOf() {
       const titleLine = text.split('\n').find((line) => /^title:\s*\S/.test(line)) || '';
       const heading = text.split('\n').find((line) => line.startsWith('# ')) || '';
       const fallback = name.replace(/\.md$/, '');
+      const body = text.replace(/^---[\s\S]*?---\r?\n?/, '');
+      const weight = scoreText(String(titleLine || heading || fallback) + ' ' + body);
       notes.push({
         id: fallback,
         title: titleLine
           ? titleLine.replace(/^title:\s*/, '').trim()
           : heading ? heading.replace(/^#\s*/, '').trim() : fallback,
         chars: text.length,
+        score: weight.score,
+        band: weight.band,
+        bandLabel: BAND_LABELS[weight.band] || weight.band,
       });
     }
   } catch (error) {
     if (error?.code !== 'ENOENT') console.error('dsh-soul-memory: 读取归档笔记失败', error);
   }
-  notes.sort((a, b) => b.chars - a.chars);
+  // 与 memory_list 用同一把尺子：先按分量，分数相同再看字数。
+  notes.sort((a, b) => b.score - a.score || b.chars - a.chars);
 
   let lessons = 0;
   try {
