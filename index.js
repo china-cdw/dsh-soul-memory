@@ -27,6 +27,7 @@ import { appendTurn, readTurns } from './src/turnlog.js'
 import { modeOf, setMode } from './src/session-modes.js'
 import { withNotes } from './src/tool-notes.js'
 import { rememberMatch, rememberReminder } from './src/memory/remember.js'
+import { stripPrivate } from './src/memory/private.js'
 import { readUiSettings } from './src/ui-settings.js'
 import { createRememberCues } from './src/memory/cue.js'
 import { registerSoulUiRoutes } from './src/ui-routes.js'
@@ -566,6 +567,21 @@ function sessionModeIntent(text) {
   return ''
 }
 
+    // <private>…</private>：这一轮原话照常给模型看（回答要用），但存进会话缓冲的副本要摘掉。
+    const privateMessage = (message) => {
+      const blocks = message && message.content
+      if (!Array.isArray(blocks)) return message
+      let touched = false
+      const content = blocks.map((block) => {
+        if (!block || block.type !== 'text' || typeof block.text !== 'string') return block
+        const clean = stripPrivate(block.text)
+        if (!clean.removed) return block
+        touched = true
+        return { ...block, text: clean.text }
+      })
+      return touched ? { ...message, content } : message
+    }
+
     // ---- observation ------------------------------------------------------
     listen('agent/pre-step', async (payload, next) => {
       const decision = await next()
@@ -581,6 +597,9 @@ function sessionModeIntent(text) {
           if (!human(message)) continue
           const text = textBlocks(message.content)
           if (!text.trim()) continue
+          // 去掉 <private> 段再判断：整条都是私密时，这一轮不猜「记住」、不进缓冲。
+          const cleanText = stripPrivate(text).text
+          if (!cleanText.trim()) continue
           // 宿主注入的运行时上下文/技能目录不是人的话：不猜意图、不当纠正、不进缓冲。
           if (injected(text)) continue
           // 用户当面说「关闭跨会话记忆」：立刻切档，不等模型决定。
@@ -588,14 +607,14 @@ function sessionModeIntent(text) {
           if (modeWanted) { safe(() => { setMode(sid, modeWanted).catch(() => {}) })() }
           const sessionWritable = modeOf(sid) === 'normal'
           if (config.memory.enabled && !memoryPaused && sessionWritable) {
-            const hit = rememberMatch(text)
-            if (hit) rememberCue.arm(sid, bounded(text, 8000), hit.index)
+            const hit = rememberMatch(cleanText)
+            if (hit) rememberCue.arm(sid, bounded(cleanText, 8000), hit.index)
             // 每个 step 只推进一格（同一 step 可能排了多条人类消息）；text() 只读，避免 assemble + refreshContext 双扣。
             if (!rememberAdvanced) { rememberCue.advance(sid); rememberAdvanced = true }
           }
           // Buffer the raw message: one normalizer decides what a block is, and it is the
           // same one that the offline bench exercises.
-          if (config.memory.enabled && !memoryPaused && sessionWritable) memory.push(sid, { type: 'user/message', data: { message } })
+          if (config.memory.enabled && !memoryPaused && sessionWritable) memory.push(sid, { type: 'user/message', data: { message: privateMessage(message) } })
           if (config.memory.enabled) {
             // Rule-based sufficiency router: no model call, just "does this question touch
             // anything the card already says?". Below the threshold the model is about to

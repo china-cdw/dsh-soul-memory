@@ -50,6 +50,8 @@
 | 踩坑记录 | 工具报错 → 后来怎么改对 | `$DSH_HOME/memory/LESSONS.jsonl` | 每轮，`order 62` | 600 字 | `lessons` |
 | 编码规范 | 全局规矩 + 项目规则文件 | `$DSH_HOME/memory/CODING.md` + 项目目录 | 每轮，`order 61` | 3500 字（设置页可调） | `coding_rules` |
 
+> 不想被记住的内容包在 `<private>…</private>` 里：`memory_write` / `memory_core` 写盘前会把这段整段摘掉，会话缓冲里也不留；整条都是私密段时直接拒写。
+
 ### 编码规范会自动读哪些文件
 
 在当前会话的工作目录下，按顺序查找：
@@ -142,7 +144,7 @@ dsh plugin --profile desktop add "$PWD"
 # 踩过的坑（dsh-soul-memory 自动记录）   ← 有记录时才出现
 ```
 
-验证：在会话里调用 `memory_brief`，应看到核心记忆大小、归档条数、风格、快照、图谱规模、billion-context 状态。想立刻写第一条记忆，用 `memory_core` 的 `append`。
+验证：在会话里调用 `memory_brief`，应看到记忆索引（核心大小、最近 8 条目录、风格、快照、图谱规模、billion-context 状态）；目录里只有标题，正文用 `memory_read` 取。想立刻写第一条记忆，用 `memory_core` 的 `append`。
 
 > 只改插件源码、不重装时：`plugin_manager set_bundle enabled=false` → `enabled=true` 会重新加载磁盘模块，不必重启整个 App。
 
@@ -162,7 +164,7 @@ dsh plugin --profile desktop add "$PWD"
 | `memory_search` | 三路检索：归档 + 图谱 + billion-context | `query` |
 | `memory_delete` | 删除（写墓碑，不复活） | `id` |
 | `memory_core` | 改核心记忆分节 | `action`（append/replace/remove）、`section`、`text?` |
-| `memory_brief` | 记忆库体检 | — |
+| `memory_brief` | 记忆索引与体检（列目录，不返回正文） | — |
 | `memory_mode` | 本会话的记忆开关（正常读写 / 只读 / 关闭），换会话自动恢复 | `action`（get/set）、`mode?`（normal/readonly/off）、`session?` |
 | `memory_dreaming` | 闲时整理开关、手动执行与误删恢复（含 AI 垃圾清理） | `action`（status/on/off/run/retired/restore）、`apply?`、`force?`、`ids?` |
 | `persona` | 回复风格 | `action`（get/set/custom/disable）、`preset?`、`text?` |
@@ -192,7 +194,7 @@ dsh plugin --profile desktop add "$PWD"
 - 响应带 `Cache-Control: no-store`，风格属于个人数据，不缓存。
 ### 灵魂记忆设置页
 
-设置 → 灵魂记忆由 `client.js` 注册到宿主设置页 slot，四个页签：待批区、规则、称呼与风格、记忆分级。数据来自同源 `fetch` 的六条路由（同样只在宿主提供 `webServer` 时注册，基础安全模型与 `/persona` 一致：回环 Host、Origin 同源、`x-dsh-soul-memory: 1` 头）：
+设置 → 灵魂记忆由 `client.js` 注册到宿主设置页 slot，六个页签：待批区、记忆内容、记忆流、规则、称呼与风格、记忆分级（「记忆内容」和「记忆流」共用 `/memories` 与 `/notes` 两条路由：一个按主题筛，一个按天倒序看）。数据来自同源 `fetch` 的六条路由（同样只在宿主提供 `webServer` 时注册，基础安全模型与 `/persona` 一致：回环 Host、Origin 同源、`x-dsh-soul-memory: 1` 头）：
 
 | 路由 | 方法 | 作用 |
 | --- | --- | --- |
@@ -344,7 +346,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 85 项、编码层 14 项、踩坑层 15 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 19 项、备份/回合日志 4 项、评审 brief 5 项、代码图谱 17 项，共 271 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 88 项、编码层 14 项、踩坑层 16 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 20 项、备份/回合日志 4 项、记忆主题 4 项、评审 brief 5 项、代码图谱 17 项，共 280 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

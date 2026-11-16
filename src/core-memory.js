@@ -18,6 +18,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWrite, createQueue, latestSnapshot, memoryPath, safeJson, sliceSafe, snapshotMemory, withFileLock } from './memory/util.js';
 import { checkGuard, isSensitive } from './memory/guard.js';
+import { stripPrivate } from './memory/private.js';
 import { exportBundle, importBundle, listBackups, readBundle } from './backup.js';
 import { readTurns } from './turnlog.js';
 import { BAND_LABELS, scoreText } from './weighting.js';
@@ -629,6 +630,7 @@ function renderSectionText() {
       '- 需要回忆细节时主动 memory_search（长期事实）；需要会话过程、旧账、命令输出时用 soul_recall。',
       '- 不确定记忆库状态时用 memory_brief 一次看全（核心、归档、风格、会话图谱）。',
       '- 用户要求改变回复风格时：用 persona 工具（action=set 切预设 / action=custom 写自定义），不要写进 MEMORY.md。',
+      '- 用户说「这段别记」时，可以把那段包在 <private>…</private> 里：写 memory_write / memory_core 之前会被整段摘掉，会话缓冲也不留。别自己先概括再存。',
     ].join('\n');
   } catch {
     return '（跨会话记忆：暂不可用）';
@@ -725,8 +727,14 @@ async function writeNote(args, exec = null) {
     return failMessage('E_PAUSED', '记忆写入已暂停（设置 → 灵魂记忆 可关闭），本条没有保存。');
   }
   const title = typeof args.title === 'string' ? args.title.replace(/\s+/g, ' ').trim() : '';
-  const content = typeof args.content === 'string' ? args.content : '';
+  let content = typeof args.content === 'string' ? args.content : '';
   if (!title || !content.trim()) return failMessage('E_ARG', '保存失败：title 和 content 均不能为空。');
+  // <private>…</private> 是「这段别存」的明确标记：连标签一起摘掉，不靠打码去猜。
+  const privateContent = stripPrivate(content);
+  if (privateContent.removed > 0) {
+    content = privateContent.text;
+    if (!content.trim()) return failMessage('E_ARG', '保存失败：正文只有 <private> 段，去掉后没有可保存的内容。');
+  }
   // 标签用逗号分隔落盘：标签内部若含逗号会让 index 与文件解析结果不一致，写入时统一抹平。
   const tags = Array.isArray(args.tags)
     ? args.tags.filter((t) => typeof t === 'string' && t.trim())
@@ -991,8 +999,11 @@ async function editCore(args, exec = null) {
     return failMessage('E_ARG', '编辑失败：action 必须是 append / replace / remove。');
   }
   const section = typeof args.section === 'string' ? args.section.trim() : '';
-  const text = typeof args.text === 'string' ? args.text : '';
+  let text = typeof args.text === 'string' ? args.text : '';
   if (!section) return failMessage('E_ARG', '编辑失败：section 不能为空。');
+  // 核心记忆会注入每个会话：<private> 段一律不落盘。
+  const privateText = stripPrivate(text);
+  if (privateText.removed > 0) text = privateText.text;
   if ((action === 'append' || action === 'replace') && !text.trim()) return failMessage('E_ARG', '编辑失败：append/replace 需要提供 text。');
   const guard = checkGuard(section + '\n' + text);
   if (guard.kind) {
@@ -1039,17 +1050,31 @@ async function brief(graphStats, agent, bridge, graphNodes) {
     const notes = await loadIndex();
     const persona = readPersona();
     const lines = [];
-    lines.push('记忆体检');
-    lines.push('- 核心记忆 MEMORY.md：' + (core === null ? '缺失' : core.length + ' 字符 / ' + parseCoreSections(core).sections.length + ' 个分节'));
-    if (core && core.length > CORE_BUDGET) lines.push('  ! 已超过建议的 ' + CORE_BUDGET + ' 字（' + core.length + ' 字符），注入时会被截断，建议尽快精简');
+    // 索引卡：只回答「记住了什么、在哪一条」，正文留给 memory_read。
+    // 体检每次都可能被调，把整库正文灌进对话既贵又噪声大。
+    lines.push('记忆索引（这是目录，不是正文：看内容用 memory_read <id>）');
+    lines.push('- 核心 MEMORY.md：' + (core === null ? '缺失' : core.length + ' 字符 / ' + parseCoreSections(core).sections.length + ' 个分节') +
+      (core && core.length > CORE_BUDGET ? '，已超建议的 ' + CORE_BUDGET + ' 字，注入时会被截断' : ''));
     const withTags = notes.filter((n) => n.tags && n.tags.length).length;
     const superseded = notes.filter((n) => n.supersededBy).length;
     const sensitiveCount = notes.filter((n) => n.sensitive).length;
+    const missing = notes.filter((n) => n.missing).length;
     lines.push('- 归档记忆：' + notes.length + ' 条（' + withTags + ' 条带标签' +
       (superseded ? '，' + superseded + ' 条已被取代' : '') +
-      (sensitiveCount ? '，' + sensitiveCount + ' 条敏感已隐藏' : '') + '）');
-    lines.push('  最近 5 条：');
-    for (const n of notes.slice(0, 5)) lines.push('  - [' + n.id + '] ' + n.title);
+      (sensitiveCount ? '，' + sensitiveCount + ' 条敏感只留标题' : '') +
+      (missing ? '，' + missing + ' 条文件缺失' : '') + '）');
+    const recentNotes = notes.filter((n) => !n.missing).slice(0, 8);
+    if (recentNotes.length) {
+      lines.push('  最近写入（新→旧，最多 8 条）：');
+      for (const n of recentNotes) {
+        const tagText = (n.tags && n.tags.length) ? ' · #' + n.tags.slice(0, 4).join(' #') : '';
+        const topicText = (n.topic && n.topic !== 'other') ? ' · ' + n.topic : '';
+        const flagText = (n.supersededBy ? '（已被取代）' : '') + (n.sensitive ? '（敏感）' : '');
+        lines.push('  - [' + n.id + '] ' + n.title + flagText + tagText + topicText + (n.created ? ' · ' + String(n.created).slice(0, 10) : ''));
+      }
+      if (notes.length > recentNotes.length) lines.push('  （更早的用 memory_list；按关键词或主题用 memory_search）');
+    }
+    lines.push('- 注入方式：只有最近 12 条标题常驻系统提示，正文从不自动注入。');
     lines.push('- 回复风格：' + (persona.enabled ? persona.preset : '（未启用）'));
     try {
       const snap = await latestSnapshot();
@@ -1091,7 +1116,7 @@ async function brief(graphStats, agent, bridge, graphNodes) {
       } catch { /* 桥接不可用时省略这一行 */ }
     }
     lines.push('');
-    lines.push('用法：memory_search 查归档；soul_recall 查会话过程；memory_core 改常驻；persona 改风格。');
+    lines.push('怎么往下查：memory_read <id> 看正文；memory_search 按关键词；memory_list 看完整目录；soul_recall 查会话过程；memory_core 改常驻；persona 改风格。');
     return lines.join('\n');
   } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
@@ -1417,7 +1442,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     },
     {
       name: 'memory_write',
-      description: '保存一条归档记忆（episodic note），跨所有会话持久。适用：用户偏好/纠正、项目决策、环境事实、重要结论等未来会话可能需要的内容。内容要自包含（未来会话看不到当前对话）。疑似重复时不会写入，会返回已有候选；确认要新增时带 force=true；若是修正某条旧记忆（而不是新增），带 supersedes=<旧 id>，旧条目会被标记为「已被取代」。',
+      description: '保存一条归档记忆（episodic note），跨所有会话持久。适用：用户偏好/纠正、项目决策、环境事实、重要结论等未来会话可能需要的内容。内容要自包含（未来会话看不到当前对话）；正文里 <private>…</private> 段会被整段摘掉再保存。疑似重复时不会写入，会返回已有候选；确认要新增时带 force=true；若是修正某条旧记忆（而不是新增），带 supersedes=<旧 id>，旧条目会被标记为「已被取代」。',
       notes: '写入 <DSH home>/memory/notes/ 并更新索引；不调用模型、不花钱；来源会话与事件序号自动记录。',
       parameters: {
         type: 'object', additionalProperties: false,
@@ -1438,7 +1463,7 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     },
     {
       name: 'memory_core',
-      description: '编辑核心记忆 MEMORY.md——它在每个会话的系统提示里常驻注入，务必保持精炼。action=append 在指定分节末尾追加要点；action=replace 用 text 整体替换指定分节；action=remove 删除指定分节。适合：用户画像/偏好、环境事实、项目约定这类需要"每次都记得"的长期信息。',
+      description: '编辑核心记忆 MEMORY.md——它在每个会话的系统提示里常驻注入，务必保持精炼。action=append 在指定分节末尾追加要点；action=replace 用 text 整体替换指定分节；action=remove 删除指定分节。适合：用户画像/偏好、环境事实、项目约定这类需要"每次都记得"的长期信息。text 里的 <private>…</private> 段会被整段摘掉再写入。',
       notes: '直接改写 <DSH home>/memory/MEMORY.md，下一次模型组装即生效；内容常驻系统提示预算（建议 <3KB）；不调用模型、不花钱。',
       parameters: {
         type: 'object', additionalProperties: false,
@@ -1503,8 +1528,8 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
     },
     {
       name: 'memory_brief',
-      description: '一次返回记忆库体检：核心记忆大小与分节、归档条数与最近 5 条、回复风格、会话图谱规模。判断"我记住了什么/记忆是不是健康"时先调它，不要逐个工具试。',
-      notes: '只读；四项体检一次返回；不调用模型、不花钱。',
+      description: '一次返回记忆索引与体检：核心记忆大小、归档目录（最近 8 条的标题/标签/日期/主题）、回复风格、快照、会话图谱规模与分级。判断"我记住了什么"时先调它，不要逐个工具试；它给的是目录，细节再用 memory_read。',
+      notes: '只读；返回的是索引不是正文（正文从不自动注入）；不调用模型、不花钱。',
       parameters: { type: 'object', additionalProperties: false, properties: {}, required: [] },
       execute: (_args, exec) => brief(graphStats, exec?.agent ?? null, bridgeCfg, graphNodes),
     },

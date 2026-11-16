@@ -118,6 +118,21 @@ window.__ModuleLoader__.load({
 .dsm-topic[data-topic="health"]{color:#d97706}
 .dsm-topic[data-topic="study"]{color:#7c5cff}
 .dsm-topic[data-topic="family"]{color:#e0457b}
+.dsm-flow{display:flex;flex-direction:column;gap:16px;margin-top:10px}
+.dsm-flow-day{display:flex;flex-direction:column;gap:6px}
+.dsm-flow-date{font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary);padding-left:2px}
+.dsm-flow-item{border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-base);overflow:hidden}
+.dsm-flow-row{display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;background:transparent;border:0;font-family:inherit;font-size:12px;color:inherit;text-align:left;cursor:pointer}
+.dsm-flow-row:hover{background:var(--dsw-alias-bg-layer-1)}
+.dsm-flow-row:focus-visible{outline:2px solid var(--dsw-alias-accent-1);outline-offset:-2px}
+.dsm-flow-dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-label-tertiary)}
+.dsm-flow-dot[data-topic="work"]{background:#4c8dff}
+.dsm-flow-dot[data-topic="life"]{background:#2aa45f}
+.dsm-flow-dot[data-topic="health"]{background:#d97706}
+.dsm-flow-dot[data-topic="study"]{background:#7c5cff}
+.dsm-flow-dot[data-topic="family"]{background:#e0457b}
+.dsm-flow-title{flex:1;min-width:0;word-break:break-word}
+.dsm-flow-body{margin:0;padding:10px 12px;border-top:1px solid var(--dsw-alias-border-l3);max-height:320px;overflow:auto;white-space:pre-wrap}
 .dsm-banner{border-radius:var(--dsw-radius-md);padding:8px 12px;font-size:12px}
 .dsm-banner[data-tone="error"]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 12%,transparent);color:var(--dsw-alias-state-error-primary)}
 .dsm-banner[data-tone="ok"]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 12%,transparent);color:var(--dsw-alias-state-success-primary)}
@@ -1636,10 +1651,92 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // 记忆流：按写入日期倒序的归档笔记流水账。只读；正文按需拉，避免一次把整库读进页面。
+    function FlowTab() {
+      const [data, setData] = useState(null)
+      const [error, setError] = useState(null)
+      const [busy, setBusy] = useState(false)
+      const [opened, setOpened] = useState(null)
+      const [bodies, setBodies] = useState({})
+      const load = async () => {
+        setBusy(true)
+        setError(null)
+        try {
+          setData(await call('dsh-soul-memory/memories'))
+        } catch (err) {
+          setError(String(err.message || err))
+        } finally {
+          setBusy(false)
+        }
+      }
+      useEffect(() => { load() }, [])
+      const toggle = async (id) => {
+        if (opened === id) { setOpened(null); return }
+        setOpened(id)
+        if (bodies[id]) return
+        try {
+          const res = await call('dsh-soul-memory/notes', { action: 'read', id })
+          const result = (res && res.result) || res || {}
+          setBodies((prev) => ({ ...prev, [id]: String(result.body || '') }))
+        } catch (err) {
+          setBodies((prev) => ({ ...prev, [id]: '读不到正文：' + String(err.message || err) }))
+        }
+      }
+      if (error) return h(Empty, null, '读不到记忆流：' + error)
+      if (!data) return h(Empty, null, busy ? '正在读取…' : '加载中…')
+      // 墓碑不显示：删掉的记忆不该在流水账里继续占位置。
+      const notes = (data.notes || []).filter((note) => !note.deleted)
+      const days = new Map()
+      for (const note of notes) {
+        const day = (note.created || '').slice(0, 10) || '更早'
+        if (!days.has(day)) days.set(day, [])
+        days.get(day).push(note)
+      }
+      const ordered = [...days.keys()].sort((a, b) => b.localeCompare(a))
+      return h('div', { className: 'dsm-card' },
+        h('div', { className: 'dsm-head' },
+          h('div', null,
+            h('h3', null, '记忆流 ', h('span', { className: 'dsm-count' }, notes.length)),
+            h('p', { className: 'dsm-hint' }, '按写入日期倒序的归档笔记，点一条展开正文。这里只做展示，改和删仍然对我说。'),
+          ),
+          h(Button, { tone: 'ghost', disabled: busy, onClick: load }, busy ? '刷新中…' : '刷新'),
+        ),
+        ordered.length
+          ? h('div', { className: 'dsm-flow' }, ordered.map((day) =>
+            h('div', { key: day, className: 'dsm-flow-day' },
+              h('div', { className: 'dsm-flow-date' },
+                day,
+                h('span', { className: 'dsm-meta-soft' }, ' · ' + days.get(day).length + ' 条'),
+              ),
+              days.get(day).map((note) => h('div', { key: note.id, className: 'dsm-flow-item' },
+                h('button', {
+                  type: 'button',
+                  className: 'dsm-flow-row',
+                  'aria-expanded': opened === note.id ? 'true' : 'false',
+                  onClick: () => toggle(note.id),
+                },
+                  h('span', { className: 'dsm-flow-dot', 'data-topic': note.topic || 'other' }),
+                  h('span', { className: 'dsm-flow-title' },
+                    note.title || note.id,
+                    note.sensitive ? h('span', { className: 'dsm-topic', style: { marginLeft: 6 } }, '敏感') : null,
+                    note.supersededBy ? h('span', { className: 'dsm-topic', style: { marginLeft: 6 } }, '已被取代') : null,
+                  ),
+                  h('span', { className: 'dsm-topic', 'data-topic': note.topic || 'other' }, note.topicLabel || '其他'),
+                ),
+                opened === note.id
+                  ? h('pre', { className: 'dsm-flow-body' }, bodies[note.id] || '正在读取…')
+                  : null,
+              )),
+            )))
+          : h(Empty, null, '还没有归档笔记。'),
+      )
+    }
+
     // ---------------------------------------------------------------- 设置页
     const TABS = [
       { id: 'pending', name: '待批区' },
       { id: 'memories', name: '记忆内容' },
+      { id: 'flow', name: '记忆流' },
       { id: 'rules', name: '编码规范' },
       { id: 'identity', name: '称呼与风格' },
       { id: 'tiers', name: '记忆分级' },
@@ -1680,11 +1777,13 @@ window.__ModuleLoader__.load({
           ? h(PendingTab, { data, busy, onBusy: setBusy, patchState: store.patchState })
           : tab === 'memories'
             ? h(MemoriesTab)
-            : tab === 'rules'
-              ? h(RulesTab, { data })
-              : tab === 'identity'
-                ? h(IdentityTab, { data, patchState: store.patchState })
-                : h(TiersTab, { data })
+            : tab === 'flow'
+              ? h(FlowTab)
+              : tab === 'rules'
+                ? h(RulesTab, { data })
+                : tab === 'identity'
+                  ? h(IdentityTab, { data, patchState: store.patchState })
+                  : h(TiersTab, { data })
 
       return h('div', { className: 'dsm-root dsm-page' },
         h('div', { className: 'dsm-head' },

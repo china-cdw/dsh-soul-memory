@@ -132,7 +132,7 @@ Restart DSH (or toggle the bundle off and on to hot-reload). The system prompt s
 # 踩过的坑（dsh-soul-memory 自动记录）   ← only when there are notes
 ```
 
-To verify, call `memory_brief`: it reports core-memory size, archived note count, persona, snapshots, graph size and billion-context status. To write your first memory immediately, use `memory_core` with `append`.
+To verify, call `memory_brief`: it returns a memory index (core-memory size, the latest 8 entries, persona, snapshots, graph size and billion-context status). The index lists titles only, so read a body with `memory_read`. To write your first memory immediately, use `memory_core` with `append`.
 
 > If you only changed plugin source and don't want to reinstall: toggling the bundle (`plugin_manager set_bundle enabled=false` → `enabled=true`) reloads the module from disk without restarting the whole app.
 
@@ -140,7 +140,9 @@ To verify, call `memory_brief`: it reports core-memory size, archived note count
 
 ## Tools
 
-The table below lists the 14 tools registered by default. With evolution enabled (`config.enabled: true` plus a provider/model) the `evolve_*` tools (`evolve_status`, `evolve_diagnose`, `evolve_request`, `evolve_tree`, …) are registered too, for at most 19 tools.
+The table below lists the 20 tools registered by default. With evolution enabled (`config.enabled: true` plus a provider/model) the `evolve_*` tools (`evolve_status`, `evolve_diagnose`, `evolve_request`, `evolve_tree`, …) are registered too, for at most 24 tools.
+
+The two CodeGraph tools (`code_explore` / `code_impact`) are optional: install [CodeGraph](https://github.com/colbymchenry/codegraph) once (`npm i -g @colbymchenry/codegraph`) and run `codegraph init` in the target repo. Without it they only explain how to install or index; set `config.codegraph.enabled: false` to turn them off.
 
 | Tool | Purpose | Main arguments |
 | --- | --- | --- |
@@ -150,7 +152,8 @@ The table below lists the 14 tools registered by default. With evolution enabled
 | `memory_search` | Three-way search: notes + graph + billion-context | `query` |
 | `memory_delete` | Delete (tombstoned, never resurrected) | `id` |
 | `memory_core` | Edit a core-memory section | `action` (append/replace/remove), `section`, `text?` |
-| `memory_brief` | Memory health report | — |
+| `memory_brief` | Memory index and health (titles, not bodies) | — |
+| `memory_mode` | Per-session memory switch (normal / readonly / off); resets on a new session | `action` (get/set), `mode?` (normal/readonly/off), `session?` |
 | `memory_dreaming` | Toggle idle consolidation, run it by hand, and recover over-retired nodes (including AI junk cleanup) | `action` (status/on/off/run/retired/restore), `apply?`, `force?`, `ids?` |
 | `persona` | Reply style | `action` (get/set/custom/disable), `preset?`, `text?` |
 | `coding_rules` | Coding conventions (editable in a dialog, duplicate-detecting) | `action` (show/list/add/propose/pending/approve/reject/forget/dupes), `text?`, `ids?` |
@@ -158,8 +161,10 @@ The table below lists the 14 tools registered by default. With evolution enabled
 | `lessons` | Mistake notes | `action` (list/forget/clear), `text?`, `limit?` (default 50, max 200) |
 | `soul_recall` | Recall from the session graph / raw history / other AI tools' transcripts (results carry `confidence`: exact/partial/related) | `query`, `k?`, `source?` (auto/quote/graph/external) |
 | `soul_expand` | Expand raw text by seq range (default 2000 bytes / 200 events, max 20000 / 1000); when the first event is clipped continue with `from=resume.seq` + `offset=resume.offset`, otherwise continue with `from=to+1`; `next` on a zero budget is the resume point | `from`, `to` (required, 0–1000000); `limit?`, `maxEvents?`, `offset?` (default 2000 / 200 / 0) |
+| `code_explore` | Query symbols/files/features in the repo code index: source snippets, entry points and call relations | `query`, `repo?`, `maxBlocks?` (default 3, max 6), `maxChars?` |
+| `code_impact` | Impact radius of a symbol or file: who depends on it, how it is called | `symbol?`, `file?` (one of them), `repo?`, `depth?` (default 3), `maxChars?` |
 
-Write rules: `memory_write` runs a near-duplicate check (similarity ≥ 0.55 is rejected; pass `force: true` to write anyway).
+Write rules: `memory_write` runs a near-duplicate check (similarity ≥ 0.55 is rejected; pass `force: true` to write anyway). Text wrapped in `<private>…</private>` is stripped before anything is written or buffered; a body that is only a private block is rejected.
 
 Mistake notes are captured automatically: within one session, if a tool errors and the same tool later succeeds, a note "error + fix that worked" is recorded, and repeats of the same error are merged into a count. Structured signals come first: `isError` and exit codes (parsed from the result line; exit code 0 counts as success, and benign 1 from tools like `grep` is ignored). Only when no structured signal exists is the response text checked as a fallback. File-reader tools and the memory/coding tools themselves are never captured.
 
@@ -174,7 +179,7 @@ The style settings page calls the local route `/dsh-soul-memory/persona` over sa
 - responses carry `Cache-Control: no-store`; style is personal data and is never cached.
 ### Soul Memory settings page
 
-Settings → Soul Memory is registered by `client.js` into the host settings slot with four tabs: pending rules, rules, name & style, memory tiers. Data comes from six same-origin `fetch` routes (also registered only when the host provides `webServer`, with the same baseline guard as `/persona`: loopback Host, same Origin, `x-dsh-soul-memory: 1` header):
+Settings → Soul Memory is registered by `client.js` into the host settings slot with six tabs: pending rules, memory content, memory flow, rules, name & style, memory tiers. The two memory tabs share the `/memories` and `/notes` routes (one filters by topic, the other lists notes by day, newest first). Data comes from six same-origin `fetch` routes (also registered only when the host provides `webServer`, with the same baseline guard as `/persona`: loopback Host, same Origin, `x-dsh-soul-memory: 1` header):
 
 | Route | Method | Purpose |
 | --- | --- | --- |
@@ -326,7 +331,7 @@ npm run preflight
 npm test          # every self-check script; any failure exits non-zero
 ```
 
-The checks ship in `scripts/`: 85 core assertions, 14 coding, 15 mistake notes, 30 remember-intent, 11 event-replay, 14 billion-context bridge, 26 regression, 16 memory-tiering, 15 rule-promotion and 19 settings-page assertions — 245 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
+The checks ship in `scripts/`: 88 core assertions, 14 coding, 16 mistake notes, 30 remember-intent, 11 event-replay, 14 billion-context bridge, 26 regression, 16 memory-tiering, 15 rule-promotion, 20 settings-page, 4 backup/journal, 4 memory-topic, 5 review-brief and 17 codegraph assertions — 280 in total — covering edge cases in writes, search, supersede, guard, snapshots, index locking, concurrency, cache invalidation and the bridge. Run one alone with `node scripts/dsh-memory-audit.mjs`.
 
 ---
 

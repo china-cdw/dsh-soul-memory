@@ -337,6 +337,12 @@ async function memoriesOf() {
       const topicLine = text.split('\n').find((line) => /^topic:\s*\S/.test(line)) || '';
       const declared = topicLine ? topicLine.replace(/^topic:\s*/, '').trim() : '';
       const topic = declared ? normalizeTopic(declared) : topicOf(String(titleLine || heading || fallback) + ' ' + body).topic;
+      // front matter 一次解析：记忆流要按日期分组，也要标出敏感/已被取代/墓碑。
+      const head = (text.match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || '';
+      const fieldOf = (key) => {
+        const hit = head.split('\n').find((line) => line.startsWith(key + ':'));
+        return hit ? hit.slice(key.length + 1).trim() : '';
+      };
       notes.push({
         id: fallback,
         title: titleLine
@@ -348,6 +354,12 @@ async function memoriesOf() {
         score: weight.score,
         band: weight.band,
         bandLabel: BAND_LABELS[weight.band] || weight.band,
+        created: fieldOf('created'),
+        tags: fieldOf('tags') ? fieldOf('tags').split(',').map((tag) => tag.trim()).filter(Boolean) : [],
+        session: fieldOf('session'),
+        supersededBy: fieldOf('supersededBy'),
+        sensitive: fieldOf('sensitive') === 'true',
+        deleted: fieldOf('deleted') === 'true',
       });
     }
   } catch (error) {

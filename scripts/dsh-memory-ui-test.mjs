@@ -127,6 +127,25 @@ try {
     assert.ok(routes.every((r) => r.kind === 'exact'));
   });
 
+  const memoriesRoute = routes.find((r) => r.path.endsWith('/memories'));
+
+  await s.test('GET memories 给记忆流补日期/标签/敏感标记', async () => {
+    const { mkdirSync, writeFileSync } = await import('node:fs');
+    const dir = join(home.dir, 'memory', 'notes');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'flow-demo.md'),
+      '---\nid: flow-demo\ntitle: 记忆流样例\ntags: alpha, beta\ncreated: 2026-11-16T10:00:00.000Z\nupdated: 2026-11-16T10:00:00.000Z\nsensitive: true\n---\n\n正文不在这条路径里返回。\n',
+      'utf8');
+    const { res, json } = await hit(memoriesRoute, fakeReq());
+    assert.equal(res.statusCode, 200);
+    const note = (json.notes || []).find((n) => n.id === 'flow-demo');
+    assert.ok(note, '没有返回新写的笔记');
+    assert.equal(note.created, '2026-11-16T10:00:00.000Z');
+    assert.deepEqual(note.tags, ['alpha', 'beta']);
+    assert.equal(note.sensitive, true);
+    assert.equal(note.deleted, false);
+  });
+
   const stateRoute = routes.find((r) => r.path.endsWith('/state'));
   const uiRoute = routes.find((r) => r.path.endsWith('/ui'));
   const pendingRoute = routes.find((r) => r.path.endsWith('/pending'));

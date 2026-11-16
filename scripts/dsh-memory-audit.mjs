@@ -768,6 +768,38 @@ await t.test('memory_write 自动记录来源会话与事件序号', async () =>
   setSessionSeqProvider(null);
 });
 
+await t.test('<private> 段在落盘前被整段摘掉', async () => {
+  const saved = await callTool(tools1, 'memory_write', {
+    title: '私密段测试',
+    content: '公开部分 AAAA。<private>绝密串 zz-hunter2</private>公开部分 B。',
+    force: true,
+  });
+  const open = saved.indexOf('[');
+  const close = saved.indexOf(']', open + 1);
+  const id = open >= 0 && close > open ? saved.slice(open + 1, close) : '';
+  const body = await callTool(tools1, 'memory_read', { id });
+  assert.doesNotMatch(body, /zz-hunter2/);
+  assert.match(body, /公开部分 AAAA/);
+  assert.match(body, /公开部分 B/);
+  const file = await readFile(join(notesDir, id + '.md'), 'utf8');
+  assert.doesNotMatch(file, /<private>/);
+});
+
+await t.test('正文只有 <private> 段时拒绝保存', async () => {
+  const out = await callTool(tools1, 'memory_write', {
+    title: '全私密', content: '<private>只说给这一轮听</private>', force: true,
+  });
+  assert.match(out, /\[err:E_ARG\]/);
+});
+
+await t.test('memory_brief 返回索引卡而不是正文', async () => {
+  const out = await callTool(tools1, 'memory_brief', {});
+  assert.match(out, /记忆索引/);
+  assert.match(out, /最近写入/);
+  assert.match(out, /memory_read/);
+  assert.doesNotMatch(out, /zz-hunter2|zebra 只在正文出现一次/);
+});
+
 await t.test('宿主注入的运行时上下文不进入图谱', async () => {
   const blocks = normalize([
     { seq: 0, type: 'user/message', data: { source: { kind: 'user' }, content: 'Current runtime context. Current working directory: C:/x' } },
