@@ -1,5 +1,6 @@
 import { hash, redact, terms as termSet } from './util.js'
 import { densestWindow, textOfEvent } from './session-search.js'
+import { stripPrivate } from './memory/private.js'
 
 /**
  * The addressable span index.
@@ -59,7 +60,7 @@ export function ingest(store, scope, session, { max = MAX_INGEST_PER_CALL, budge
       if (!event) continue
       // Spans are raw tool output and user text: the one table that stores verbatim history
       // must pass the same denylist as every other write before it reaches disk.
-      const text = redact(textOfEvent(event)).trim()
+      const text = redact(stripPrivate(textOfEvent(event)).text).trim()
       if (!text) continue
       rows.push({ seq, kind: String(event.type ?? ''), text, indexText: segment(text), hash: hash(text) })
     }
@@ -102,9 +103,12 @@ export function searchIndex(store, scope, query, { limit = 3, maxBytes = 4000, m
   let bytes = 0
   for (const row of rows) {
     if (spans.length >= limit || bytes >= maxBytes) break
-    const text = densestWindow(String(row.text ?? ''), maxSpanBytes, needles)
+    // 剩余预算不够一整段时，截到剩余长度收下，而不是 continue 把后面的命中全丢掉：
+    // 原来预算还剩一大半就提前结束，返回的段数比 maxBytes 允许的少很多。
+    const room = maxBytes - bytes
+    const text = densestWindow(String(row.text ?? ''), Math.min(maxSpanBytes, Math.max(room, 80)), needles)
     const price = Buffer.byteLength(text)
-    if (bytes + price > maxBytes) continue
+    if (bytes + price > maxBytes) break
     spans.push({
       seq: row.seq,
       // A hit from an earlier session is labelled as such: the model must know it cannot

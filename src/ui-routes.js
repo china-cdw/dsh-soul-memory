@@ -20,7 +20,7 @@ import { readUiSettings, writeUiSettings, validateUiPatch, MAX_NICKNAME, MIN_RUL
 import { readPersona, listPresets, MAX_CUSTOM_TEXT } from './persona.js';
 import { GC_DEFAULTS, tierCounts, collectionCandidates } from './tiering.js';
 import { MODE_LABELS, SESSION_MODES, listModes, modeOf, setMode } from './session-modes.js';
-import { memoryPath } from './memory/util.js';
+import { atomicWrite, memoryPath, withFileLock } from './memory/util.js';
 import { readDreamingState, writeDreamingState, withDreamingRunLock } from './dreaming.js';
 import { readTurns } from './turnlog.js';
 import { BAND_LABELS, scoreText } from './weighting.js';
@@ -766,16 +766,22 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
           let nextMeta = meta;
           if (/^updated:.*$/m.test(nextMeta)) nextMeta = nextMeta.replace(/^updated:.*$/m, 'updated: ' + stamp);
           else nextMeta = nextMeta + '\nupdated: ' + stamp;
-          writeFileSync(file + '.bak', text);
-          writeFileSync(file, '---\n' + nextMeta + '\n---\n\n' + body.body.bodyText);
+          // 用户直接编辑的这条路径也必须原子写：writeFileSync 截断式写入遇到断电/写满会留下半截正文，
+          // 而下一次成功保存又会用这半截覆盖唯一的 .bak，原文就永远没了。
+          await withFileLock(file, async () => {
+            await atomicWrite(file + '.bak', text);
+            await atomicWrite(file, '---\n' + nextMeta + '\n---\n\n' + body.body.bodyText);
+          });
           return sendJson(res, 200, { ok: true, id, saved: true });
         }
         if (action === 'delete') {
           let nextMeta = /^deleted:.*$/m.test(meta)
             ? meta.replace(/^deleted:.*$/m, 'deleted: true')
             : meta + '\ndeleted: true';
-          writeFileSync(file + '.bak', text);
-          writeFileSync(file, '---\n' + nextMeta + '\n---\n\n（此记忆已删除）');
+          await withFileLock(file, async () => {
+            await atomicWrite(file + '.bak', text);
+            await atomicWrite(file, '---\n' + nextMeta + '\n---\n\n（此记忆已删除）');
+          });
           return sendJson(res, 200, { ok: true, id, deleted: true });
         }
         return sendJson(res, 400, { error: 'action 只能是 read / save / delete' });

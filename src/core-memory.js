@@ -4,7 +4,7 @@
 // 布局（<dshHome>/memory/，默认 ~/.dsh/memory），与原插件完全一致，旧数据可直接复用：
 //   MEMORY.md   核心记忆：每个会话系统提示常驻注入（同步读、永远新鲜）
 //   notes/      归档记忆：一条一文件，front-matter（id/title/tags/created/updated）
-//   index.json  元数据索引（list/search 的真相源；损坏时从 notes/ 重建）
+//   index.json  派生的元数据缓存（权威是 notes/ 正文；只改索引会被对账覆盖，损坏时可从 notes/ 重建）
 //   PERSONA.md  回复风格
 //
 // 相对原版的三处增强（v0.1）：
@@ -36,7 +36,7 @@ import {
 import { registerCodingRules } from './coding.js';
 import { readUiSettings, uiSettingsPath } from './ui-settings.js';
 import { MODE_LABELS, SESSION_MODES, modeOf, setMode } from './session-modes.js';
-import { registerLessons } from './lessons.js';
+import { lessonsPath, registerLessons } from './lessons.js';
 import { registerReview } from './review.js';
 import { registerCodeGraph } from './codegraph.js';
 import { biliStatus, searchBili } from './memory/bili.js'
@@ -474,7 +474,29 @@ async function reconcileIndexLocked() {
       continue;
     }
     fileIds.add(id);
-    if (byId.has(id)) continue;
+    if (byId.has(id)) {
+      // 文件是权威：标题/标签/取代/敏感标记在文件里改了，索引必须跟着改，
+      // 否则 memory_read 看到新的、search 与注入长期看到旧的，重启也不纠正。
+      const prev = byId.get(id)
+      const next = {
+        ...prev,
+        title: parsed.meta.title || id,
+        tags: (parsed.meta.tags || '').split(',').map((s) => s.trim()).filter(Boolean),
+        created: parsed.meta.created || '',
+        updated: parsed.meta.updated || parsed.meta.created || '',
+        size: parsed.meta.size ? Number(parsed.meta.size) : 0,
+      }
+      delete next.supersededBy
+      if (parsed.meta.supersededBy) next.supersededBy = parsed.meta.supersededBy
+      delete next.sensitive
+      if (parsed.meta.sensitive === 'true') next.sensitive = true
+      delete next.missing
+      const same = ['title', 'created', 'updated', 'size', 'supersededBy', 'sensitive', 'missing']
+        .every((key) => JSON.stringify(prev[key]) === JSON.stringify(next[key]))
+        && JSON.stringify(prev.tags || []) === JSON.stringify(next.tags || [])
+      if (!same) { byId.set(id, next); changed = true }
+      continue
+    }
     byId.set(id, {
       id,
       title: parsed.meta.title || id,
@@ -518,10 +540,14 @@ function failMessage(code, message) { return message + '\n[err:' + code + ']'; }
 /** 按长度截断；若截断点落在未闭合的代码围栏内，补一个关闭围栏，而不是删内容。 */
 function truncateWithFences(text, max) {
   if (text.length <= max) return text;
-  let cut = sliceSafe(text, max);
+  const cut = sliceSafe(text, max);
   const marker = openFenceMarker(cut);
-  if (marker) cut += (cut.endsWith('\n') ? '' : '\n') + marker + '\n';
-  return cut;
+  if (!marker) return cut;
+  // 先给闭合围栏留位置再切：原来先切满 max 再补围栏，结果会超过调用方给的上限。
+  const tail = (cut.endsWith('\n') ? '' : '\n') + marker + '\n';
+  const room = max - tail.length;
+  if (room <= 0) return cut;
+  return sliceSafe(cut, room) + tail;
 }
 
 /** 返回尚未闭合的围栏标记；支持 ``` 与 ~~~、缩进 ≤3、关闭需长度 ≥ 开启。 */
@@ -590,8 +616,12 @@ function renderSectionText() {
     if (coreRaw !== null) core = coreRaw.trim();
     let coreNote = '';
     if (core.length > CORE_BUDGET) {
+      const cut = core.length - CORE_BUDGET;
       core = sliceSafe(core, CORE_BUDGET);
-      coreNote = '\n（核心记忆过长已截断——请尽快用 memory_core 精简）';
+      // 截断必须自己说出来，还要给出全文位置。只写「已截断」不说丢了什么、去哪看，
+      // 下一轮就会在缺一段的前提下继续推理——这是最难自己发现的一种退化。
+      coreNote = '\n（核心记忆超出 ' + CORE_BUDGET + ' 字预算，尾部 ' + cut + ' 字本轮没有注入；' +
+        '全文仍在 ' + corePath() + '，请用 memory_core 精简到预算内）';
     }
     let notes = [];
     const indexRaw = readFileLoose(indexPath());
@@ -1050,6 +1080,9 @@ async function brief(graphStats, agent, bridge, graphNodes) {
     const notes = await loadIndex();
     const persona = readPersona();
     const lines = [];
+    // 组件坏了不能只是少一行：读的人会把「省略」当成「没有」。这里记下谁没读成，末尾统一报。
+    const degraded = [];
+    const why = (e) => String(e && e.message ? e.message : e || '不可用').slice(0, 60);
     // 索引卡：只回答「记住了什么、在哪一条」，正文留给 memory_read。
     // 体检每次都可能被调，把整库正文灌进对话既贵又噪声大。
     lines.push('记忆索引（这是目录，不是正文：看内容用 memory_read <id>）');
@@ -1081,7 +1114,7 @@ async function brief(graphStats, agent, bridge, graphNodes) {
       lines.push(snap
         ? '- 快照：' + snap.count + ' 份（最近 ' + snap.name.slice(0, 10) + '）'
         : '- 快照：（尚未生成）');
-    } catch { /* 快照不可用就省略这一行 */ }
+    } catch (e) { degraded.push('快照 ' + why(e)); }
     if (graphStats && agent) {
       try {
         const stats = await graphStats(agent);
@@ -1092,7 +1125,7 @@ async function brief(graphStats, agent, bridge, graphNodes) {
           if (stats.bytes != null) parts.push('正文 ' + (stats.bytes / 1024).toFixed(1) + 'KB');
           if (parts.length) lines.push('- 会话图谱：' + parts.join('，'));
         }
-      } catch { /* 图谱不可用时省略这一行 */ }
+      } catch (e) { degraded.push('图谱 ' + why(e)); }
     }
     if (graphNodes && agent) {
       try {
@@ -1100,9 +1133,9 @@ async function brief(graphStats, agent, bridge, graphNodes) {
         if (Array.isArray(nodes) && nodes.length) {
           const counts = tierCounts(nodes);
           const collectible = collectionCandidates(nodes).length;
-          lines.push('- 分级：' + tierSummary(counts, collectible) + '（memory_tier 可查看与回收，回收可逆）');
+          lines.push('- 分级：' + tierSummary(counts, collectible) + '（memory_tier 可查看与回收；30 天内可恢复，之后才清理）');
         }
-      } catch { /* 图谱不可用时省略这一行 */ }
+      } catch (e) { degraded.push('分级 ' + why(e)); }
     }
     if (bridge && bridge.enabled !== false) {
       try {
@@ -1113,14 +1146,116 @@ async function brief(graphStats, agent, bridge, graphNodes) {
         } else {
           lines.push('- billion-context：桥接已开，未找到会话存档（' + st.dir + '）');
         }
-      } catch { /* 桥接不可用时省略这一行 */ }
+      } catch (e) { degraded.push('桥接 ' + why(e)); }
     }
     lines.push('');
+    lines.push(degraded.length
+      ? '- 组件状态：' + degraded.join('；') + '（用 memory_doctor 看细节）'
+      : '- 组件状态：快照/图谱/分级/桥接 本次读取未报错（深检用 memory_doctor）');
     lines.push('怎么往下查：memory_read <id> 看正文；memory_search 按关键词；memory_list 看完整目录；soul_recall 查会话过程；memory_core 改常驻；persona 改风格。');
     return lines.join('\n');
   } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
 
+/**
+ * 记忆体检：把「哪件事坏了没人会发现」变成可机械跑的检查。
+ *
+ * 只读、不调用模型。每项都回答三件事：覆盖哪个失败模式、现在是否健康、坏了怎么修。
+ * 最后固定列出「这台机器测不到什么」——体检的边界比结论更重要，
+ * 否则「全绿」很容易被当成「一切正常」。
+ */
+async function doctor(graphStats, agent, bridge, graphNodes, listRetiredNodes) {
+  const checks = [];
+  const add = (id, ok, detail, fix) => checks.push({ id, ok, detail, ...(fix ? { fix } : {}) });
+  try {
+    // 1. 核心记忆预算：超了会被注入截断，文件本身仍完整——两者必须分开说。
+    const core = readFileLoose(corePath());
+    if (core === null) add('core.missing', false, 'MEMORY.md 缺失', '重启宿主会自动建模板；也可手动新建');
+    else {
+      const size = core.trim().length;
+      const over = Math.max(0, size - CORE_BUDGET);
+      add('core.budget', over === 0, `${size} 字符 / 预算 ${CORE_BUDGET}` + (over ? `，尾部 ${over} 字每轮不注入；文件没丢，全文在 ${corePath()}` : ''),
+        over ? '用 memory_core 精简过期条目' : '');
+    }
+    // 2. 索引 vs 目录：index.json 是衍生数据，条数不一致说明有人绕过了插件写 notes/。
+    // 这里刻意不用 loadIndex()：索引坏掉时它会重建并落盘，而体检承诺只读。
+    let notes = [];
+    let indexBroken = false;
+    const indexRaw = readFileLoose(indexPath());
+    if (indexRaw !== null) {
+      const parsed = safeJson(indexRaw, null);
+      if (parsed && Array.isArray(parsed.notes)) notes = parsed.notes.filter((n) => n && typeof n.id === 'string');
+      else indexBroken = true;
+    }
+    let files = [];
+    try { files = (await readdir(notesDir())).filter(n => n.endsWith('.md')).map(n => n.slice(0, -3)); } catch { files = []; }
+    const indexIds = new Set(notes.map(n => n.id));
+    const fileSet = new Set(files);
+    const orphan = files.filter(id => !indexIds.has(id));
+    const missing = notes.filter(n => !fileSet.has(n.id)).map(n => n.id);
+    add('notes.index', !indexBroken && orphan.length === 0 && missing.length === 0,
+      (indexBroken ? 'index.json 解析失败；' : '') + `索引 ${notes.length} 条 / notes/ ${files.length} 个文件` +
+      (orphan.length ? `；未入索引 ${orphan.length} 条（${orphan.slice(0, 3).join('、')}${orphan.length > 3 ? '…' : ''}）` : '') +
+      (missing.length ? `；索引指向缺失文件 ${missing.length} 条（${missing.slice(0, 3).join('、')}${missing.length > 3 ? '…' : ''}）` : ''),
+      '下次宿主启动会对账；急用可先备份再删 index.json 让它从 notes/ 重建');
+    // 3. 踩坑日志逐行可解析：坏一行只丢一行，但没人看就永远不知道坏了。
+    const lessonsRaw = readFileLoose(lessonsPath());
+    if (lessonsRaw === null) add('lessons.file', true, 'LESSONS.jsonl 尚未生成（还没有踩坑记录）');
+    else {
+      const lines = lessonsRaw.split('\n').filter(Boolean);
+      let bad = 0;
+      for (const line of lines) { try { JSON.parse(line); } catch { bad++; } }
+      add('lessons.parse', bad === 0, `${lines.length} 行，无法解析 ${bad} 行`, bad ? '备份后删掉坏行（不影响加载，但会少一条线索）' : '');
+    }
+    // 4. 备份：最近一份要能打开；打不开等于没有备份。
+    try {
+      const list = await listBackups();
+      if (!list.length) add('backup.exists', false, '还没有任何备份', '用 memory_backup action=export 导一份');
+      else {
+        let readable = true;
+        try { await readBundle(list[0].name); } catch { readable = false; }
+        add('backup.readable', readable, `${list.length} 份，最近 ${String(list[0].name).slice(0, 10)}` + (readable ? '' : '，但打不开'),
+          readable ? '' : '删掉坏的那份，再重新 export 一份');
+      }
+    } catch (e) { add('backup.exists', false, '备份目录不可读：' + errText(e), '检查 <DSH home>/memory/backups 权限'); }
+    // 5. 图谱与回收：回收必须能被 restore 找回，否则就是删除。
+    if (graphStats && agent) {
+      try {
+        const st = await graphStats(agent);
+        add('graph.open', !!st, st ? `节点 ${st.nodes ?? '?'}，边 ${st.edges ?? '?'}` : '图谱不可用（store 未打开）',
+          st ? '' : '重启宿主；仍失败看日志里的图谱库错误');
+      } catch (e) { add('graph.open', false, '图谱读取失败：' + errText(e), '图谱是衍生数据，可删库重建'); }
+    } else add('graph.open', true, '未接入图谱（memory.enabled=false 或启动早期）');
+    if (listRetiredNodes && agent) {
+      try {
+        const retired = await listRetiredNodes(agent);
+        const n = Array.isArray(retired) ? retired.length : 0;
+        add('graph.retired', true, n ? `${n} 个已回收节点（可 restore）` : '没有已回收节点');
+      } catch (e) { add('graph.retired', false, '回收名单读取失败：' + errText(e), 'memory_dreaming action=retired 手动确认'); }
+    }
+    // 6. billion-context 桥接：只读别人的存档，找不到不算坏，但要说出来。
+    if (bridge && bridge.enabled !== false) {
+      try {
+        const st = await biliStatus({ sessionsDir: bridge.sessionsDir, maxSessions: bridge.maxSessions });
+        add('bridge.found', st.found, st.found ? `${st.sessions} 个会话 / ${st.blocks} 个块` : `未找到会话存档（${st.dir}）`,
+          st.found ? '' : '没装 billion-context 时这层本来就没有，不影响其他记忆');
+      } catch (e) { add('bridge.found', false, '桥接读取失败：' + errText(e), '检查 sessionsDir 配置'); }
+    }
+    const bad = checks.filter(c => !c.ok);
+    const out = [];
+    out.push('记忆体检：' + (bad.length ? bad.length + ' 项需要注意' : '全部通过') + '（只读，不调用模型）');
+    for (const c of checks) out.push((c.ok ? '✅ ' : '⚠️ ') + c.id + '：' + c.detail + (!c.ok && c.fix ? ' → ' + c.fix : ''));
+    out.push('');
+    out.push('怎么修：核心超预算用 memory_core；索引不一致重启宿主让它对账；备份打不开就重新 export；图谱坏了删库重建（衍生数据）。');
+    out.push('这台机器测不到：' + [
+      '模型有没有真的按检索结果作答（召回质量只能人工看）',
+      '宿主有没有把注入节拼进本轮提示（只能读文件，看不见宿主组装）',
+      '设置页按钮与悬浮层在浏览器里的实际行为',
+      '另一个进程/标签页此刻是否正在写（这里是单次读，不是锁）',
+    ].join('；') + '。');
+    return out.join('\n');
+  } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
+}
 const outputText = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] };
 
 /**
@@ -1534,9 +1669,16 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
       execute: (_args, exec) => brief(graphStats, exec?.agent ?? null, bridgeCfg, graphNodes),
     },
     {
+      name: 'memory_doctor',
+      description: '记忆体检：把「坏了谁会知道」变成能直接跑的检查——核心记忆预算、索引与 notes/ 对账、踩坑日志可解析、最近备份能打开、图谱可读、回收节点还在、billion-context 桥接；最后列出这台机器测不到的项。只读，不调用模型。',
+      notes: '只读；只报告不修复、不写盘；不调用模型、不花钱；测不到的项会明说。',
+      parameters: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+      execute: (_args, exec) => doctor(graphStats, exec?.agent ?? null, bridgeCfg, graphNodes, listRetiredNodes),
+    },
+    {
       name: 'memory_tier',
       description: '记忆分级与回收：把会话图谱节点按 kind 分成 🔴 高（约束/钉住）、🟡 中（决策/进度）、🟢 低（产物/索引/其他），并列出长期无人命中的 🟢 节点。action=status 查看分级与可回收数；action=collect 预演（默认 dry-run，apply=true 才执行回收）；action=restore 恢复误回收的节点。回收只是标记 retired（可逆），不删除。',
-      notes: '只读优先；collect 默认 dry-run，apply=true 才写库；回收可逆（soul_recall 仍可找回，restore 可恢复）；不调用模型、不花钱。',
+      notes: '只读优先；collect 默认 dry-run，apply=true 才写库；回收后 30 天内可 restore 恢复，超过 30 天可能被清理（soul_recall 仍可找回）；不调用模型、不花钱。',
       parameters: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -1581,7 +1723,17 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
             const head = result.apply
               ? `已导入 ${result.written} 个文件${result.snapshot ? `（导入前快照：${result.snapshot}）` : ''}`
               : '预演（没有写入；加 apply=true 才执行）'
-            return `${head}\n新增 ${result.added.length} 个、覆盖 ${result.changed.length} 个、未变 ${result.same} 个，共 ${result.total} 个。`
+            // 导入只写文件；索引是衍生缓存，不重建的话换机后「导入成功却搜不到」。
+            let indexNote = ''
+            if (result.apply && result.written) {
+              try {
+                const rebuilt = await rebuildIndex({ persist: true })
+                indexNote = `\n索引已按 notes/ 重建：${rebuilt.length} 条`
+              } catch (e) {
+                indexNote = `\n注意：索引重建失败（${errText(e)}），新导入的笔记可能检索不到`
+              }
+            }
+            return `${head}\n新增 ${result.added.length} 个、覆盖 ${result.changed.length} 个、未变 ${result.same} 个，共 ${result.total} 个。${indexNote}`
           }
           return 'action 只能是 export / list / import\n[err:E_ARG]'
         } catch (error) {

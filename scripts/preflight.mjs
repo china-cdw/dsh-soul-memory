@@ -15,10 +15,10 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const IGNORE_FILE = '.preflight-ignore.json';
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage', '.snapshots', '.github']);
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage', '.snapshots', '.github', '.codegraph']);
 const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.json', '.md', '.yml', '.yaml', '.ts', '.txt', '.sh']);
 // 无扩展名但确定是文本、必须放行的常见仓库文件。
-const NO_EXT_OK = new Set(['LICENSE', 'LICENCE', '.gitignore', '.gitattributes', '.editorconfig', '.npmrc']);
+const NO_EXT_OK = new Set(['LICENSE', 'LICENCE', 'NOTICE', '.gitignore', '.gitattributes', '.editorconfig', '.npmrc']);
 const MAX_BYTES = 2 * 1024 * 1024;
 
 const DRIVE = /[A-Za-z]:[\\/]/;

@@ -692,19 +692,17 @@ export class Store {
     this.db.prepare(`DELETE FROM node WHERE scope=? AND pin=0 AND state='retired'
       AND seen < ?`).run(scope, this.now() - 30 * 24 * 3600 * 1000)
     // Stage 2: still over the cap. Oldest-first ranking, but retrieved nodes rank ahead of
-    // equally old ones — the cap is still enforced, because a table that cannot shrink is an
-    // operational bug, not a fairness win. Exempting `hits > 0` entirely (the first attempt)
-    // did exactly that: 30 nodes with a cap of 5 kept 10.
+    // equally old ones. This used to DELETE outright — `secure_delete=ON` then overwrote the
+    // pages, so an "over the cap" project silently lost memories that had actually been
+    // retrieved. Retirement is the reversible step: pin/restore still work, soul_recall still
+    // finds them, and stage 1 reaps them 30 days later if nobody wants them back.
     const active = this.db.prepare(
       "SELECT COUNT(*) n FROM node WHERE scope=? AND pin=0 AND state='active'").get(scope)?.n ?? 0
     if (active > limit) {
-      this.db.prepare(`DELETE FROM node WHERE scope=? AND pin=0 AND state='active' AND id NOT IN (
+      this.db.prepare(`UPDATE node SET state='retired' WHERE scope=? AND pin=0 AND state='active' AND id NOT IN (
         SELECT id FROM node WHERE scope=? AND pin=0 AND state='active'
         ORDER BY hits DESC, seen DESC LIMIT ?)`).run(scope, scope, limit)
     }
-    this.db.prepare(`DELETE FROM edge WHERE scope=? AND (
-      src NOT IN (SELECT id FROM node WHERE scope=?) OR dst NOT IN (SELECT id FROM node WHERE scope=?))`)
-      .run(scope, scope, scope)
   }
 
   parseNode(row) {
@@ -743,7 +741,9 @@ export class Store {
   searchNodes(scope, queryTerms, limit = 12, { includeSuperseded = false } = {}) {
     const wanted = new Set(queryTerms ?? [])
     if (!wanted.size) return []
-    return this.activeNodes(scope, 400, { includeSuperseded })
+    // 窗口必须跟 maxNodes 一致：固定 400 会在超过 400 个活跃节点的项目里，
+    // 让最早的 constraint/decision 永远进不了词面打分（节点还在库里，但检索不到）。
+    return this.activeNodes(scope, this.maxNodes, { includeSuperseded })
       .map(node => {
         const own = new Set(node.terms)
         let shared = 0
@@ -948,10 +948,14 @@ export class Store {
 
   /** Substring fallback for queries the tokenizer cannot express (paths, mixed scripts). */
   findSpans(scope, needle, limit, { external = null } = {}) {
+    const text = String(needle ?? '')
+    // 空串会匹配全表；`_` 是 LIKE 的单字符通配符，不转义会捞回一堆不相干的行。
+    if (!text.trim()) return []
+    const escaped = text.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')
     const filter = external === true ? " AND session LIKE '%:%'"
       : external === false ? " AND session NOT LIKE '%:%'" : ''
-    return this.db.prepare(`SELECT seq, session, text FROM span WHERE scope=? AND text LIKE ?${filter} ORDER BY seq LIMIT ?`)
-      .all(scope, `%${String(needle).replaceAll('%', '')}%`, limit)
+    return this.db.prepare(`SELECT seq, session, text FROM span WHERE scope=? AND text LIKE ? ESCAPE '\\'${filter} ORDER BY seq DESC LIMIT ?`)
+      .all(scope, `%${escaped}%`, limit)
   }
 
   // -- watch ---------------------------------------------------------------

@@ -140,7 +140,7 @@ To verify, call `memory_brief`: it returns a memory index (core-memory size, the
 
 ## Tools
 
-The table below lists the 20 tools registered by default. With evolution enabled (`config.enabled: true` plus a provider/model) the `evolve_*` tools (`evolve_status`, `evolve_diagnose`, `evolve_request`, `evolve_tree`, …) are registered too, for at most 24 tools.
+The table below lists the 21 tools registered by default. With evolution enabled (`config.enabled: true` plus a provider/model) the `evolve_*` tools (`evolve_status`, `evolve_diagnose`, `evolve_request`, `evolve_tree`, …) are registered too, for at most 25 tools.
 
 The two CodeGraph tools (`code_explore` / `code_impact`) are optional: install [CodeGraph](https://github.com/colbymchenry/codegraph) once (`npm i -g @colbymchenry/codegraph`) and run `codegraph init` in the target repo. Without it they only explain how to install or index; set `config.codegraph.enabled: false` to turn them off.
 
@@ -153,13 +153,14 @@ The two CodeGraph tools (`code_explore` / `code_impact`) are optional: install [
 | `memory_delete` | Delete (tombstoned, never resurrected) | `id` |
 | `memory_core` | Edit a core-memory section | `action` (append/replace/remove), `section`, `text?` |
 | `memory_brief` | Memory index and health (titles, not bodies) | — |
+| `memory_doctor` | Read-only health check: budget, index reconciliation, parseable logs, openable backup, graph and retirement, bridge; ends with what this machine cannot test | — |
 | `memory_mode` | Per-session memory switch (normal / readonly / off); resets on a new session | `action` (get/set), `mode?` (normal/readonly/off), `session?` |
 | `memory_dreaming` | Toggle idle consolidation, run it by hand, and recover over-retired nodes (including AI junk cleanup) | `action` (status/on/off/run/retired/restore), `apply?`, `force?`, `ids?` |
 | `persona` | Reply style | `action` (get/set/custom/disable), `preset?`, `text?` |
 | `coding_rules` | Coding conventions (editable in a dialog, duplicate-detecting) | `action` (show/list/add/propose/pending/approve/reject/forget/dupes), `text?`, `ids?` |
 | `memory_tier` | Memory tiers and safe collection (🔴🟡🟢, reversible) | `action` (status/collect/restore), `apply?`, `minAgeDays?`, `ids?` |
 | `lessons` | Mistake notes | `action` (list/forget/clear), `text?`, `limit?` (default 50, max 200) |
-| `soul_recall` | Recall from the session graph / raw history / other AI tools' transcripts (results carry `confidence`: exact/partial/related) | `query`, `k?`, `source?` (auto/quote/graph/external) |
+| `soul_recall` | Recall from the session graph / raw history / other AI tools' transcripts (each result carries `match` (quote/literal/spread/graph), `share`, and `evidence` (original/graph-summary/association)) | `query`, `k?`, `source?` (auto/quote/graph/external) |
 | `soul_expand` | Expand raw text by seq range (default 2000 bytes / 200 events, max 20000 / 1000); when the first event is clipped continue with `from=resume.seq` + `offset=resume.offset`, otherwise continue with `from=to+1`; `next` on a zero budget is the resume point | `from`, `to` (required, 0–1000000); `limit?`, `maxEvents?`, `offset?` (default 2000 / 200 / 0) |
 | `code_explore` | Query symbols/files/features in the repo code index: source snippets, entry points and call relations | `query`, `repo?`, `maxBlocks?` (default 3, max 6), `maxChars?` |
 | `code_impact` | Impact radius of a symbol or file: who depends on it, how it is called | `symbol?`, `file?` (one of them), `repo?`, `depth?` (default 3), `maxChars?` |

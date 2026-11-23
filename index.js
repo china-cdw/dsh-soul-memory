@@ -28,6 +28,7 @@ import { modeOf, setMode } from './src/session-modes.js'
 import { withNotes } from './src/tool-notes.js'
 import { rememberMatch, rememberReminder } from './src/memory/remember.js'
 import { stripPrivate } from './src/memory/private.js'
+import { sessionModeIntent } from './src/memory/mode-intent.js'
 import { readUiSettings } from './src/ui-settings.js'
 import { createRememberCues } from './src/memory/cue.js'
 import { registerSoulUiRoutes } from './src/ui-routes.js'
@@ -199,7 +200,7 @@ const tools = [
   },
   {
     name: 'soul_expand',
-    description: '按目录卡上的 seq 范围取回原文（默认 ≤2KB，上限 20KB）。卡片里的 [a-b] 可以直接当参数用。首次超预算被裁剪时，用返回的 resume.seq 加 offset=resume.offset 续读。不调用模型。',
+    description: '按 seq 范围取回当前会话的原文（默认 ≤2KB，上限 20KB）。范围只能用 soul_recall 返回的当前会话 seq，或单会话卡片的 [a-b]；跨会话卡片不给范围，因为 seq 只在各自会话里有意义。首次超预算被裁剪时，用返回的 resume.seq 加 offset=resume.offset 续读。不调用模型。',
     notes: '只读当前项目的会话原始日志；不调用模型、不花钱；超预算时按返回的 resume 续读。',
     properties: { from: int('起始 seq', { minimum: 0, maximum: MAX_SEQ }), to: int('结束 seq', { minimum: 0, maximum: MAX_SEQ }), limit: int('可选：最多返回字节数，默认 2000，上限 20000', { minimum: 0, maximum: 20000 }), maxEvents: int('可选：最多返回事件条数，默认 200，上限 1000', { minimum: 0, maximum: 1000 }), offset: int('可选：从该事件第 N 字节继续（上次返回的 resume.offset）', { minimum: 0 }) }, required: ['from', 'to'],
   },
@@ -337,6 +338,7 @@ export function apply(ctx, input = {}) {
       // 带上 id 与「已被取代」标记：memory_search 的图谱结果要能说明来源、也能提示结论过期。
       return recall(store, scope, query, { limit: 6 }).hits.map(hit => ({
         id: hit.id, kind: hit.kind, claim: hit.claim, superseded: Boolean(hit.supersededAt),
+        evidence: '图谱摘要',
       }))
     },
     graphStats: async agent => {
@@ -362,6 +364,9 @@ export function apply(ctx, input = {}) {
     store = new Store(config.database, { maxNodes: config.memory.maxNodes })
   } catch (e) {
     console.error('dsh-soul-memory: 图谱库打开失败，已降级为纯文件记忆（MEMORY.md / notes / 编码规范 / 踩坑记录仍可用）：' + (e?.message ?? e))
+    // 立即把环境变量还原：init 里改过它，若留着，同进程其他读它的代码会一直指向这个打不开的库。
+    if (previousSoulDatabase === undefined) delete process.env.DSH_SOUL_DATABASE
+    else process.env.DSH_SOUL_DATABASE = previousSoulDatabase
     return
   }
   // 图谱库也进每日快照：文件记忆有备份、图谱没有，等于一半记忆无副本。
@@ -555,17 +560,7 @@ export function apply(ctx, input = {}) {
   const safe = fn => (...args) => { try { return fn(...args) } catch { /* observation must never break a turn */ } }
   const listen = (event, handler) => disposers.push(ctx.on(event, handler))
 
-// 会话级记忆开关：用户当面说一句就能切，不依赖模型记得调用工具。
-const MODE_RULES = [
-  { mode: 'off', re: /(关闭|关掉|停用|关死)(一下)?(跨会话)?(的)?记忆/ },
-  { mode: 'off', re: /(这次|本会话|当前对话|这个对话)[^。！？]{0,8}(别记|不要记|不用记|不记)/ },
-  { mode: 'normal', re: /(恢复|打开|开启|重新开启|重新打开)(一下)?(跨会话)?(的)?记忆/ },
-]
-function sessionModeIntent(text) {
-  const raw = String(text || '')
-  for (const rule of MODE_RULES) if (rule.re.test(raw)) return rule.mode
-  return ''
-}
+// 会话级记忆开关：规则在 src/memory/mode-intent.js（否定/疑问句有否决，避免一句话关掉整段会话）。
 
     // <private>…</private>：这一轮原话照常给模型看（回答要用），但存进会话缓冲的副本要摘掉。
     const privateMessage = (message) => {
@@ -886,9 +881,12 @@ function sessionModeIntent(text) {
                   source: wanted === 'external'
                     ? (spans.length ? 'external' : 'external-empty')
                     : spans.length ? (graph.hits.length ? 'node+span' : 'span') : 'node',
-                  nodes: graph.hits,
-                  neighbours: graph.neighbours,
-                  spans,
+                  // 证据等级不是装饰：原文可以直接引用，图谱节点是提炼过的摘要，
+                  // 关联推断只是「可能相关」。三者混在一起返回，模型会把摘要当原话。
+                  evidenceGuide: '原文副本=会话日志的脱敏索引，能定位但可能不是逐字原话（要原话用 soul_expand）；图谱摘要=从对话提炼的节点，可能已被压缩改写；关联推断=图谱多跳关联，未经原文核对。',
+                  nodes: graph.hits.map(row => ({ ...row, evidence: '图谱摘要' })),
+                  neighbours: graph.neighbours.map(row => ({ ...row, evidence: '关联推断' })),
+                  spans: spans.map(row => ({ ...row, evidence: '原文副本' })),
                   coverage: store.spanCoverage(scope),
                   ...(indexed ? { indexed: { added: indexed.added, remaining: indexed.remaining } } : {}),
                   ...(external ? { external } : {}),

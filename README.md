@@ -28,7 +28,7 @@
 ## 0.4.0 的记忆行为
 
 - **衰减默认开**（`memory.dynamics`）：检索排序用 ACT-R 激活值，久不命中的旧节点自然靠后，但不删除；关掉就按固定权重排。
-- **置信度四档**（`soul_recall` 结果的 `confidence`）：`exact` 原话对上、`partial` 字面过半、`related` 靠图谱关联捞回、`weak` 仅字面擦边。
+- **命中标签两轴**（`soul_recall`）：`match` 说明来源（quote 原话 / literal 字面 / spread 词散布 / graph 图谱），`share` 说明命中量；每条另带 `evidence`（原文 / 图谱摘要 / 关联推断），引用原话只认「原文」。
 - **只翻原文**（`soul_recall source=quote`）：跳过知识图谱，直接跨会话搜原始对话。
 - **回合日志**（`memory.turnLog`）：每轮只要有记忆写入，就在 `$DSH_HOME/memory/turns/YYYYMMDD.md` 记一行；闲聊不记。
 
@@ -152,7 +152,7 @@ dsh plugin --profile desktop add "$PWD"
 
 ## 工具
 
-下表是默认注册的 20 个工具；开启演化（`config.enabled: true` 并配置 provider/model）后还会注册 `evolve_status`、`evolve_diagnose`、`evolve_request`、`evolve_tree` 等 `evolve_*` 工具，总数最多 24 个。
+下表是默认注册的 21 个工具；开启演化（`config.enabled: true` 并配置 provider/model）后还会注册 `evolve_status`、`evolve_diagnose`、`evolve_request`、`evolve_tree` 等 `evolve_*` 工具，总数最多 25 个。
 
 代码图谱两个工具（`code_explore` / `code_impact`）是可选的：需要额外装一次 [CodeGraph](https://github.com/colbymchenry/codegraph)（`npm i -g @colbymchenry/codegraph`），并在目标仓库跑一次 `codegraph init`。没装或没建索引时它们只回复「怎么装 / 怎么建」，不影响其余记忆功能；`config.codegraph.enabled: false` 可以整个关掉。
 
@@ -165,16 +165,17 @@ dsh plugin --profile desktop add "$PWD"
 | `memory_delete` | 删除（写墓碑，不复活） | `id` |
 | `memory_core` | 改核心记忆分节 | `action`（append/replace/remove）、`section`、`text?` |
 | `memory_brief` | 记忆索引与体检（列目录，不返回正文） | — |
+| `memory_doctor` | 记忆体检：预算、索引对账、日志可解析、备份可打开、图谱与回收、桥接；并列出「这台机器测不到什么」 | — |
 | `memory_mode` | 本会话的记忆开关（正常读写 / 只读 / 关闭），换会话自动恢复 | `action`（get/set）、`mode?`（normal/readonly/off）、`session?` |
 | `memory_dreaming` | 闲时整理开关、手动执行与误删恢复（含 AI 垃圾清理） | `action`（status/on/off/run/retired/restore）、`apply?`、`force?`、`ids?` |
 | `persona` | 回复风格 | `action`（get/set/custom/disable）、`preset?`、`text?` |
 | `coding_rules` | 编码规范（可弹窗编辑、新增时自动查重） | `action`（show/list/add/propose/pending/approve/reject/forget/dupes）、`text?`、`ids?` |
-| `memory_tier` | 记忆分级与回收（🔴🟡🟢，回收可逆） | `action`（status/collect/restore）、`apply?`、`minAgeDays?`、`ids?` |
+| `memory_tier` | 记忆分级与回收（🔴🟡🟢，30 天内可恢复） | `action`（status/collect/restore）、`apply?`、`minAgeDays?`、`ids?` |
 | `memory_backup` | 备份/搬家：导出 JSON、列备份、从备份恢复 | `action`（export/list/import）、`file?`、`apply?` |
 | `memory_journal` | 回合日志：按天看「这一轮做了什么」 | `action`（read/list）、`days?` |
 | `lessons` | 踩坑记录（可给每条标「靠什么强制」，并区分已强制/还只是线索） | `action`（list/route/forget/clear）、`text?`、`limit?`（默认 50，上限 200）、`fp?`、`level?`（structure/type/check/test/rule）、`enforce?`、`prove?` |
 | `review_brief` | 生成只读评审的 brief：写死只读边界、`文件:行号 + 严重度 + 改法` 格式、超时不算通过、最多 4 轮 | `goal?`、`repo?`、`base?`、`diff?`、`outOfScope?`、`checks?`、`focus?`、`round?` |
-| `soul_recall` | 从会话图谱/历史原文/其他 AI 工具的转录里回捞（结果带 `confidence`：exact/partial/related） | `query`、`k?`、`source?`（auto/quote/graph/external） |
+| `soul_recall` | 从会话图谱/历史原文/其他 AI 工具的转录里回捞（每条带 `evidence`：原文副本 / 图谱摘要 / 关联推断） | `query`、`k?`、`source?`（auto/quote/graph/external） |
 | `soul_expand` | 按 seq 区间展开原文（默认 2000 字节 / 200 条，上限 20000 / 1000）；首条事件被裁剪时用 `from=resume.seq` + `offset=resume.offset` 续读，其他截断用 `from=to+1`；零预算返回的 `next` 即续读起点 | `from`、`to`（必填，0–1000000）；`limit?`、`maxEvents?`、`offset?`（默认 2000 / 200 / 0） |
 | `code_explore` | 在仓库的代码索引里查符号/文件/功能：返回源码片段、入口与调用关系，替代「先 grep 再逐个翻文件」 | `query`、`repo?`、`maxBlocks?`（默认 3、上限 6）、`maxChars?` |
 | `code_impact` | 查符号或文件的影响半径：谁依赖它、调用关系，改动前判断波及面 | `symbol?`、`file?`（二选一）、`repo?`、`depth?`（默认 3）、`maxChars?` |
@@ -325,6 +326,33 @@ node scripts/sync-upstream.mjs --from <dsh-soul 目录>  # 同步上游新版本
 
 ---
 
+## 各落点谁是权威
+
+记忆散在十几个落点里：核心记忆、归档笔记、索引、会话图谱、踩坑日志、编码规范、风格、设置、快照、备份。
+**同一件事只在一处是权威**，其余是衍生（可重建）或沿革（只追加）。完整对照表在 [AUTHORITY.md](./AUTHORITY.md)，几条最容易踩的：
+
+- 系统提示里的核心记忆是衍生视图：超 3000 字会被截断，**文件才是权威**；截断说明里会写「尾部多少字没注入、全文在哪」。
+- `index.json` 是衍生目录：只认 `notes/*.md`，只改索引会被下次对账覆盖。
+- 图谱节点是摘要，不是原话：`soul_recall` 的每条结果都标 `evidence`（原文 / 图谱摘要 / 关联推断），引用原话必须用「原文」。
+- 备份是沿革，不参与读取；`memory_backup import` 默认 dry-run，写前自动快照。
+
+还有一条分界：**身份半**（记忆、规则、风格、设置）只属于这台机器和这个人，可以带走但不可移植；**能力半**（代码、工具、判据）可复制。升级插件只动能力半，永远不用新代码去重建别人的身份文件。
+
+---
+
+## 刻意不做的事
+
+这些不是没做完，是决定不做（用了最弱的够用机制）：
+
+- **不写任何会话事件**：宿主格式一变就会让会话打不开，收益远小于风险。
+- **不注册改变 agent 行为的钩子**（restrict / guard / waterfall 那类）：记忆只提供事实与指针，采不采用由当前会话判断。
+- **不自动安装、不自动改宿主配置**：装插件是人的动作；升级只动自己的文件。
+- **不复制 billion-context 的摘要**：它是外部权威，只读；复制一份就成了两个真相。
+- **不在写入时「顺手提炼」**：`memory_write` 存用户/模型明确给出的原文；提炼是 dreaming 的事，而且默认 dry-run。
+- **不做语义向量检索**：当前是关键词 + 中文二元组 + 图谱扩散，够用且可解释；换向量是另一个工程，不是补丁。
+
+---
+
 ## 限制
 
 - 检索是关键词 + 中文二元组匹配，不是语义检索；跨会话语义回忆目前靠图谱和 billion-context 摘要；
@@ -346,7 +374,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 88 项、编码层 14 项、踩坑层 16 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 20 项、备份/回合日志 4 项、记忆主题 4 项、评审 brief 5 项、代码图谱 17 项，共 280 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 91 项、编码层 14 项、踩坑层 16 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 20 项、备份/回合日志 5 项、记忆体检 5 项、外部转录 6 项、记忆主题 4 项、评审 brief 5 项、代码图谱 17 项，共 295 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

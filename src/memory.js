@@ -4,6 +4,7 @@ import { bounded, hash, terms as termSet } from './util.js'
 import { extract, identifierTerms, normalize, project } from './skeleton.js'
 import { memoryView, propagate, render } from './graph-memory.js'
 import { promoteUncovered } from './consolidation.js'
+import { stripPrivateDeep } from './memory/private.js'
 
 /**
  * Session-side memory: buffer raw surface events, then compile them into nodes at turn end.
@@ -22,7 +23,9 @@ export class MemoryBuffer {
   push(sessionId, event) {
     if (!sessionId || !event) return
     const entry = this.sessions.get(sessionId) ?? { seq: 0, events: [] }
-    entry.events.push({ ...event, seq: entry.seq++ })
+    // <private> 的承诺是「连缓冲都不留」：在唯一的入口摘掉，后面的 capture/promote 就都不可能再拿到它。
+    const clean = stripPrivateDeep(event)
+    entry.events.push({ ...clean, seq: entry.seq++ })
     if (entry.events.length > this.maxEvents) entry.events.splice(0, entry.events.length - this.maxEvents)
     this.sessions.set(sessionId, entry)
   }
@@ -237,8 +240,12 @@ export function projectionText(store, scope, budget = 600, { sessionId = null, d
   // Say how far back the index actually reaches. A silent boundary is worse than a short one:
   // "查不到" would be indistinguishable from "不存在".
   const coverage = store.spanCoverage(scope)
+  // 跨会话时绝不能给出可直接粘贴的 seq 范围：seq 只在单个会话里有意义，
+  // 拿别的会话的范围去 soul_expand 会取回一段看起来像原话、其实无关的文本。
   const line = coverage.spans
-    ? `[索引] ${coverage.spans} 条可检索（seq ${coverage.from}–${coverage.to}${coverage.sessions > 1 ? `，跨 ${coverage.sessions} 个会话` : ""}；用 soul_recall）`
+    ? coverage.sessions > 1
+      ? `[索引] ${coverage.spans} 条可检索（跨 ${coverage.sessions} 个会话；用 soul_recall，soul_expand 只展当前会话）`
+      : `[索引] ${coverage.spans} 条可检索（seq ${coverage.from}–${coverage.to}；用 soul_recall）`
     : ''
   // Only from a *previous* session: inside the same session the card already carries the work.
   const handoff = handoffFor(store, scope)

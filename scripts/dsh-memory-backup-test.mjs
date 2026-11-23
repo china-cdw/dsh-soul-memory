@@ -38,6 +38,16 @@ try {
     assert(rejected, '陌生 schema 必须拒绝')
   })
 
+  await s.test('路径穿越与坏 JSON 整包拒绝，不在记忆目录外落盘', async () => {
+    let traversal = false
+    try { await importBundle({ files: { 'notes/../evil.md': 'x' } }, { apply: true }) } catch { traversal = true }
+    assert(traversal, '含 ../ 的文件名必须整包拒绝')
+    let badJson = false
+    await writeFile(join(backupsDir(), 'truncated.json'), '{')
+    try { await readBundle('truncated.json') } catch { badJson = true }
+    assert(badJson, '截断的 JSON 必须报错，不能当成空备份')
+  })
+
   await s.test('预演不写盘，apply 才写并留快照', async () => {
     await writeFile(memoryPath('MEMORY.md'), '# 改过的\n')
     const dry = await importBundle(snapshot, { apply: false })

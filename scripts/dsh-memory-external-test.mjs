@@ -62,7 +62,22 @@ try {
     const found = searchIndex(store, scope, 'COM5', { limit: 3, externalOnly: true })
     assert(found.spans.length === 1, `应命中 1 条，实际 ${found.spans.length}`)
   })
+  await s.test('超出上限的节点只退休，不硬删（还能 restore）', async () => {
+    // 硬删 + secure_delete 会让「超出上限」变成不可恢复的记忆丢失；这里锁住可逆语义。
+    const small = new Store(':memory:', { maxNodes: 2 })
+    const nodes = Array.from({ length: 5 }, (_, i) => ({
+      id: 'prune-' + i, kind: 'decision', claim: '裁剪测试节点 ' + i, seq: i,
+    }))
+    small.recordNodes('prune-scope', { nodes })
+    const count = (state) => small.db.prepare("SELECT COUNT(*) n FROM node WHERE scope='prune-scope' AND state=?").get(state).n
+    assert(count('active') === 2, `活跃节点应只剩 2 个，实际 ${count('active')}`)
+    assert(count('retired') === 3, `被挤出的应退休而不是删除，实际 retired=${count('retired')}`)
+    const restore = small.db.prepare("UPDATE node SET state='active' WHERE scope='prune-scope' AND state='retired'").run()
+    assert(restore.changes === 3, '退休节点必须能恢复')
+    small.db.close()
+  })
 } finally {
-  await s.done?.()
+  // suite 的断言异常只记在 failures 里；不调 finish() 时进程仍然 exit 0，整套测试等于没看守。
+  s.finish()
   await rm(dir, { recursive: true, force: true })
 }

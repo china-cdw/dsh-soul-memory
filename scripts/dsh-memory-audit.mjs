@@ -10,7 +10,10 @@ import { assert, callTool, makeCtx, makeHome, suite, waitFor } from './_testkit.
 import { registerCoreMemory, setDreamGenerator, setDreamNodeProvider, setDreamRestoreProvider, setDreamRetiredListProvider, setDreamRetireProvider, setSessionSeqProvider } from '../src/core-memory.js';
 import { latestSnapshot, snapshotGraph, snapshotMemory } from '../src/memory/util.js';
 import { readPersona } from '../src/persona.js';
-import { normalize, extract } from '../src/skeleton.js';
+import { normalize, extract } from '../src/skeleton.js'
+import { MemoryBuffer } from '../src/memory.js';
+import { sessionModeIntent } from '../src/memory/mode-intent.js';
+import { stripPrivate } from '../src/memory/private.js';
 import { expandRange, MAX_SEQ, validateExpandArgs } from '../src/session-search.js';
 import { chunkItems, parseCleanupVerdicts } from '../src/dreaming.js';
 
@@ -181,7 +184,9 @@ await t.test('核心记忆超预算时告警，注入时截断', async () => {
   });
   assert.match(out, /已超 3000 字/);
   const section = await ctx1.sections[0].text();
-  assert.match(section, /核心记忆过长已截断/);
+  // 截断必须自报损失量与全文位置：只说「已截断」，下一轮就会在缺一段的前提下继续推理。
+  assert.match(section, /核心记忆超出 3000 字预算，尾部 \d+ 字本轮没有注入/);
+  assert.match(section, /MEMORY\.md/);
 });
 
 await t.test('分节正文里的 ## 标题不切结构，且写入时降级为 ###', async () => {
@@ -783,6 +788,39 @@ await t.test('<private> 段在落盘前被整段摘掉', async () => {
   assert.match(body, /公开部分 B/);
   const file = await readFile(join(notesDir, id + '.md'), 'utf8');
   assert.doesNotMatch(file, /<private>/);
+});
+
+await t.test('<private> 在会话缓冲入口就被摘掉，图谱写路径拿不到原文', async () => {
+  const buffer = new MemoryBuffer()
+  buffer.push('s-private', {
+    type: 'user/message',
+    data: { message: { content: '可见部分。<private>缓冲里的绝密串 zz-buffer</private>结尾。' } },
+  })
+  const drained = JSON.stringify(buffer.take('s-private'))
+  assert.doesNotMatch(drained, /zz-buffer|缓冲里的绝密串/, '缓冲里不应留下私密段：' + drained)
+  assert.match(drained, /可见部分/, '公开部分必须还在')
+})
+
+await t.test('未闭合/嵌套的 <private> 不会把私密内容漏出去', async () => {
+  const unclosed = stripPrivate('公开开头。<private>没写闭合，后面的都算私密');
+  assert.equal(unclosed.unclosed, true);
+  assert.equal(unclosed.text, '公开开头。');
+  const nested = stripPrivate('<private>外层 A<private>内层 B</private>外层 C</private>公开结尾');
+  assert.equal(nested.text, '公开结尾');
+  assert.doesNotMatch(nested.text, /外层|内层/);
+  const stray = stripPrivate('公开 A</private>公开 B');
+  assert.equal(stray.text, '公开 A公开 B');
+});
+
+await t.test('说「怎么关闭记忆？」「不要关闭记忆」不会关掉整个会话', async () => {
+  assert.equal(sessionModeIntent('关闭跨会话记忆'), 'off');
+  assert.equal(sessionModeIntent('这次别记了'), 'off');
+  assert.equal(sessionModeIntent('恢复记忆'), 'normal');
+  assert.equal(sessionModeIntent('不要关闭记忆'), '');
+  assert.equal(sessionModeIntent('怎么关闭跨会话记忆？'), '');
+  assert.equal(sessionModeIntent('这次别记错我的名字'), '');
+  assert.equal(sessionModeIntent('如何恢复记忆？'), '');
+  assert.equal(sessionModeIntent('帮我关掉记忆吧'), 'off');
 });
 
 await t.test('正文只有 <private> 段时拒绝保存', async () => {
