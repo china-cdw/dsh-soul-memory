@@ -10,7 +10,11 @@
 
 只装这一个插件，就能同时得到：常驻核心记忆、可检索的归档笔记、会话过程图谱、自动踩坑记录、项目编码规范，以及从 billion-context 会话摘要里找回旧过程的能力。每一层都有独立预算和独立开关，互不挤占。
 
-**它盯的是三件最容易悄悄坏掉的事**：换个会话就忘了你定过的规矩（核心记忆每轮注入）；上下文压缩后只剩「摘要的摘要」（检索结果带原文指针和证据等级）；记忆越存越多、没人知道哪份才是真的（每个落点只有一个权威，见 [AUTHORITY.md](AUTHORITY.md)）。
+**它盯的是三件最容易悄悄坏掉的事**：
+
+- 换个会话就忘了你定过的规矩 —— 核心记忆每轮注入；
+- 上下文压缩后只剩「摘要的摘要」 —— 检索结果带原文指针和证据等级；
+- 记忆越存越多，没人知道哪份才是真的 —— 同一件事只在一个地方算数（见 [AUTHORITY.md](AUTHORITY.md)）。
 
 ### 30 秒装上
 
@@ -21,7 +25,7 @@ dsh plugin --profile desktop add "$PWD"
 
 然后**完全退出 DSH 再重新打开**（宿主半只在进程启动时加载，刷新页面不算）。会话里能调用 `memory_brief`、`memory_doctor` 就是装好了。没有数据库要装、没有 API Key、不联网。
 
-更细的步骤和验证方式见 [快速开始](#快速开始)；它是怎么设计的、为什么这么分，见 [五层记忆](#五层记忆) 与 [各落点谁是权威](#各落点谁是权威)。
+更细的步骤和验证方式见 [快速开始](#快速开始)；它是怎么设计的、为什么这么分，见 [五层记忆](#五层记忆) 与 [每个位置谁是权威](#每个位置谁是权威)。
 
 - 运行要求：Node.js ≥ 24，DSH ≥ 0.2.1-rc.2
 - 许可证：AGPL-3.0-or-later（闭源商用需商业授权，见文末「致谢与许可」）
@@ -126,7 +130,11 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 
 ## 闲时整理（dreaming，可选）
 
-默认关闭。开启后，插件会把最近会话图谱里的决策、约束和重复进度聚成 digest 笔记写进 `notes/`（只新增，不删改既有记忆）；开了 `dreaming.ai` 时还会先让模型判一遍垃圾（寒暄、断网重发的重复对话、明显错乱的内容），判定为 noise/duplicate 的节点只 retire——从投影与联想扩散里消失、原始会话日志不删；默认只动 pin=0、hits=0、未被取代、创建 ≥7 天的节点（比 periphery 启发式更窄：不看重要性分数），可用 `action=retired` 查看、`action=restore` 恢复；retired 超过 30 天后才可能被清理。`dreaming.autoApply` 默认 false：空闲不会自动整理，必须手动 `run`；设为 true 后才在空闲时自动 run。
+默认关闭。开启后，插件会把最近会话图谱里的决策、约束和重复进度，聚成一份 digest 笔记写进 `notes/`：只新增，不改也不删已有记忆。
+
+开了 `dreaming.ai` 时，模型还会先判一遍垃圾（寒暄、断网重发的重复对话、明显错乱的内容）。判为 noise / duplicate 的节点只做 retire：从投影和联想扩散里消失，原始会话日志不删。默认只动同时满足「pin=0、hits=0、没被取代、创建 ≥7 天」的节点；`action=retired` 能看，`action=restore` 能恢复；retired 满 30 天后才可能被清理。
+
+`dreaming.autoApply` 默认 false：空闲时不会自己整理，必须手动 `run`；设成 true 才会在空闲时自动跑。
 
 - 开关：`memory_dreaming` 的 `action=status/on/off`（运行态写入 `$DSH_HOME/memory/DREAMING.json`，立即生效），或在设置里给 `dreaming.enabled: true`；开启后是否允许空闲自动改库由 `dreaming.autoApply`（默认 false）决定；
 - 手动跑：`action=run` 默认 dry-run 只列候选，`apply: true` 才写盘，`force: true` 忽略冷却；
@@ -138,7 +146,19 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 - 路由兜底：`dreaming.provider/model` → 插件顶层 provider/model → 当前 agent → 宿主 `cordis.patch.yml` 的 `agent-default-model`，都没有才报错并给出配置指引；
 - AI 路由：`dreaming.provider` / `dreaming.model`，留空用全局默认模型；扫描上限 `dreaming.maxScanNodes`（默认 60，范围 10–300），单次最多 retire `dreaming.maxRetirePerRun`（默认 20，范围 1–100）；`action=retired` 列出库里当前仍为 retired 的节点（restore 后即消失），`action=restore` 配 `ids` 恢复；整理正在运行时 restore 返回 `[err:E_BUSY]`。
 
-- `cleanup` 字段：`available`（模型是否可用）、`reason`（`disabled` / `no_candidates` / `no_generator` / `no_llm` / `llm_failed` / null）、`scanned`、`planned`（模型判为 noise/duplicate、去重并按单次上限截断后的条数；真正退役还受护栏影响，看 apply 的 `retired`/`rejected`）、`retired`（真正退役的条数，受护栏与单次上限限制；dry-run 恒为 0）、`keep`、`invalid`、`rejected`（apply 时 planned 与 retired 的差额，被护栏挡下；dry-run 恒为 0）、`details`（每条裁决的 id/verdict/reason）、`error`（部分批失败时的首个错误）。`action=retired` 的 `retiredAt` 取节点的 `seen`（最近一次被抽取或退役的时间）。
+`action=run` 的返回里有 `cleanup` 一节，字段含义：
+
+- `available`：模型能不能用；
+- `reason`：为什么没清理，取值 `disabled` / `no_candidates` / `no_generator` / `no_llm` / `llm_failed`，正常时为 null；
+- `scanned`：这一轮扫了多少节点；
+- `planned`：模型判为 noise/duplicate、去重并按单次上限截断后的条数；真正退役多少还受护栏影响，看 `retired` 与 `rejected`；
+- `retired`：真正退役的条数（受护栏和单次上限限制；dry-run 恒为 0）；
+- `keep` / `invalid`：判为保留的条数、以及模型返回了不存在 id 的条数；
+- `rejected`：apply 时 `planned` 与 `retired` 的差额，即被护栏挡下的条数（dry-run 恒为 0）；
+- `details`：每条裁决的 id / verdict / reason；
+- `error`：某几批失败时的首个错误。
+
+`action=retired` 里的 `retiredAt` 取节点的 `seen`，也就是最近一次被抽取或退役的时间。
 
 ---
 
@@ -199,7 +219,9 @@ dsh plugin --profile desktop add "$PWD"
 
 写入规则：`memory_write` 会做近重复检查（相似度 ≥0.55 拒写，加 `force: true` 可强写）。
 
-踩坑是自动记录的：同一会话里某工具报错、之后同工具成功，就记一条「错误 + 生效做法」；同类错误合并计数。判定优先看结构化信号：`isError`、退出码（正则取值，退出码 0 视为成功，`grep` 这类 1 也放过）；只有拿不到结构化信号时，才用正文里的失败字样兜底。读文件类工具和记忆/编码工具自身不记。
+踩坑是自动记录的：同一会话里某工具报错、之后同工具成功，就记一条「错误 + 生效做法」；同类错误合并计数。
+
+判定优先看结构化信号：`isError`、退出码（正则取值；退出码 0 视为成功，`grep` 这类返回 1 也放过）。只有拿不到结构化信号时，才用正文里的失败字样兜底。读文件类工具、记忆与编码工具自身不记。
 
 ### 设置页接口
 
@@ -343,10 +365,13 @@ node scripts/sync-upstream.mjs --from <dsh-soul 目录>  # 同步上游新版本
 
 ---
 
-## 各落点谁是权威
+## 每个位置谁是权威
 
-记忆散在十几个落点里：核心记忆、归档笔记、索引、会话图谱、踩坑日志、编码规范、风格、设置、快照、备份。
-**同一件事只在一处是权威**，其余是衍生（可重建）或沿革（只追加）。完整对照表在 [AUTHORITY.md](./AUTHORITY.md)，几条最容易踩的：
+记忆散在十几个地方：核心记忆、归档笔记、索引、会话图谱、踩坑日志、编码规范、风格、设置、快照、备份。
+
+**同一件事只在一个地方算数**。其余两种：能重建的（丢了可以从原文再算一遍）和只追加的（历史记录，只往后写、不覆盖）。
+
+完整对照表在 [AUTHORITY.md](./AUTHORITY.md)，几条最容易踩的：
 
 - 系统提示里的核心记忆是衍生视图：超 3000 字会被截断，**文件才是权威**；截断说明里会写「尾部多少字没注入、全文在哪」。
 - `index.json` 是衍生目录：只认 `notes/*.md`，只改索引会被下次对账覆盖。
