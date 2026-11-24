@@ -2,9 +2,26 @@
 
 简体中文 | [English](README.en.md)
 
-> DSH 的分层记忆插件：把「该一直记得的」「以前发生过的」「踩过的坑」「你的编码规矩」分开放、按需注入，而不是一股脑塞进上下文。
+[![release](https://img.shields.io/github/v/release/china-cdw/dsh-soul-memory?style=flat-square&color=EFB23A)](https://github.com/china-cdw/dsh-soul-memory/releases) [![license](https://img.shields.io/badge/license-AGPL--3.0--or--later-C0392B?style=flat-square)](LICENSE) [![node](https://img.shields.io/badge/node-%E2%89%A5%2024-33271D?style=flat-square)](package.json)
+
+> **给 DeepSeek Harness 装一套会分层、会遗忘、会回捞的长期记忆。**
+> 新会话不再从零开始；上下文被压缩之后，还知道该回哪儿找原文。
+> 想先看它长什么样、解决什么问题：[ambervouch.com/soul-memory](https://ambervouch.com/soul-memory)（介绍页，不装也能读）。
 
 只装这一个插件，就能同时得到：常驻核心记忆、可检索的归档笔记、会话过程图谱、自动踩坑记录、项目编码规范，以及从 billion-context 会话摘要里找回旧过程的能力。每一层都有独立预算和独立开关，互不挤占。
+
+**它盯的是三件最容易悄悄坏掉的事**：换个会话就忘了你定过的规矩（核心记忆每轮注入）；上下文压缩后只剩「摘要的摘要」（检索结果带原文指针和证据等级）；记忆越存越多、没人知道哪份才是真的（每个落点只有一个权威，见 [AUTHORITY.md](AUTHORITY.md)）。
+
+### 30 秒装上
+
+```bash
+git clone https://github.com/china-cdw/dsh-soul-memory
+dsh plugin --profile desktop add "$PWD"
+```
+
+然后**完全退出 DSH 再重新打开**（宿主半只在进程启动时加载，刷新页面不算）。会话里能调用 `memory_brief`、`memory_doctor` 就是装好了。没有数据库要装、没有 API Key、不联网。
+
+更细的步骤和验证方式见 [快速开始](#快速开始)；它是怎么设计的、为什么这么分，见 [五层记忆](#五层记忆) 与 [各落点谁是权威](#各落点谁是权威)。
 
 - 运行要求：Node.js ≥ 24，DSH ≥ 0.2.1-rc.2
 - 许可证：AGPL-3.0-or-later（闭源商用需商业授权，见文末「致谢与许可」）
