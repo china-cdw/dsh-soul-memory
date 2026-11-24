@@ -8,7 +8,7 @@
 > 新会话不再从零开始；上下文被压缩之后，还知道该回哪儿找原文。
 > 想先看它长什么样、解决什么问题：[ambervouch.com/soul-memory](https://ambervouch.com/soul-memory)（介绍页，不装也能读）。
 
-只装这一个插件，就能同时得到：常驻核心记忆、可检索的归档笔记、会话过程图谱、自动踩坑记录、项目编码规范，以及从 billion-context 会话摘要里找回旧过程的能力。每一层都有独立预算和独立开关，互不挤占。
+只装这一个插件，就能同时得到：常驻核心记忆、可检索的归档笔记、会话过程图谱、自动踩坑记录、项目编码规范，以及从 billion-context 会话摘要里找回旧过程的能力。几层各有自己的预算和开关，互不挤占（归档笔记只注入标题，不占字数预算）。
 
 **它盯的是三件最容易悄悄坏掉的事**：
 
@@ -23,7 +23,7 @@ git clone https://github.com/china-cdw/dsh-soul-memory
 dsh plugin --profile desktop add "$PWD"
 ```
 
-然后**完全退出 DSH 再重新打开**（宿主半只在进程启动时加载，刷新页面不算）。会话里能调用 `memory_brief`、`memory_doctor` 就是装好了。没有数据库要装、没有 API Key、不联网。
+然后**完全退出 DSH 再重新打开**（装在宿主进程里的那部分只在启动时加载，刷新页面不算重启）。会话里能调用 `memory_brief`、`memory_doctor` 就是装好了。没有数据库要装、没有 API Key、不联网。
 
 更细的步骤和验证方式见 [快速开始](#快速开始)；它是怎么设计的、为什么这么分，见 [五层记忆](#五层记忆) 与 [每个位置谁是权威](#每个位置谁是权威)。
 
@@ -48,8 +48,8 @@ dsh plugin --profile desktop add "$PWD"
 
 ## 0.4.0 的记忆行为
 
-- **衰减默认开**（`memory.dynamics`）：检索排序用 ACT-R 激活值，久不命中的旧节点自然靠后，但不删除；关掉就按固定权重排。
-- **命中标签两轴**（`soul_recall`）：`match` 说明来源（quote 原话 / literal 字面 / spread 词散布 / graph 图谱），`share` 说明命中量；每条另带 `evidence`（原文 / 图谱摘要 / 关联推断），引用原话只认「原文」。
+- **「衰减」默认开启**（`memory.dynamics`）：检索排序会算一个 ACT-R 激活值——越久没被命中的旧节点分数越低、自然排到后面，但不会被删除；关掉就按固定权重排序。
+- **每条命中带两个标签**（`soul_recall`）：`match` 说明来源（quote 原话 / literal 字面命中 / spread 关键词散落命中 / graph 从图谱找到），`share` 说明命中了多少；每条另带 `evidence`（原文 / 图谱摘要 / 关联推断），引用原话只认「原文」。
 - **只翻原文**（`soul_recall source=quote`）：跳过知识图谱，直接跨会话搜原始对话。
 - **回合日志**（`memory.turnLog`）：每轮只要有记忆写入，就在 `$DSH_HOME/memory/turns/YYYYMMDD.md` 记一行；闲聊不记。
 
@@ -59,7 +59,7 @@ dsh plugin --profile desktop add "$PWD"
 
 - **一次写入按内容分流**：长期事实进核心记忆，经历进归档笔记，过程进图谱，错误进踩坑记录，规矩进编码规范；
 - **一次检索查三处**：`memory_search` 同时查归档、图谱和 billion-context 摘要，结果带来源和 id，需要时再下钻；
-- **一套开关注入**：五层共用同一份数据目录、同一套脱敏与守卫规则。
+- **一套开关和一套注入规则**：五层共用同一份数据目录、同一套脱敏与守卫规则。
 
 ## 五层记忆
 
@@ -67,7 +67,7 @@ dsh plugin --profile desktop add "$PWD"
 | --- | --- | --- | --- | --- | --- |
 | 核心记忆 | 长期稳定的事实、偏好、环境 | `$DSH_HOME/memory/MEMORY.md` | 每轮，`order 60` | 3000 字 | `memory_core` |
 | 归档笔记 | 需要时才查的经历、结论 | `$DSH_HOME/memory/notes/*.md` | 只注入最近 12 条标题 | — | `memory_write` / `memory_read` / `memory_list` / `memory_search` / `memory_delete` |
-| 会话图谱 | 约束、决策、产物、历史原文 | `$DSH_HOME/dsh-soul/<profile>/evolve.sqlite` | 投影 600 字节，`order 940` | 600 字节 | `soul_recall` / `soul_expand` |
+| 会话图谱 | 约束、决策、产物、历史原文 | `$DSH_HOME/dsh-soul/<profile>/evolve.sqlite` | 每轮注入一段图谱摘要（600 字节；`order 940` 指它排在系统提示第几位） | 600 字节 | `soul_recall` / `soul_expand` |
 | 踩坑记录 | 工具报错 → 后来怎么改对 | `$DSH_HOME/memory/LESSONS.jsonl` | 每轮，`order 62` | 600 字 | `lessons` |
 | 编码规范 | 全局规矩 + 项目规则文件 | `$DSH_HOME/memory/CODING.md` + 项目目录 | 每轮，`order 61` | 3500 字（设置页可调） | `coding_rules` |
 
@@ -87,11 +87,11 @@ CLAUDE.md
 .cursor/rules/*.mdc, *.md
 ```
 
-全局 `CODING.md` 优先，项目文件按上面的顺序追加；超出预算（默认 3500 字，可在「灵魂记忆 → 规则」里改 400–8000）时截断并注明。
+全局 `CODING.md` 优先，项目文件按上面的顺序追加在后面。内容超出预算时会截断并注明；预算默认 3500 字，可在「灵魂记忆 → 规则」里改成 400–8000。
 
 ---
 
-## 这一版新增的四个机制
+## 四个关键机制
 
 ### 1. 取代标记
 
@@ -119,7 +119,7 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 
 ### 4. billion-context 桥接（只读）
 
-如果装了 [billion-context](https://github.com/ranxianglei/billion-context)，`memory_search` 会在归档笔记、会话图谱之后，追加一段【历史会话摘要】——从它落盘的会话压缩块里做关键词检索。
+如果装了 [billion-context](https://github.com/ranxianglei/billion-context)，`memory_search` 会先查归档笔记和会话图谱，再追加一段【历史会话摘要】——在它写到本地的会话压缩块里做关键词检索。
 
 - 只读它写好的 `sessions/*.json`，不改、不压缩它；
 - 坏文件、超过 32MB、目录不存在都静默跳过，不影响主检索；
@@ -132,7 +132,7 @@ memory_write(title: "部署方式", content: "现在用 Docker Compose 部署", 
 
 默认关闭。开启后，插件会把最近会话图谱里的决策、约束和重复进度，聚成一份 digest 笔记写进 `notes/`：只新增，不改也不删已有记忆。
 
-开了 `dreaming.ai` 时，模型还会先判一遍垃圾（寒暄、断网重发的重复对话、明显错乱的内容）。判为 noise / duplicate 的节点只做 retire：从投影和联想扩散里消失，原始会话日志不删。默认只动同时满足「pin=0、hits=0、没被取代、创建 ≥7 天」的节点；`action=retired` 能看，`action=restore` 能恢复；retired 满 30 天后才可能被清理。
+开了 `dreaming.ai` 时，模型还会先判一遍垃圾（寒暄、断网重发的重复对话、明显错乱的内容）。判为 noise 或 duplicate 的节点只会「退休」（retire）：不再出现在每轮注入的图谱摘要和关联检索里，原始会话日志不删。默认只动 `pin=0`、`hits=0`（没被钉住、也从没被命中过）、没被取代、创建满 7 天的节点；`action=retired` 能看，`action=restore` 能恢复；retired 满 30 天后才可能被清理。
 
 `dreaming.autoApply` 默认 false：空闲时不会自己整理，必须手动 `run`；设成 true 才会在空闲时自动跑。
 
@@ -221,7 +221,7 @@ dsh plugin --profile desktop add "$PWD"
 
 踩坑是自动记录的：同一会话里某工具报错、之后同工具成功，就记一条「错误 + 生效做法」；同类错误合并计数。
 
-判定优先看结构化信号：`isError`、退出码（正则取值；退出码 0 视为成功，`grep` 这类返回 1 也放过）。只有拿不到结构化信号时，才用正文里的失败字样兜底。读文件类工具、记忆与编码工具自身不记。
+判定时先看机器能读的信号：`isError` 字段、退出码（从结果里取出数字，0 算成功，`grep` 这类返回 1 也算放过）。只有拿不到这类信号时，才退一步看正文里有没有失败字样。读文件类工具、记忆与编码工具自身不记。
 
 ### 设置页接口
 
@@ -234,7 +234,7 @@ dsh plugin --profile desktop add "$PWD"
 - 响应带 `Cache-Control: no-store`，风格属于个人数据，不缓存。
 ### 灵魂记忆设置页
 
-设置 → 灵魂记忆由 `client.js` 注册到宿主设置页 slot，六个页签：待批区、记忆内容、记忆流、规则、称呼与风格、记忆分级（「记忆内容」和「记忆流」共用 `/memories` 与 `/notes` 两条路由：一个按主题筛，一个按天倒序看）。数据来自同源 `fetch` 的六条路由（同样只在宿主提供 `webServer` 时注册，基础安全模型与 `/persona` 一致：回环 Host、Origin 同源、`x-dsh-soul-memory: 1` 头）：
+设置页里的「灵魂记忆」由 `client.js` 注册到宿主设置页的插槽（slot），一共六个页签：待批区、记忆内容、记忆流、规则、称呼与风格、记忆分级（「记忆内容」和「记忆流」共用 `/memories` 与 `/notes` 两条路由：一个按主题筛，一个按天倒序看）。数据来自同源 `fetch` 的六条路由（同样只在宿主提供 `webServer` 时注册，基础安全模型与 `/persona` 一致：回环 Host、Origin 同源、`x-dsh-soul-memory: 1` 头）：
 
 | 路由 | 方法 | 作用 |
 | --- | --- | --- |
@@ -247,7 +247,7 @@ dsh plugin --profile desktop add "$PWD"
 
 写操作额外要求 `x-dsh-soul-memory-token` 请求头：令牌由 `/state` 随机生成下发、只存在进程内存里（重启即换），缺失或错误返回 403。
 
-工具失败时，返回文本末尾带机器可读后缀 `[err:CODE]`（例如 `[err:E_NOT_FOUND]`、`[err:E_GUARD]`）；注意宿主层仍把这类结果当作成功（`isError` 为 false），调用方需要识别后缀来完成分支。
+工具失败时，返回文本末尾带机器可读后缀 `[err:CODE]`（例如 `[err:E_NOT_FOUND]`、`[err:E_GUARD]`）；注意宿主层仍把这类结果当作成功（`isError` 为 false），调用方要自己认出这个后缀，才能走失败分支。
 
 ---
 
@@ -321,7 +321,7 @@ $DSH_HOME/memory/
 npm run preflight
 ```
 
-扫描私钥块、凭据形状、绝对家目录路径、高熵串；命中就失败退出，只打印 `相对路径:行号  类别`，不回显命中内容。读不了的文件（`.env*`、超大文件、二进制、未识别扩展名）不会被静默跳过：输出 `SKIPPED` 行并同样计为失败，确认无害后加进忽略清单。
+扫描私钥块、凭据特征、绝对家目录路径、明显随机的长字符串；命中就失败退出，只打印 `相对路径:行号  类别`，不回显命中内容。读不了的文件（`.env*`、超大文件、二进制、未识别扩展名）也不会被悄悄放过：会打印一行 `SKIPPED`，并同样算作失败；确认无害后加进忽略清单。
 
 确认是误报时，在仓库根目录建 `.preflight-ignore.json`：
 
@@ -349,7 +349,7 @@ npm run preflight
 ## 升级
 
 1. 在插件目录更新源码（`git pull` 或安装新版本）；
-2. 改完源码后同步安装副本：先 `plugin_manager set_bundle dsh-soul-memory=false`，再跑 `node <workspace>/sync-install.mjs`，最后 `set_bundle ... =true` 热重载；
+2. 改完源码后同步安装副本：先把 `dsh-soul-memory` 这个 bundle 关掉（`plugin_manager set_bundle`，`enabled=false`），再跑 `node <workspace>/sync-install.mjs`，最后重新打开（`enabled=true`）完成热重载；
 3. 数据不会动：`$DSH_HOME/memory` 与图谱库保持原样，升级前一天的快照在 `.snapshots/` 里可回退。
 
 ## 上游与同步
@@ -374,9 +374,9 @@ node scripts/sync-upstream.mjs --from <dsh-soul 目录>  # 同步上游新版本
 完整对照表在 [AUTHORITY.md](./AUTHORITY.md)，几条最容易踩的：
 
 - 系统提示里的核心记忆是衍生视图：超 3000 字会被截断，**文件才是权威**；截断说明里会写「尾部多少字没注入、全文在哪」。
-- `index.json` 是衍生目录：只认 `notes/*.md`，只改索引会被下次对账覆盖。
+- `index.json` 只是目录缓存：唯一认的是 `notes/*.md`；只改索引，下次自动核对时会被改回去。
 - 图谱节点是摘要，不是原话：`soul_recall` 的每条结果都标 `evidence`（原文 / 图谱摘要 / 关联推断），引用原话必须用「原文」。
-- 备份是沿革，不参与读取；`memory_backup import` 默认 dry-run，写前自动快照。
+- 备份只是历史存档，不参与读取；`memory_backup import` 默认只预演（dry-run），写之前自动快照。
 
 还有一条分界：**身份半**（记忆、规则、风格、设置）只属于这台机器和这个人，可以带走但不可移植；**能力半**（代码、工具、判据）可复制。升级插件只动能力半，永远不用新代码去重建别人的身份文件。
 
@@ -424,7 +424,7 @@ npm test          # 全部自检脚本；任何一项失败即非零退出
 
 本项目采用 **AGPL-3.0-or-later + 商业授权** 双轨：
 
-- **免费用**：遵守 [GNU AGPL-3.0](LICENSE) 即可使用、修改、分发。修改后的版本必须以同样的 AGPL-3.0 开源 —— 包括不发布二进制、只以网络服务形式提供给别人使用的情况 —— 并保留本项目的版权声明。想立刻核对这一点：你改过的代码如果对外提供了服务，就要把源码按 AGPL 提供给使用者。
+- **免费用**：遵守 [GNU AGPL-3.0](LICENSE) 即可使用、修改、分发。修改后的版本必须以同样的 AGPL-3.0 开源，并保留本项目的版权声明。这里也包括「不发布二进制、只把服务放在网上给别人用」的情况——你改过的代码只要对外提供了服务，就要按 AGPL 把源码提供给使用者。
 - **闭源商用**：不想承担 AGPL 开源义务的商用场景（闭源集成、闭源分发、闭源 SaaS），需先取得商业授权。申请方式：在 [Issues](https://github.com/china-cdw/dsh-soul-memory/issues) 开一条，写明公司 / 产品 / 使用方式。商业授权只改许可条款，代码与开源版完全相同，取得后无需开源你的修改。
 - **历史版本**：0.3.51 之前以 MIT 发布的版本不可撤回，仍按 MIT 授权；AGPL-3.0 自 0.3.51 起生效。
 
