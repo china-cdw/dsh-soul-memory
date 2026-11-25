@@ -22,6 +22,7 @@ import { TOKEN_HEADER, WRITE_TOKEN } from '../src/memory/web-guard.js';
 import { apply } from '../index.js';
 import { expandRange, MAX_SEQ, validateExpandArgs } from '../src/session-search.js';
 import { chunkItems, parseCleanupVerdicts } from '../src/dreaming.js';
+import { setMode } from '../src/session-modes.js';
 
 // 锁测试要快：默认等待 35s，这里压到 300ms（withIndexLock 每次调用时读取）。
 process.env.DSH_X_MEMORY_LOCK_WAIT_MS = '300';
@@ -939,7 +940,13 @@ await t.test('私钥整块打码：三种头都不留正文（redact / redactSec
       assert.match(out, /\[REDACTED KEY\]/, label + ' 经 ' + name + ' 没有打码标记：' + out);
     }
   }
-  assert.equal(PRIVATE_KEY_BLOCK_RE.lastIndex, 0, '全局正则多次调用后 lastIndex 应回到 0');
+  // 两个块放在同一段文本里：只替换首个匹配（比如正则漏了 g）会被抓出来。
+  const twice = ['RSA PRIVATE KEY', 'PGP PRIVATE KEY BLOCK']
+    .map((label) => '-----BEGIN ' + label + '-----\r\n' + body + '\r\n-----END ' + label + '-----')
+    .join('\n中间\n');
+  const maskedTwice = redact(twice);
+  assert.equal((maskedTwice.match(/\[REDACTED KEY\]/g) ?? []).length, 2, '一段文本里的两个私钥块都要打码：' + maskedTwice);
+  assert.doesNotMatch(maskedTwice, /MIIEpAIBAAKCAQEA|x9y8z7w6v5u4/, '第二个私钥块仍残留正文');
 });
 
 await t.test('未闭合 <private> 只影响当前回合，下一回合不再吞消息', async () => {
@@ -954,6 +961,18 @@ await t.test('未闭合 <private> 只影响当前回合，下一回合不再吞�
   buffer.clear('s-reset');
   assert.equal(buffer.strippers.has('s-reset'), false, '会话清掉后私密状态也要清掉');
 });
+await t.test('H-1 缓冲复位：reset 只清私密状态，不丢已缓冲事件', async () => {
+  const buffer = new MemoryBuffer();
+  buffer.push('s-boundary', { type: 'user/message', data: { message: { content: '记住这个 <private>密码是 hunter2' } } });
+  buffer.reset('s-boundary');
+  assert.equal(buffer.peek('s-boundary').length, 1, 'reset 不应丢掉已缓冲的事件');
+  buffer.push('s-boundary', { type: 'user/message', data: { message: { content: '今天天气不错，记得买牛奶' } } });
+  const out = JSON.stringify(buffer.take('s-boundary'));
+  assert.match(out, /今天天气不错/, 'reset 后下一条普通消息不应被吞：' + out);
+  assert.doesNotMatch(out, /hunter2/, '私密正文仍不能进缓冲');
+  assert.equal(buffer.size, 0, 'take 后缓冲应排空');
+});
+
 await t.test('memory_brief 返回索引卡而不是正文', async () => {
   const out = await callTool(tools1, 'memory_brief', {});
   assert.match(out, /记忆索引/);
@@ -1310,6 +1329,52 @@ await t.test('S-1 整链：含 <private> 的消息在回合日志、注入与检
     else process.env.DSH_SOUL_DATABASE = savedDatabase;
   }
 });
+await t.test('H-1 宿主边界：off 模式与无 scope 的回合也会复位私密状态', async () => {
+  const world = makeCtx();
+  world.ctx.get = (key) => key === 'workingDirectory' ? { get: () => home.dir } : undefined;
+  world.ctx.systemPrompt.context = (opts) => { world.sections.push(opts); return { dispose() {} }; };
+  world.ctx.commands = { register: () => ({ dispose() {} }) };
+  const savedDatabase = process.env.DSH_SOUL_DATABASE;
+  apply(world.ctx, { memory: { enabled: true }, enabled: false, database: ':memory:' });
+  try {
+    const pre = world.handlers.get('agent/pre-step');
+    const end = world.handlers.get('session/event');
+    assert.ok(pre && end, 'pre-step / session-event 没注册');
+    const msg = (text) => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] });
+    const turn = async (agent, text) => {
+      const message = msg(text);
+      await pre({ agent, messages: [message] }, async () => ({ kind: 'continue', messages: [message] }));
+      await end(agent.session, { type: 'turn/end', data: {} });
+      await new Promise((r) => setTimeout(r, 80));
+    };
+
+    // A：未闭合私密进缓冲后，同一回合切到 off；turn/end 不满足 capture 条件。
+    const a = { session: { id: 's-reset-off', header: { cwd: home.dir } } };
+    const first = msg('记住这个 <private>off 路径密码 hunter2-off');
+    await pre({ agent: a, messages: [first] }, async () => ({ kind: 'continue', messages: [first] }));
+    await setMode('s-reset-off', 'off');
+    await end(a.session, { type: 'turn/end', data: {} });
+    await setMode('s-reset-off', 'normal');
+    await turn(a, '务必保留：off 复位后项目进度正常，明天交付。');
+
+    // B：没有 pre-step（recorder.end() 返回 null），私密状态由会话事件产生。
+    const b = { session: { id: 's-reset-noscope', header: { cwd: home.dir } } };
+    await end(b.session, { type: 'tool/call', data: { name: 'probe', args: { note: '工具输出 <private>无 scope 未闭合 hunter2-noscope' } } });
+    await end(b.session, { type: 'turn/end', data: {} });
+    await turn(b, '务必保留：无 scope 复位后缓存策略改为事件驱动。');
+
+    const skeleton = world.sections.find((s) => s.name === 'dsh-soul:memory');
+    assert.ok(skeleton, '没有图谱注入节');
+    const injected = String(await skeleton.text({ agent: b }));
+    assert.match(injected, /off 复位后项目进度正常/, 'off 回合后下一句被吞了：' + injected);
+    assert.match(injected, /无 scope 复位后缓存策略/, '无 scope 回合后下一句被吞了：' + injected);
+    assert.doesNotMatch(injected, /hunter2-off|hunter2-noscope/, '注入泄漏私密段：' + injected);
+  } finally {
+    if (savedDatabase === undefined) delete process.env.DSH_SOUL_DATABASE;
+    else process.env.DSH_SOUL_DATABASE = savedDatabase;
+  }
+});
+
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('核心记忆自检通过。');

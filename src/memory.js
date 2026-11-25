@@ -36,13 +36,22 @@ export class MemoryBuffer {
     this.sessions.set(sessionId, entry)
   }
 
+  /**
+   * 回合边界：只复位私密分片状态，不动已缓冲的事件。
+   * 复位是回合边界，不是「能否写记忆」的一部分：曾经只有 take() 会复位，而 take() 带前置条件，
+   * off / readonly / 没有 scope 的回合会绕过它，未闭合标签就留到了下一回合。
+   */
+  reset(sessionId) {
+    this.strippers.get(sessionId)?.reset?.()
+  }
+
   /** Drain the buffer: a turn is compiled once, then forgotten, so a crash costs one turn. */
   take(sessionId) {
     const entry = this.sessions.get(sessionId)
     this.sessions.delete(sessionId)
     // 一个回合结束了：私密分片的状态不能跨回合延续，否则一次漏写 </private>
     // 会让后续每条用户消息都被判私密、整个会话的记忆缓冲持续为空。
-    this.strippers.get(sessionId)?.reset?.()
+    this.reset(sessionId)
     return entry?.events ?? []
   }
 

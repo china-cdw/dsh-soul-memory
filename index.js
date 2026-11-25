@@ -687,10 +687,13 @@ export function apply(ctx, input = {}) {
           }
           }
         }
+        // 回合边界先排空并复位：push 只要发生过，这一回合就必须取走。
+        // 不能把 take() 放进「能否写记忆」的门里——off / readonly / 无 scope 的回合也要复位，
+        // 否则未闭合状态和事件会留到下一回合，切回 normal 时一次性回填。
+        const events = memory.take(sid)
         // Compile the finished turn into the skeleton. Free, local, and outside the prompt:
         // the model never sees an experience until the projection decides it is worth bytes.
         if (state?.scope && config.memory.enabled && modeOf(sid) === 'normal') {
-          const events = memory.take(sid)
           const cwd = cwdBySession.get(sid) ?? null
           let captured = null
           if (events.length) captured = safe(() => capture(store, state.scope, events, {

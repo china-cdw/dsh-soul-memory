@@ -156,10 +156,15 @@ if (findings.length) {
 // 静态扫描与「头一出现就拒收」的守卫测试全绿，打码层却完全失效。这里跑一条合成样例，
 // 验证 redact() 的输出确实没有正文残留。
 const KEY_BODY = 'MIIE' + 'probe'.repeat(4);
-const keyProbe = '-----BEGIN ' + 'RSA PRIVATE KEY-----\n' + KEY_BODY + '\n-----END ' + 'RSA PRIVATE KEY-----';
-const keyMasked = redact(keyProbe);
-if (keyMasked.includes(KEY_BODY) || !keyMasked.includes('[REDACTED KEY]')) {
-  console.error('preflight 失败：私钥块打码未生效（redact 输出仍含正文，或缺少 [REDACTED KEY]）');
+const KEY_LABELS = ['RSA PRIVATE KEY', 'PGP PRIVATE KEY BLOCK', 'SSH2 ENCRYPTED PRIVATE KEY'];
+let keyBad = null;
+for (const label of KEY_LABELS) {
+  const probe = '-----BEGIN ' + label + '-----\n' + KEY_BODY + '\n-----END ' + label + '-----';
+  const masked = redact(probe);
+  if (masked.includes(KEY_BODY) || !masked.includes('[REDACTED KEY]')) { keyBad = label; break; }
+}
+if (keyBad) {
+  console.error('preflight 失败：私钥块打码未生效（' + keyBad + ' 的输出仍含正文，或缺少 [REDACTED KEY]）');
   process.exit(1);
 }
 console.log('preflight 通过：未发现私钥、凭据、绝对家目录或高熵块。');

@@ -1186,11 +1186,17 @@ async function doctor(graphStats, agent, bridge, graphNodes, listRetiredNodes) {
     }
     // 1b. 打码自检：静态扫描只能证明源码里没有私钥字面量，证明不了打码函数真的会打码。
     // 0.4.17 的整块正则丢了一个反斜杠，全量测试仍全绿，只有端到端输出能发现。
-    const keyProbe = '-----BEGIN ' + 'RSA PRIVATE KEY-----\n' + 'MIIE' + 'probe'.repeat(4) + '\n-----END ' + 'RSA PRIVATE KEY-----';
-    const keyMasked = redact(keyProbe);
-    add('redact.privateKey', !keyMasked.includes('MIIE') && keyMasked.includes('[REDACTED KEY]'),
-      keyMasked.includes('[REDACTED KEY]') ? '合成私钥块已被整块打码' : '私钥块打码未生效，整块正文会原样写盘',
-      keyMasked.includes('[REDACTED KEY]') ? '' : '检查 src/memory/secrets.js 的 PRIVATE_KEY_BLOCK_RE，并跑 scripts/preflight.mjs');
+    // 三种头都要验：`( BLOCK)?` 这类可选后缀一旦改坏，只测 RSA 的样例不会报警。
+    const KEY_LABELS = ['RSA PRIVATE KEY', 'PGP PRIVATE KEY BLOCK', 'SSH2 ENCRYPTED PRIVATE KEY'];
+    const keyBad = [];
+    for (const label of KEY_LABELS) {
+      const probe = '-----BEGIN ' + label + '-----\n' + 'MIIE' + 'probe'.repeat(4) + '\n-----END ' + label + '-----';
+      const masked = redact(probe);
+      if (masked.includes('MIIE') || !masked.includes('[REDACTED KEY]')) keyBad.push(label);
+    }
+    add('redact.privateKey', keyBad.length === 0,
+      keyBad.length === 0 ? '三种私钥头（RSA / PGP BLOCK / SSH2 ENCRYPTED）都被整块打码' : '这些头打码失败：' + keyBad.join('、'),
+      keyBad.length === 0 ? '' : '检查 src/memory/secrets.js 的 PRIVATE_KEY_BLOCK_RE，并跑 scripts/preflight.mjs');
 
     // 2. 索引 vs 目录：index.json 是衍生数据，条数不一致说明有人绕过了插件写 notes/。
     // 这里刻意不用 loadIndex()：索引坏掉时它会重建并落盘，而体检承诺只读。
