@@ -3,8 +3,9 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { hash, id, day, clean, bounded, redact, redactData, redactText, terms as termSet, sameTask } from './util.js'
 import { segment } from './span-index.js'
+import { detectPii } from './memory/pii.js'
 
-export const SCHEMA_VERSION = 8
+export const SCHEMA_VERSION = 9
 
 /** Retention caps for the two append-only tables. Oldest rows go first. */
 export const MAX_SPANS_PER_SCOPE = 20000
@@ -188,7 +189,8 @@ export class Store {
           hits INTEGER NOT NULL DEFAULT 0,
           state TEXT NOT NULL DEFAULT 'active',
           created INTEGER NOT NULL,
-          seen INTEGER NOT NULL);
+          seen INTEGER NOT NULL,
+          sensitive INTEGER NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS node_scope ON node(scope, state, kind, seen);
         CREATE INDEX IF NOT EXISTS node_anchor ON node(scope, anchor);
 
@@ -243,6 +245,8 @@ export class Store {
       const episodeColumns = this.db.prepare('PRAGMA table_info(episode)').all().map(c => c.name)
       if (!episodeColumns.includes('lesson')) this.db.exec('ALTER TABLE episode ADD COLUMN lesson TEXT')
       this.db.exec('CREATE INDEX IF NOT EXISTS episode_lesson ON episode(lesson)')
+      const nodeColumns = this.db.prepare('PRAGMA table_info(node)').all().map(c => c.name)
+      if (!nodeColumns.includes('sensitive')) this.db.exec('ALTER TABLE node ADD COLUMN sensitive INTEGER NOT NULL DEFAULT 0')
       this.tx(() => {
         if (version < 3) this.scrubObservationData()
         // v7: spans used to be stored verbatim. Redact them in place rather than dropping the
@@ -253,6 +257,12 @@ export class Store {
           for (const row of this.db.prepare('SELECT id, claim FROM node').all()) {
             const claim = redactText(row.claim)
             if (claim !== row.claim) update.run(claim, JSON.stringify(termSet(claim)), row.id)
+          }
+        }
+        if (version < 9) {
+          const mark = this.db.prepare('UPDATE node SET sensitive=1 WHERE id=?')
+          for (const row of this.db.prepare('SELECT id, claim FROM node').all()) {
+            if (detectPii(row.claim)) mark.run(row.id)
           }
         }
         this.db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`)
@@ -649,14 +659,16 @@ export class Store {
       // 恢复只走显式的 dreaming restore。
       const insert = this.db.prepare(`INSERT INTO node(
         id,scope,kind,claim,terms,anchor,hash,source,seq,pin,valid_from,valid_to,recorded_at,
-        weight,support,hits,state,created,seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        weight,support,hits,state,created,seen,sensitive) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET support=support+1, claim=excluded.claim,
+        sensitive=MAX(node.sensitive, excluded.sensitive),
         seen=CASE WHEN node.state='active' THEN excluded.seen ELSE node.seen END`)
       for (const node of nodes) {
         const claim = bounded(redactText(String(node.claim ?? '')), 400)
+        const sensitive = node.sensitive || detectPii(claim) ? 1 : 0
         insert.run(node.id, scope, String(node.kind), claim, JSON.stringify(termSet(claim)),
           node.anchor ?? null, node.hash ?? null, node.source ?? null, Number(node.seq) || 0,
-          node.pin ? 1 : 0, now, null, now, 1, 1, 0, 'active', now, now)
+          node.pin ? 1 : 0, now, null, now, 1, 1, 0, 'active', now, now, sensitive)
       }
       const link = this.db.prepare('INSERT OR IGNORE INTO edge(id,scope,src,dst,rel,w,created) VALUES (?,?,?,?,?,?,?)')
       for (const edge of edges) {
@@ -706,10 +718,10 @@ export class Store {
   }
 
   parseNode(row) {
-    return row ? { ...row, terms: parseJson(row.terms, []) } : null
+    return row ? { ...row, terms: parseJson(row.terms, []), sensitive: Boolean(row.sensitive) } : null
   }
 
-  activeNodes(scope, limit = 400, { includeSuperseded = false, kindFirst = false } = {}) {
+  activeNodes(scope, limit = 400, { includeSuperseded = false, kindFirst = false, includeSensitive = false } = {}) {
     // `kindFirst` 是给投影用的：先按 kind 优先级取，再按最近。否则十几轮之后，
     // 每轮十几条 progress 会把更早的 decision/artifact/reference 挤出 LIMIT 窗口，
     // 而 project() 的 kind 排序只作用于**已经取回来的**那部分 —— 卡片会永久看不到决策。
@@ -721,6 +733,7 @@ export class Store {
       : 'ORDER BY pin DESC, seen DESC'
     return this.db.prepare(`SELECT * FROM node WHERE scope=? AND state='active'
       ${includeSuperseded ? '' : 'AND valid_to IS NULL'}
+      ${includeSensitive ? '' : 'AND sensitive=0'}
       ${order} LIMIT ?`).all(scope, limit).map(row => this.parseNode(row))
   }
 
@@ -768,7 +781,7 @@ export class Store {
       .filter(id => !ids.includes(id))
       .map(id => this.nodeRow(id))
       // retired 节点不参与联想扩散：否则被清理的垃圾会从邻居那条路重新漏回上下文。
-      .filter(node => node && node.state === 'active')
+      .filter(node => node && node.state === 'active' && !node.sensitive)
   }
 
   /** Record that a node was surfaced. The log is the Hebbian signal and the GC evidence. */

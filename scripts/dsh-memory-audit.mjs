@@ -13,8 +13,9 @@ import { redactSecrets } from '../src/memory/util.js';
 import { redact } from '../src/util.js';
 import { PRIVATE_KEY_BLOCK_RE } from '../src/memory/secrets.js';
 import { readPersona } from '../src/persona.js';
-import { normalize, extract } from '../src/skeleton.js'
-import { MemoryBuffer } from '../src/memory.js';
+import { normalize, extract, project } from '../src/skeleton.js'
+import { MemoryBuffer, projectionText } from '../src/memory.js';
+import { Store } from '../src/store.js';
 import { sessionModeIntent } from '../src/memory/mode-intent.js';
 import { createPrivateStripper, stripPrivate } from '../src/memory/private.js';
 import { checkGuard, _resetGuardCache } from '../src/memory/guard.js';
@@ -1375,6 +1376,53 @@ await t.test('H-1 宿主边界：off 模式与无 scope 的回合也会复位私
   }
 });
 
+await t.test('F-3 个人信息笔记：标记敏感、检索不露号码、显式阅读才见正文', async () => {
+  const phone = '13812345678';
+  const saved = await callTool(tools1, 'memory_write', { title: '患者随访记录', content: '患者：张伟，手机号 ' + phone + '，病历号 MR2026001。', force: true });
+  assert.match(saved, /已标记为敏感/, '写入应提示已标记敏感：' + saved);
+  assert.match(saved, /手机号|患者姓名/, '应点名敏感类别：' + saved);
+  const id = String(saved).match(/\[([^\]]+)\]/)?.[1];
+  assert.ok(id, '没拿到笔记 id：' + saved);
+  const found = await callTool(tools1, 'memory_search', { query: phone });
+  assert.doesNotMatch(found, /13812345678/, '检索不应出现号码：' + found);
+  const read = await callTool(tools1, 'memory_read', { id });
+  assert.match(read, /13812345678/, '显式读取应能看到正文：' + read);
+  assert.match(read, /敏感（凭据或个人信息）/, '读取应说明为什么隐藏：' + read);
+});
+
+await t.test('F-3 图谱个人信息：入库标敏感、注入与联想都不带出去', async () => {
+  const store = new Store(':memory:');
+  try {
+    const scope = 'project:pii-test';
+    store.recordNodes(scope, { nodes: [
+      { id: 'n-pii', kind: 'constraint', claim: '患者：张伟，手机号 13812345678' },
+      { id: 'n-normal', kind: 'constraint', claim: '必须用 pnpm 安装依赖' },
+    ] });
+    assert.equal(store.nodeRow('n-pii').sensitive, true, '个人信息节点应标敏感');
+    assert.equal(store.nodeRow('n-normal').sensitive, false, '普通约束不该被误标');
+    const card = projectionText(store, scope, 600);
+    assert.match(card, /必须用 pnpm/, '普通约束应还在：' + card);
+    assert.doesNotMatch(card, /13812345678|张伟/, '注入不应带出个人信息：' + card);
+  } finally { store.close(); }
+});
+
+await t.test('F-7 过期约束：只在超期且开启时加一行日期', async () => {
+  const now = Date.now();
+  const old = now - 100 * 86400000;
+  const nodes = [{ id: 'c-old', kind: 'constraint', claim: '必须用 pnpm', state: 'active', pin: 1, seq: 1, created: old, recorded_at: old }];
+  const marked = project(nodes, { staleAfterDays: 90, now });
+  assert.match(marked, /记录于 .*可能已过期/, '超期约束应提示：' + marked);
+  const fresh = project([{ ...nodes[0], created: now, recorded_at: now }], { staleAfterDays: 90, now });
+  assert.doesNotMatch(fresh, /可能已过期/, '新约束不该提示：' + fresh);
+  const off = project(nodes, { staleAfterDays: 0, now });
+  assert.doesNotMatch(off, /可能已过期/, '关闭时不该提示：' + off);
+});
+
+await t.test('F-1 brief 显示可读项目名，不再只有哈希 scope', async () => {
+  const out = await callTool(tools1, 'memory_brief', {}, { agent: { session: { id: 's-brief', header: { cwd: 'C:/work/medical-bid' } } } });
+  assert.match(out, /当前项目：medical-bid/, '应显示目录名：' + out.slice(0, 400));
+  assert.match(out, /project:[0-9a-f]+/, '内部 scope 仍应可查：' + out.slice(0, 400));
+});
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('核心记忆自检通过。');

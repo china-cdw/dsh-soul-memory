@@ -104,7 +104,10 @@ export function settings(input = {}) {
     memory: {
       // On by default: the projection emits nothing until the graph has nodes, so a fresh
       // project pays zero bytes, and this release exists to fix compaction amnesia.
-      enabled: boolean(input.memory?.enabled, true, 'memory.enabled'),      projectionBytes: integer(input.memory?.projectionBytes, 600, 160, 2000, 'memory.projectionBytes'),
+      enabled: boolean(input.memory?.enabled, true, 'memory.enabled'),
+      projectionBytes: integer(input.memory?.projectionBytes, 600, 160, 2000, 'memory.projectionBytes'),
+      // 约束超过这个天数就在注入时标注「可能已过期」；0 关闭。
+      staleConstraintDays: integer(input.memory?.staleConstraintDays, 90, 0, 3650, 'memory.staleConstraintDays'),
       maxNodes: integer(input.memory?.maxNodes, 500, 50, 5000, 'memory.maxNodes'),
       verifyArtifacts: boolean(input.memory?.verifyArtifacts, true, 'memory.verifyArtifacts'),
       // Off by default, deliberately: it changes what the model sees every turn, and a
@@ -605,7 +608,7 @@ export function apply(ctx, input = {}) {
             // anything the card already says?". Below the threshold the model is about to
             // answer from a card that cannot contain the answer.
             const { scope } = describe(payload.agent)
-            const card = projectionText(store, scope, config.memory.projectionBytes, { sessionId: String(payload.agent.session.id), dynamics: config.memory.dynamics, promote: config.memory.promote })
+            const card = projectionText(store, scope, config.memory.projectionBytes, { sessionId: String(payload.agent.session.id), dynamics: config.memory.dynamics, promote: config.memory.promote, staleConstraintDays: config.memory.staleConstraintDays })
             const wanted = new Set(termSet(cleanText))
             const have = new Set(termSet(card))
             let shared = 0
@@ -778,7 +781,7 @@ export function apply(ctx, input = {}) {
               if (turnMode === 'off') return '## 跨会话记忆\n- 本会话已关闭跨会话记忆：不要写入新记忆，也不要主动检索旧记忆；用户明确让你查时再说。\n'
               if (turnMode === 'readonly') return '## 跨会话记忆\n- 本会话处于只读：不要写入新记忆，可以检索和引用旧记忆。\n'
               const scope = projectScope({ id: agent.session.id, header: { cwd } })
-              const card = projectionText(store, scope, config.memory.projectionBytes, { sessionId: String(agent.session.id), dynamics: config.memory.dynamics, promote: config.memory.promote, cues: cues.get(String(agent.session.id)) ?? null })
+              const card = projectionText(store, scope, config.memory.projectionBytes, { sessionId: String(agent.session.id), dynamics: config.memory.dynamics, promote: config.memory.promote, cues: cues.get(String(agent.session.id)) ?? null, staleConstraintDays: config.memory.staleConstraintDays })
               const cue = rememberCue.read(String(agent.session.id))
               const reminder = cue ? rememberReminder(cue.text, cue.at) : ''
               if (!card) return reminder
@@ -1099,7 +1102,7 @@ export function apply(ctx, input = {}) {
           const { scope } = describe(agent)
           if (verb === 'stats') return { kind: 'success', text: JSON.stringify({ ...store.memoryStats(scope), graph: store.graphStats(scope) }, null, 2) }
           if (verb === 'show') {
-            const card = projectionText(store, scope, config.memory.projectionBytes, { sessionId: String(agent.session.id), dynamics: config.memory.dynamics, promote: config.memory.promote })
+            const card = projectionText(store, scope, config.memory.projectionBytes, { sessionId: String(agent.session.id), dynamics: config.memory.dynamics, promote: config.memory.promote, staleConstraintDays: config.memory.staleConstraintDays })
             return { kind: 'success', text: card || '记忆骨架为空：完成一轮任务后才会生成节点。' }
           }
           if (verb === 'recall') {

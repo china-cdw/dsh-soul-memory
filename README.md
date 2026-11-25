@@ -52,6 +52,9 @@ dsh plugin --profile desktop add "$PWD"
 - **每条命中带两个标签**（`soul_recall`）：`match` 说明来源（quote 原话 / literal 字面命中 / spread 关键词散落命中 / graph 从图谱找到），`share` 说明命中了多少；每条另带 `evidence`（原文 / 图谱摘要 / 关联推断），引用原话只认「原文」。
 - **只翻原文**（`soul_recall source=quote`）：跳过知识图谱，直接跨会话搜原始对话。
 - **回合日志**（`memory.turnLog`）：每轮只要有记忆写入，就在 `$DSH_HOME/memory/turns/YYYYMMDD.md` 记一行；闲聊不记。
+- **个人信息默认只标记**：身份证号、手机号、带标签的病历号/患者姓名在归档与图谱里标为敏感，正文照常保存，注入与检索只露标题；确需查看用 `memory_read`。不做全量打码，避免毁掉医疗材料。
+- **过期约束会提醒**：超过 `memory.staleConstraintDays`（默认 90 天）的约束，注入时多一句「记录于 YYYY-MM-DD，可能已过期」；设 0 关闭。
+- **项目名看得见**：`memory_brief` 会显示当前项目的目录名和内部哈希，换目录后能一眼看出自己在哪里。
 
 ## 为什么合成一个插件
 
@@ -266,6 +269,7 @@ config:
   memory:
     enabled: true           # 核心记忆 + 归档 + 图谱
     projectionBytes: 600    # 图谱每轮投影字节数
+    staleConstraintDays: 90 # 约束超过多少天在注入时提醒可能过期；0 关闭
     maintenance: true       # 每 20 轮去重与边衰减
   coding:
     enabled: true
@@ -286,7 +290,7 @@ config:
 示例里**没写**的键用代码默认值（`index.js` 的 `readConfig`），这也给出各自的可调范围：
 
 - `dreaming.*`：`enabled: false`、`autoApply: false`、`idleDelaySeconds: 120`、`minIntervalMinutes: 180`、`maxNotes: 3`、`ai: true`、`provider: ''`、`model: ''`、`maxScanNodes: 60`、`maxRetirePerRun: 20`；
-- `memory.maxNodes: 500`（50–5000）、`verifyArtifacts: true`、`dynamics: true`、`turnLog: true`、`promote: false`、`maintenanceTurns: 20`（5–500）；
+- `memory.maxNodes: 500`（50–5000）、`verifyArtifacts: true`、`dynamics: true`、`turnLog: true`、`promote: false`、`staleConstraintDays: 90`（0–3650）、`maintenanceTurns: 20`（5–500）；
 - `codegraph.maxChars: 8000`（1000–40000）、`coding.budget: 3500`（400–8000）、`lessons.budget: 600`（200–4000）。
 
 所以想开 dreaming、改 `maxNodes` 或调预算，直接写进自己的 `cordis.patch.yml` 即可——它们本来就不在示例里，不是不能配。
@@ -318,6 +322,7 @@ $DSH_HOME/memory/
 
 - 私钥块、常见 token 形状：写入即拒收；
 - 凭据赋值形状：可保存但标记敏感，不进系统提示、检索时隐藏正文；
+- 个人信息（身份证号、手机号、带标签的病历号/患者姓名）：只标记、不删正文；不进系统提示、检索只露标题，显式 `memory_read` 才看正文；图谱节点同样按敏感过滤；
 - 私钥整块打码：`redact` 把整块替换成 `[REDACTED KEY]`，发布闸门与 `memory_doctor` 都用合成样例验一遍（这一层 0.4.17 曾因正则少一个反斜杠静默失效）；
 - 踩坑记录写入前过一遍脱敏，含 `password` / `token` / `secret` / `bearer` 等字样的行直接丢弃；
 - 发布前自检：
@@ -423,7 +428,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 100 项、编码层 14 项、踩坑层 16 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 23 项、备份/回合日志 5 项、记忆体检 5 项、外部转录 6 项、记忆主题 4 项、评审 brief 5 项、代码图谱 17 项，共 307 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 104 项、编码层 14 项、踩坑层 16 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 23 项、备份/回合日志 5 项、记忆体检 5 项、外部转录 6 项、记忆主题 4 项、评审 brief 5 项、代码图谱 17 项，共 311 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

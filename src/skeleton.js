@@ -3,6 +3,7 @@ import { bounded, bytes as sizeOf, terms as termSet, hash, redact, injected } fr
 // arrow pointing this way is what lets `compact()` stay a pure function of its inputs — the
 // caller passes a profile in, so the same span and the same profile always render the same bytes.
 import { nodeBudgetRatio as memoryRatio, lossRisk, shadowRisk } from './consolidation.js'
+import { staleSuffix } from './memory/staleness.js'
 
 /**
  * Skeleton: deterministic extraction + graph selection for compressed context.
@@ -424,9 +425,12 @@ function bestWindow(text, limit) {
   return best.score <= 0 ? bounded(source, limit) : source.slice(best.start, best.start + limit)
 }
 
-function renderNode(node) {
+function renderNode(node, { staleAfterDays = 0, now = Date.now() } = {}) {
   const label = KIND_LABEL[node.kind] ?? node.kind
-  return `- ${label}: ${node.claim}`
+  const stale = node.kind === 'constraint'
+    ? staleSuffix(node.recorded_at ?? node.created, { days: staleAfterDays, now })
+    : ''
+  return `- ${label}: ${node.claim}${stale}`
 }
 
 /**
@@ -562,7 +566,7 @@ export function compact({ events = [], budget = 1200, hashOf = null, storedHash 
  * Per-turn projection: the small standing card. Pure function of the graph, so the same
  * state always renders the same bytes and the prompt cache prefix stays stable.
  */
-export function project(nodes, { budget = 600, referenceLast = false } = {}) {
+export function project(nodes, { budget = 600, referenceLast = false, staleAfterDays = 0, now = Date.now() } = {}) {
   // `reference` ranks second in the 1.5 order, and that is left alone by default: a plugin
   // upgrade must not reshuffle a card nobody asked to change. When the dynamics or promotion
   // paths are on, `referenceLast` moves it to the end — a reference node is a pointer that says
@@ -580,7 +584,7 @@ export function project(nodes, { budget = 600, referenceLast = false } = {}) {
   for (const node of sorted) {
     if (node.state && node.state !== 'active') continue
     if (seen.has(node.claim)) continue
-    const line = renderNode(node)
+    const line = renderNode(node, { staleAfterDays, now })
     const price = sizeOf(line) + 1
     if (spent + price > budget) continue
     lines.push(line); spent += price; seen.add(node.claim)

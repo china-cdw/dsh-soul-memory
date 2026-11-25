@@ -3,6 +3,7 @@ import { resolve, sep } from 'node:path'
 import { bounded, hash, terms as termSet } from './util.js'
 import { extract, identifierTerms, normalize, project } from './skeleton.js'
 import { memoryView, propagate, render } from './graph-memory.js'
+import { staleSuffix } from './memory/staleness.js'
 import { promoteUncovered } from './consolidation.js'
 import { createPrivateStripper, stripPrivateDeep } from './memory/private.js'
 
@@ -251,9 +252,10 @@ export function handoffFor(store, scope) {
  * `now` is threaded through so the card is a pure function of (graph, clock bucket): every call
  * inside one five-minute bucket must produce identical bytes, or the prompt cache prefix breaks.
  */
-export function projectionText(store, scope, budget = 600, { sessionId = null, dynamics = false, promote = false, now = undefined, cues = null } = {}) {
+export function projectionText(store, scope, budget = 600, { sessionId = null, dynamics = false, promote = false, now = undefined, cues = null, staleConstraintDays = 0 } = {}) {
+  const at = now ?? Date.now()
   const nodes = dynamics ? null : store.activeNodes(scope, 200, { kindFirst: true })
-  const view = dynamics ? memoryView(store, scope, { now: now ?? Date.now(), cues }) : null
+  const view = dynamics ? memoryView(store, scope, { now: at, cues }) : null
   if (dynamics ? !view.list.length : !nodes.length) return ''
   // Say how far back the index actually reaches. A silent boundary is worse than a short one:
   // "查不到" would be indistinguishable from "不存在".
@@ -279,12 +281,12 @@ export function projectionText(store, scope, budget = 600, { sessionId = null, d
   if (dynamics) {
     // Shallow view with the handoff claim removed: `render` only reads `.list`, and the same
     // sentence must not appear twice in one card.
-    card = render({ ...view, list: view.list.filter(entry => entry.claim !== handoff?.claim) }, { budget: room })
+    card = render({ ...view, list: view.list.filter(entry => entry.claim !== handoff?.claim) }, { budget: room, staleAfterDays: staleConstraintDays, now: at })
   } else {
     const body = previous ? nodes.filter(node => node.claim !== handoff.claim) : nodes
     // `referenceLast` only when a feature that manufactures reference nodes is on. Off by
     // default so an upgrade without config changes renders the same bytes as 1.5.
-    card = body.length ? project(body, { budget: room, referenceLast: dynamics || promote }) : ''
+    card = body.length ? project(body, { budget: room, referenceLast: dynamics || promote, staleAfterDays: staleConstraintDays, now: at }) : ''
   }
   const out = [previous, card, line].filter(Boolean).join('\n')
   // 固定行（handoff / 索引）本身就可能吃满预算：最后兜一次，保证不超过 projectionBytes。
@@ -420,7 +422,7 @@ function transitive(store, scope, hits, rank, limit) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, limit * 2)
     .map(([id]) => store.nodeRow(id))
-    .filter(Boolean)
+    .filter(row => row && !row.sensitive)
 }
 
 /** Node view plus the numbers the read path used, so the ranking is inspectable. */

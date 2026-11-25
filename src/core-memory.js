@@ -19,7 +19,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWrite, createQueue, latestSnapshot, memoryPath, safeJson, sliceSafe, snapshotMemory, withFileLock } from './memory/util.js';
 import { checkGuard, isSensitive } from './memory/guard.js';
 import { stripPrivate } from './memory/private.js';
-import { redact } from './util.js';
+import { detectPii } from './memory/pii.js';
+import { projectName, projectScope, redact } from './util.js';
 import { guard, requireToken } from './memory/web-guard.js';
 import { exportBundle, importBundle, listBackups, readBundle } from './backup.js';
 import { readTurns } from './turnlog.js';
@@ -784,7 +785,11 @@ async function writeNote(args, exec = null) {
   if (guard.kind === 'reject') {
     return failMessage('E_GUARD', '拒绝保存：内容命中守卫规则（私钥或凭据形状），未落盘。请删掉敏感片段后重试。');
   }
-  const sensitive = guard.kind === 'sensitive';
+  // 医疗场景的个人信息与凭据走两套判断，但落到同一个「敏感」标记：正文照常保存，
+  // 不进系统提示、检索时只露标题；只有显式 memory_read 才看得到正文。
+  const pii = detectPii(title + '\n' + content);
+  const sensitive = guard.kind === 'sensitive' || Boolean(pii);
+  const sensitiveReason = pii ? pii.label : (sensitive ? '凭据' : '');
   const sources = await fingerprintPaths(args.paths);
   // 记下这条记忆从哪个会话、哪个事件序号写出来：以后能 soul_expand 回看原文，
   // 而不是只留一句脱离上下文的结论。
@@ -819,7 +824,7 @@ async function writeNote(args, exec = null) {
       const topic = args.topic ? normalizeTopic(args.topic) : topicOf(title + '\n' + content).topic;
       const meta = {
         id, title, tags, topic, created: now, updated: now, size: 0,
-        ...(sensitive ? { sensitive: true } : {}),
+        ...(sensitive ? { sensitive: true, ...(sensitiveReason ? { sensitiveReason } : {}) } : {}),
         ...(sources.length ? { sources } : {}),
         ...(session ? { session } : {}),
         ...(Number.isInteger(seq) ? { seq } : {}),
@@ -838,7 +843,7 @@ async function writeNote(args, exec = null) {
       sectionCache = null;
       return { notes, value: '已保存归档记忆 [' + id + '] ' + title + (tags.length ? ' #' + tags.join(' #') : '') + '。已进入索引，所有会话可见。' +
         (superseded ? '\n旧条目 [' + target.id + '] ' + target.title + ' 已标记为「已被 ' + id + ' 取代」。' : '') +
-        (sensitive ? '\n注意：内容疑似包含凭据，已标记为敏感——不会进入系统提示，检索时只显示标题。' : '') };
+        (sensitive ? '\n注意：内容疑似包含' + (pii ? pii.label : '凭据') + '，已标记为敏感——不会进入系统提示，检索时只显示标题。' : '') };
     }));
   } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
 }
@@ -883,7 +888,7 @@ async function searchNotes(args, graphSearch, agent, bridge) {
       const lines = shown.map((hit) => {
         const flags = (hit.note.supersededBy ? '（已被 [' + hit.note.supersededBy + '] 取代）' : '') +
           (hit.note.sensitive ? '（敏感内容已隐藏）' : '');
-        const body = hit.note.sensitive ? '（正文含疑似凭据，已隐藏；确需查看用 memory_read ' + hit.note.id + '）' : makeSnippet(hit.bodyText, query);
+        const body = hit.note.sensitive ? '（正文含敏感信息（凭据或个人信息），已隐藏；确需查看用 memory_read ' + hit.note.id + '）' : makeSnippet(hit.bodyText, query);
         return '[' + hit.note.id + '] ' + hit.note.title + '（' + (hit.note.created || '').slice(0, 10) + '）' + flags + '\n  ' +
           body + '\n  读取：memory_read ' + hit.note.id;
       });
@@ -963,7 +968,7 @@ async function readNote(ref) {
       '\n创建：' + note.created + ((note.tags && note.tags.length) ? '\n标签：' + note.tags.join(', ') : '') +
       (note.session ? '\n来源会话：' + note.session + (Number.isInteger(note.seq) ? ' #' + note.seq + '（可 soul_expand 回看原文）' : '') : '') +
       (sourceLines.length ? '\n来源：\n' + sourceLines.join('\n') : '') + '\n\n' +
-      (note.sensitive ? '（此条被守卫标记为疑似凭据，正文默认隐藏；下面是显式读取内容）\n\n' : '') + parsed.body;
+      (note.sensitive ? '（此条被守卫标记为敏感（凭据或个人信息），正文默认隐藏；下面是显式读取内容）\n\n' : '') + parsed.body;
     if (out.length > 8000) out = truncateWithFences(out, 8000) + '\n…（内容过长已截断）';
     return out;
   } catch (e) { return failMessage('E_INTERNAL', errText(e)); }
@@ -1093,6 +1098,9 @@ async function brief(graphStats, agent, bridge, graphNodes) {
     // 索引卡：只回答「记住了什么、在哪一条」，正文留给 memory_read。
     // 体检每次都可能被调，把整库正文灌进对话既贵又噪声大。
     lines.push('记忆索引（这是目录，不是正文：看内容用 memory_read <id>）');
+    const session = agent?.session;
+    const cwd = session?.header?.cwd;
+    if (cwd) lines.push('- 当前项目：' + projectName(cwd) + '（' + projectScope(session) + '）');
     lines.push('- 核心 MEMORY.md：' + (core === null ? '缺失' : core.length + ' 字符 / ' + parseCoreSections(core).sections.length + ' 个分节') +
       (core && core.length > CORE_BUDGET ? '，已超建议的 ' + CORE_BUDGET + ' 字，注入时会被截断' : ''));
     const withTags = notes.filter((n) => n.tags && n.tags.length).length;

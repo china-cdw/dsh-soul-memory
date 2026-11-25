@@ -1,3 +1,5 @@
+import { staleSuffix } from './memory/staleness.js'
+
 /**
  * Graph memory — activation, periphery, and the read path that was missing.
  *
@@ -292,6 +294,7 @@ export function memoryView(store, scope, { now = Date.now(), quantum = QUANTUM_M
     const A = availability(activation(trace, at))
     const entry = {
       id: node.id, kind: node.kind, claim: node.claim, pin: Boolean(node.pin),
+      recorded_at: Number(node.recorded_at) || Number(node.created) || 0,
       hits: Number(node.hits) || 0, seq: Number(node.seq) || 0,
       A, deg: degree.get(node.id) ?? 0, core: core.get(node.id) ?? 0,
       importance: importanceOf(node),
@@ -458,13 +461,16 @@ export function restore(store, scope, ids) {
 }
 
 /** Plain-text card, byte-budgeted, same contract as `skeleton.project`. */
-export function render(view, { budget = 600, aHigh = 0.95, labels = { constraint: '约束', decision: '决策', artifact: '产物', progress: '进度', reference: '索引' } } = {}) {
+export function render(view, { budget = 600, aHigh = 0.95, staleAfterDays = 0, now = Date.now(), labels = { constraint: '约束', decision: '决策', artifact: '产物', progress: '进度', reference: '索引' } } = {}) {
   const lines = ['[骨架]']
   let spent = Buffer.byteLength(lines[0])
   const seen = new Set()
   for (const entry of orderProjection(view, { aHigh })) {
     if (seen.has(entry.claim)) continue
-    const line = `- ${labels[entry.kind] ?? entry.kind}: ${entry.claim}`
+    const stale = entry.kind === 'constraint'
+      ? staleSuffix(entry.recorded_at, { days: staleAfterDays, now })
+      : ''
+    const line = `- ${labels[entry.kind] ?? entry.kind}: ${entry.claim}${stale}`
     const price = Buffer.byteLength(line) + 1
     if (spent + price > budget) continue
     lines.push(line)

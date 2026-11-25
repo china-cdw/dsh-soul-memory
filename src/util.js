@@ -142,6 +142,13 @@ export function projectScope(session) {
   return `project:${hash(normalizePath(cwd))}`
 }
 
+/** 项目在界面上的短名字：取目录名，不改变内部 scope 的哈希表示。 */
+export function projectName(cwd) {
+  const s = String(cwd ?? '').replace(/[\\/]+$/, '')
+  const base = s.split(/[\\/]/).pop() ?? ''
+  return base || '未知项目'
+}
+
 function isAbsolutePath(p) {
   return /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('/') || p.startsWith('\\\\')
 }
