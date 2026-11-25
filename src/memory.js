@@ -40,6 +40,9 @@ export class MemoryBuffer {
   take(sessionId) {
     const entry = this.sessions.get(sessionId)
     this.sessions.delete(sessionId)
+    // 一个回合结束了：私密分片的状态不能跨回合延续，否则一次漏写 </private>
+    // 会让后续每条用户消息都被判私密、整个会话的记忆缓冲持续为空。
+    this.strippers.get(sessionId)?.reset?.()
     return entry?.events ?? []
   }
 

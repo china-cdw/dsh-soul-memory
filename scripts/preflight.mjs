@@ -12,6 +12,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, dirname, basename, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { redact } from '../src/util.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const IGNORE_FILE = '.preflight-ignore.json';
@@ -149,6 +150,16 @@ if (findings.length) {
   }
   console.error('处理：删除/替换该处内容；确认是误报时在 ' + IGNORE_FILE + ' 里加豁免（数组：相对路径 / 相对路径:行号 / 相对路径:行号 类别）。');
   console.error('SKIPPED_* 表示文件无法被扫描（.env / 未识别扩展名 / 超大 / 二进制）：确认可发布后再加豁免，或把扩展名补进 TEXT_EXT。');
+  process.exit(1);
+}
+// 发布闸门不能只扫源码字面量：0.4.17 的私钥块正则丢了一个反斜杠，
+// 静态扫描与「头一出现就拒收」的守卫测试全绿，打码层却完全失效。这里跑一条合成样例，
+// 验证 redact() 的输出确实没有正文残留。
+const KEY_BODY = 'MIIE' + 'probe'.repeat(4);
+const keyProbe = '-----BEGIN ' + 'RSA PRIVATE KEY-----\n' + KEY_BODY + '\n-----END ' + 'RSA PRIVATE KEY-----';
+const keyMasked = redact(keyProbe);
+if (keyMasked.includes(KEY_BODY) || !keyMasked.includes('[REDACTED KEY]')) {
+  console.error('preflight 失败：私钥块打码未生效（redact 输出仍含正文，或缺少 [REDACTED KEY]）');
   process.exit(1);
 }
 console.log('preflight 通过：未发现私钥、凭据、绝对家目录或高熵块。');

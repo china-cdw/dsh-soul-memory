@@ -40,6 +40,7 @@ try {
     assert(first.includes('orphan') && first.includes('ghost'), '孤儿文件与缺失文件都要点名')
     assert(first.includes('lessons.parse'), '应逐行检查踩坑日志')
     assert(first.includes('backup.exists'), '没有备份要明确报出来')
+    assert(first.includes('✅ redact.privateKey'), '应自检私钥整块打码是否生效');
     assert(first.includes('测不到'), '体检必须列出自己的盲区')
     assert(first.includes('⚠️ core.budget') || first.includes('⚠️ core'), '核心预算应为警告项')
   })

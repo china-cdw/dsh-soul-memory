@@ -9,6 +9,9 @@ import { join } from 'node:path';
 import { assert, callTool, makeCtx, makeHome, suite, waitFor } from './_testkit.mjs';
 import { registerCoreMemory, setDreamGenerator, setDreamNodeProvider, setDreamRestoreProvider, setDreamRetiredListProvider, setDreamRetireProvider, setSessionSeqProvider } from '../src/core-memory.js';
 import { latestSnapshot, snapshotGraph, snapshotMemory } from '../src/memory/util.js';
+import { redactSecrets } from '../src/memory/util.js';
+import { redact } from '../src/util.js';
+import { PRIVATE_KEY_BLOCK_RE } from '../src/memory/secrets.js';
 import { readPersona } from '../src/persona.js';
 import { normalize, extract } from '../src/skeleton.js'
 import { MemoryBuffer } from '../src/memory.js';
@@ -921,6 +924,35 @@ await t.test('三种私钥头写法都拒收', async () => {
   for (const head of HEADS) {
     assert.equal(checkGuard(head).kind, 'reject', head + ' 没被拒收');
   }
+});
+
+await t.test('私钥整块打码：三种头都不留正文（redact / redactSecrets）', async () => {
+  // 头和正文拆开拼接：仓库里不留完整私钥块字面量（preflight 会拦）。
+  const body = 'MIIEpAIBAAKCAQEA' + 'x9y8z7w6v5u4'.repeat(4);
+  const labels = ['RSA PRIVATE KEY', 'PGP PRIVATE KEY BLOCK', 'SSH2 ENCRYPTED PRIVATE KEY'];
+  for (const label of labels) {
+    const block = '-----BEGIN ' + label + '-----\r\n' + body + '\r\n-----END ' + label + '-----';
+    const source = '配置如下：\n' + block + '\n请保存。';
+    for (const [name, fn] of [['redact', redact], ['redactSecrets', redactSecrets]]) {
+      const out = fn(source);
+      assert.doesNotMatch(out, /MIIEpAIBAAKCAQEA|x9y8z7w6v5u4/, label + ' 经 ' + name + ' 仍残留正文：' + out);
+      assert.match(out, /\[REDACTED KEY\]/, label + ' 经 ' + name + ' 没有打码标记：' + out);
+    }
+  }
+  assert.equal(PRIVATE_KEY_BLOCK_RE.lastIndex, 0, '全局正则多次调用后 lastIndex 应回到 0');
+});
+
+await t.test('未闭合 <private> 只影响当前回合，下一回合不再吞消息', async () => {
+  const buffer = new MemoryBuffer();
+  buffer.push('s-reset', { type: 'user/message', data: { message: { content: '记住这个 <private>密码是 hunter2' } } });
+  const first = JSON.stringify(buffer.take('s-reset'));
+  assert.doesNotMatch(first, /hunter2/, '当前回合的私密内容仍要摘掉');
+  buffer.push('s-reset', { type: 'user/message', data: { message: { content: '今天天气不错，记得买牛奶' } } });
+  const second = JSON.stringify(buffer.take('s-reset'));
+  assert.match(second, /今天天气不错/, '下一回合的普通消息不应被上一回合的未闭合标签吞掉：' + second);
+  buffer.push('s-reset', { type: 'user/message', data: { message: { content: '<private>未闭合' } } });
+  buffer.clear('s-reset');
+  assert.equal(buffer.strippers.has('s-reset'), false, '会话清掉后私密状态也要清掉');
 });
 await t.test('memory_brief 返回索引卡而不是正文', async () => {
   const out = await callTool(tools1, 'memory_brief', {});

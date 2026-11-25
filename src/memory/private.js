@@ -105,14 +105,18 @@ export function stripPrivate(text) {
  */
 export function createPrivateStripper() {
   let open = false;
-  return function strip(text) {
+  function strip(text) {
     if (typeof text !== 'string' || !text) return { text: typeof text === 'string' ? text : '', removed: 0, unclosed: open };
     const scan = normalizeForScan(text);
     if (!open && !hasTag(scan.text)) return { text, removed: 0, unclosed: false };
     const result = runScan(text, scan, open);
     open = result.unclosed;
     return result;
-  };
+  }
+  // 回合结束复位：分片只在同一回合内有效。用户漏写 </private> 时，
+  // 这一条消息后面的内容仍按私密处理（安全），但下一条用户消息不会被继续吞掉（可用）。
+  strip.reset = () => { open = false; };
+  return strip;
 }
 
 /** 深拷贝并摘掉任意结构里的 <private> 段（事件 data 可能是数组/嵌套对象）。 */

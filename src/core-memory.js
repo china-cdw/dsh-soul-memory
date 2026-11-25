@@ -19,6 +19,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWrite, createQueue, latestSnapshot, memoryPath, safeJson, sliceSafe, snapshotMemory, withFileLock } from './memory/util.js';
 import { checkGuard, isSensitive } from './memory/guard.js';
 import { stripPrivate } from './memory/private.js';
+import { redact } from './util.js';
 import { guard, requireToken } from './memory/web-guard.js';
 import { exportBundle, importBundle, listBackups, readBundle } from './backup.js';
 import { readTurns } from './turnlog.js';
@@ -1183,6 +1184,14 @@ async function doctor(graphStats, agent, bridge, graphNodes, listRetiredNodes) {
       add('core.budget', over === 0, `${size} 字符 / 预算 ${CORE_BUDGET}` + (over ? `，尾部 ${over} 字每轮不注入；文件没丢，全文在 ${corePath()}` : ''),
         over ? '用 memory_core 精简过期条目' : '');
     }
+    // 1b. 打码自检：静态扫描只能证明源码里没有私钥字面量，证明不了打码函数真的会打码。
+    // 0.4.17 的整块正则丢了一个反斜杠，全量测试仍全绿，只有端到端输出能发现。
+    const keyProbe = '-----BEGIN ' + 'RSA PRIVATE KEY-----\n' + 'MIIE' + 'probe'.repeat(4) + '\n-----END ' + 'RSA PRIVATE KEY-----';
+    const keyMasked = redact(keyProbe);
+    add('redact.privateKey', !keyMasked.includes('MIIE') && keyMasked.includes('[REDACTED KEY]'),
+      keyMasked.includes('[REDACTED KEY]') ? '合成私钥块已被整块打码' : '私钥块打码未生效，整块正文会原样写盘',
+      keyMasked.includes('[REDACTED KEY]') ? '' : '检查 src/memory/secrets.js 的 PRIVATE_KEY_BLOCK_RE，并跑 scripts/preflight.mjs');
+
     // 2. 索引 vs 目录：index.json 是衍生数据，条数不一致说明有人绕过了插件写 notes/。
     // 这里刻意不用 loadIndex()：索引坏掉时它会重建并落盘，而体检承诺只读。
     let notes = [];

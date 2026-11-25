@@ -12,4 +12,4 @@ export const PRIVATE_KEY_SOURCE = '-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?----
 export const PRIVATE_KEY_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----/;
 
 /** 整块删除（BEGIN 到 END）。 */
-export const PRIVATE_KEY_BLOCK_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----[sS]*?-----END [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----/g;
+export const PRIVATE_KEY_BLOCK_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----/g;

@@ -71,7 +71,9 @@ dsh plugin --profile desktop add "$PWD"
 | 踩坑记录 | 工具报错 → 后来怎么改对 | `$DSH_HOME/memory/LESSONS.jsonl` | 每轮，`order 62` | 600 字 | `lessons` |
 | 编码规范 | 全局规矩 + 项目规则文件 | `$DSH_HOME/memory/CODING.md` + 项目目录 | 每轮，`order 61` | 3500 字（设置页可调） | `coding_rules` |
 
-> 不想被记住的内容包在 `<private>…</private>` 里：`memory_write` / `memory_core` 写盘前会把这段整段摘掉，会话缓冲里也不留；整条都是私密段时直接拒写。
+> 不想被记住的内容包在 `<private>…</private>` 里：所有写入、会话缓冲、被动抽取、原文索引与回合日志都会在落盘前整段摘掉；整条都是私密段时直接拒写。
+>
+> 一处代价要知道：孤立的 `</private>`（没有对应的开标签）按「上一个分片开了口」处理，从该处一直摘到本条消息末尾——**它后面的公开内容也一起丢**。同一条消息里请成对写；未闭合状态只在同一回合内延续，回合结束就复位，不会让你下一句也消失。
 
 ### 编码规范会自动读哪些文件
 
@@ -202,7 +204,7 @@ dsh plugin --profile desktop add "$PWD"
 | `memory_delete` | 删除（写墓碑，不复活） | `id` |
 | `memory_core` | 改核心记忆分节 | `action`（append/replace/remove）、`section`、`text?` |
 | `memory_brief` | 记忆索引与体检（列目录，不返回正文） | — |
-| `memory_doctor` | 记忆体检：预算、索引对账、日志可解析、备份可打开、图谱与回收、桥接；并列出「这台机器测不到什么」 | — |
+| `memory_doctor` | 记忆体检：预算、索引对账、日志可解析、备份可打开、图谱与回收、桥接、私钥打码自检；并列出「这台机器测不到什么」 | — |
 | `memory_mode` | 本会话的记忆开关（正常读写 / 只读 / 关闭），换会话自动恢复 | `action`（get/set）、`mode?`（normal/readonly/off）、`session?` |
 | `memory_dreaming` | 闲时整理开关、手动执行与误删恢复（含 AI 垃圾清理） | `action`（status/on/off/run/retired/restore）、`apply?`、`force?`、`ids?` |
 | `persona` | 回复风格 | `action`（get/set/custom/disable）、`preset?`、`text?` |
@@ -316,6 +318,7 @@ $DSH_HOME/memory/
 
 - 私钥块、常见 token 形状：写入即拒收；
 - 凭据赋值形状：可保存但标记敏感，不进系统提示、检索时隐藏正文；
+- 私钥整块打码：`redact` 把整块替换成 `[REDACTED KEY]`，发布闸门与 `memory_doctor` 都用合成样例验一遍（这一层 0.4.17 曾因正则少一个反斜杠静默失效）；
 - 踩坑记录写入前过一遍脱敏，含 `password` / `token` / `secret` / `bearer` 等字样的行直接丢弃；
 - 发布前自检：
 
@@ -420,7 +423,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 96 项、编码层 14 项、踩坑层 16 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 23 项、备份/回合日志 5 项、记忆体检 5 项、外部转录 6 项、记忆主题 4 项、评审 brief 5 项、代码图谱 17 项，共 303 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 98 项、编码层 14 项、踩坑层 16 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 23 项、备份/回合日志 5 项、记忆体检 5 项、外部转录 6 项、记忆主题 4 项、评审 brief 5 项、代码图谱 17 项，共 305 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 
