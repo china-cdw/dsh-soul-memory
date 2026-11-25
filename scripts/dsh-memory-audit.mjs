@@ -13,7 +13,10 @@ import { readPersona } from '../src/persona.js';
 import { normalize, extract } from '../src/skeleton.js'
 import { MemoryBuffer } from '../src/memory.js';
 import { sessionModeIntent } from '../src/memory/mode-intent.js';
-import { stripPrivate } from '../src/memory/private.js';
+import { createPrivateStripper, stripPrivate } from '../src/memory/private.js';
+import { checkGuard, _resetGuardCache } from '../src/memory/guard.js';
+import { TOKEN_HEADER, WRITE_TOKEN } from '../src/memory/web-guard.js';
+import { apply } from '../index.js';
 import { expandRange, MAX_SEQ, validateExpandArgs } from '../src/session-search.js';
 import { chunkItems, parseCleanupVerdicts } from '../src/dreaming.js';
 
@@ -317,7 +320,7 @@ await t.test('persona 路由：拒绝跨源与错误 Content-Type，同源 JSON 
   res = fakeRes();
   await route.handler(fakeReq({
     method: 'POST',
-    headers: { host, origin: 'http://' + host, 'content-type': 'application/json', 'x-dsh-soul-memory': '1' },
+    headers: { host, origin: 'http://' + host, 'content-type': 'application/json', 'x-dsh-soul-memory': '1', [TOKEN_HEADER]: WRITE_TOKEN },
     body: JSON.stringify({ enabled: true, preset: 'custom', custom: '说话简短，先给结论。' }),
   }), res);
   assert.equal(res.statusCode, 200);
@@ -326,6 +329,18 @@ await t.test('persona 路由：拒绝跨源与错误 Content-Type，同源 JSON 
   assert.match(state.custom, /先给结论/);
 });
 
+await t.test('persona 写接口：不带令牌 403，带令牌才 200', async () => {
+  const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
+  const host = '127.0.0.1:2300';
+  const base = { host, origin: 'http://' + host, 'content-type': 'application/json', 'x-dsh-soul-memory': '1' };
+  const body = JSON.stringify({ enabled: true, preset: 'custom', custom: '说话简短，先给结论。' });
+  let res = fakeRes();
+  await route.handler(fakeReq({ method: 'POST', headers: base, body }), res);
+  assert.equal(res.statusCode, 403, '没有令牌不该放行');
+  res = fakeRes();
+  await route.handler(fakeReq({ method: 'POST', headers: { ...base, [TOKEN_HEADER]: WRITE_TOKEN }, body }), res);
+  assert.equal(res.statusCode, 200, '带令牌应成功：' + res.body);
+});
 await t.test('persona 路由：缺少 x-dsh-soul-memory 头时拒绝', async () => {
   const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const res = fakeRes();
@@ -379,7 +394,7 @@ await t.test('persona 路由：非 GET/POST 返回 405 并带 Allow', async () =
 await t.test('persona 路由：空 patch 返回 204 且不落盘', async () => {
   const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const res = fakeRes();
-  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-soul-memory': '1' }, body: '{}' }), res);
+  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-soul-memory': '1', [TOKEN_HEADER]: WRITE_TOKEN }, body: '{}' }), res);
   assert.equal(res.statusCode, 204);
 });
 
@@ -501,7 +516,7 @@ await t.test('persona 路由：preset 空串返回 400 且不落盘', async () =
   const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const before = readPersona();
   const res = fakeRes();
-  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-soul-memory': '1' }, body: JSON.stringify({ preset: '' }) }), res);
+  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-soul-memory': '1', [TOKEN_HEADER]: WRITE_TOKEN }, body: JSON.stringify({ preset: '' }) }), res);
   assert.equal(res.statusCode, 400);
   assert.equal(readPersona().preset, before.preset);
 });
@@ -509,13 +524,13 @@ await t.test('persona 路由：preset 空串返回 400 且不落盘', async () =
 await t.test('persona 路由：未知字段返回 400', async () => {
   const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const res = fakeRes();
-  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-soul-memory': '1' }, body: JSON.stringify({ foo: 1 }) }), res);
+  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-soul-memory': '1', [TOKEN_HEADER]: WRITE_TOKEN }, body: JSON.stringify({ foo: 1 }) }), res);
   assert.equal(res.statusCode, 400);
 });
 await t.test('persona 路由：坏 JSON 返回 400 而不是 500', async () => {
   const route = ctx1.routes.find((r) => r.path === '/dsh-soul-memory/persona');
   const res = fakeRes();
-  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-soul-memory': '1' }, body: '{not json' }), res);
+  await route.handler(fakeReq({ method: 'POST', headers: { host: '127.0.0.1:2300', origin: 'http://127.0.0.1:2300', 'content-type': 'application/json', 'x-dsh-soul-memory': '1', [TOKEN_HEADER]: WRITE_TOKEN }, body: '{not json' }), res);
   assert.equal(res.statusCode, 400);
   assert.ok(!/Error/.test(String(res.body || '')), '不应回显异常');
 });
@@ -808,8 +823,11 @@ await t.test('未闭合/嵌套的 <private> 不会把私密内容漏出去', asy
   const nested = stripPrivate('<private>外层 A<private>内层 B</private>外层 C</private>公开结尾');
   assert.equal(nested.text, '公开结尾');
   assert.doesNotMatch(nested.text, /外层|内层/);
+  // 孤立的 </private> 没有开标签可配，按「上一个分片开了口」处理：摘到文末。
+  // 宁可多摘一段，也不把用户标注过的内容留在盘上。
   const stray = stripPrivate('公开 A</private>公开 B');
-  assert.equal(stray.text, '公开 A公开 B');
+  assert.equal(stray.text, '公开 A');
+  assert.ok(stray.removed > 0);
 });
 
 await t.test('说「怎么关闭记忆？」「不要关闭记忆」不会关掉整个会话', async () => {
@@ -830,6 +848,80 @@ await t.test('正文只有 <private> 段时拒绝保存', async () => {
   assert.match(out, /\[err:E_ARG\]/);
 });
 
+await t.test('<private> 的八种写法、title 与跨分片都不落盘', async () => {
+  const forms = [
+    ['规范写法', 'A<private>SECRET-1</private>B'],
+    ['大写标签', 'A<PRIVATE>SECRET-2</PRIVATE>B'],
+    ['开标签带空格', 'A<private >SECRET-3</private >B'],
+    ['标签前空格', 'A< private>SECRET-4</ private>B'],
+    ['HTML 实体', 'A&lt;private&gt;SECRET-5&lt;/private&gt;B'],
+    ['零宽字符', 'A<priv\u200bate>SECRET-6</priv\u200bate>B'],
+    ['未闭合', 'A<private>SECRET-7'],
+    ['孤立闭合', 'A</private>SECRET-8'],
+  ];
+  for (const [name, raw] of forms) {
+    const out = stripPrivate(raw).text;
+    assert.doesNotMatch(out, /SECRET-\d/, name + ' 泄漏了：' + out);
+  }
+  const saved = await callTool(tools1, 'memory_write', {
+    title: '标题<private>SECRET-T</private>尾巴',
+    content: '正常正文。',
+    force: true,
+  });
+  const m = /\[([^\]]+)\]/.exec(saved);
+  assert.ok(m, '没拿到 id：' + saved);
+  const file = await readFile(join(notesDir, m[1] + '.md'), 'utf8');
+  assert.doesNotMatch(file, /SECRET-T/);
+  assert.match(file, /标题尾巴/);
+  const cut = createPrivateStripper();
+  assert.equal(cut('记住这个 <private>我的密码是 hunter2').text, '记住这个');
+  assert.equal(cut('另外我的邮箱是 a@b.com</private>').text, '');
+  assert.equal(createPrivateStripper()('普通文本').text, '普通文本');
+});
+
+await t.test('GUARD.json 里全是坏正则时回落默认规则并点名告警', async () => {
+  const path = join(memoryDir, 'GUARD.json');
+  const warnings = [];
+  const original = console.warn;
+  console.warn = (...args) => warnings.push(args.join(' '));
+  try {
+    const bodies = [
+      { reject: ['(?i)sk-'] },
+      { reject: ['(?i)sk-'], sensitive: ['(?:password)\\s*[:=]\\s*\\S{6,}'] },
+    ];
+    for (const body of bodies) {
+      await writeFile(path, JSON.stringify(body), 'utf8');
+      _resetGuardCache();
+      // 拆开拼接：这些只是形状像凭据的测试串，连起来会让发布闸门报 CREDENTIAL。
+      const TOKENS = [
+        'sk-' + 'abcdefghijklmnopqrstuvwx',
+        'ghp_' + 'abcdefghijklmnopqrstuvwx',
+        'AKIA' + 'ABCDEFGHIJKLMNOP',
+        'glpat-' + 'abcdefghijklmnopqrstuvwx',
+      ];
+      for (const token of TOKENS) {
+        assert.equal(checkGuard(token).kind, 'reject', token.slice(0, 8) + ' 应被拒收');
+      }
+    }
+    assert.ok(warnings.some((w) => /无法编译/.test(w)), '没点名坏正则：' + warnings.join(' | '));
+  } finally {
+    console.warn = original;
+    await rm(path, { force: true });
+    _resetGuardCache();
+  }
+});
+
+await t.test('三种私钥头写法都拒收', async () => {
+  // 同样拆开拼接：只为验证「头一出现就拒收」，不必留完整私钥头字面量。
+  const HEADS = [
+    '-----BEGIN ' + 'RSA PRIVATE KEY-----',
+    '-----BEGIN ' + 'PGP PRIVATE KEY BLOCK-----',
+    '-----BEGIN ' + 'SSH2 ENCRYPTED PRIVATE KEY-----',
+  ];
+  for (const head of HEADS) {
+    assert.equal(checkGuard(head).kind, 'reject', head + ' 没被拒收');
+  }
+});
 await t.test('memory_brief 返回索引卡而不是正文', async () => {
   const out = await callTool(tools1, 'memory_brief', {});
   assert.match(out, /记忆索引/);
@@ -1145,6 +1237,47 @@ await t.test('P1 DREAMING.json 损坏时 run 明确跳过，不用默认值覆�
   await callTool(tools1, 'memory_dreaming', { action: 'off' });
 });
 
+await t.test('S-1 整链：含 <private> 的消息在回合日志、注入与检索里都不出现', async () => {
+  const world = makeCtx();
+  world.ctx.get = (key) => key === 'workingDirectory' ? { get: () => home.dir } : undefined;
+  world.ctx.systemPrompt.context = (opts) => { world.sections.push(opts); return { dispose() {} }; };
+  world.ctx.commands = { register: () => ({ dispose() {} }) };
+  const savedDatabase = process.env.DSH_SOUL_DATABASE;
+  apply(world.ctx, { memory: { enabled: true }, enabled: false, database: ':memory:' });
+  try {
+    const pre = world.handlers.get('agent/pre-step');
+    const end = world.handlers.get('session/event');
+    assert.ok(pre && end, 'pre-step / session-event 没注册');
+    const agent = { session: { id: 's-step-private', header: { cwd: home.dir } } };
+    const msg = (text) => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] });
+    const run = async (text) => {
+      const message = msg(text);
+      await pre({ agent, messages: [message] }, async () => ({ kind: 'continue', messages: [message] }));
+      await end(agent.session, { type: 'turn/end', data: {} });
+      await new Promise((r) => setTimeout(r, 300));
+    };
+    await run('必须用 pnpm 安装依赖，先看仓库结构。');
+    await run('不对，必须用 pnpm <private>我的密码是 hunter2-secret</private>，别用 npm。');
+    await run('继续看仓库结构，务必先整理依赖，<private>邮箱 a@b.com</private>然后写文档。');
+    const turnFiles = (await readdir(join(memoryDir, 'turns'))).filter((n) => n.endsWith('.md'));
+    assert.ok(turnFiles.length > 0, '没有回合日志');
+    let turns = '';
+    for (const name of turnFiles) turns += await readFile(join(memoryDir, 'turns', name), 'utf8');
+    assert.match(turns, /必须用 pnpm/, '正常内容应该留下');
+    assert.match(turns, /继续看仓库结构/, '第三轮的原话应该留下');
+    assert.doesNotMatch(turns, /hunter2-secret|a@b\.com/, '回合日志泄漏私密段：' + turns);
+    const skeleton = world.sections.find((s) => s.name === 'dsh-soul:memory');
+    assert.ok(skeleton, '没有图谱注入节');
+    const injected = String(await skeleton.text({ agent }));
+    assert.match(injected, /纠正/, '纠正节点应该进图谱');
+    assert.doesNotMatch(injected, /hunter2-secret|<private>/, '注入泄漏：' + injected);
+    const recalled = await callTool(world.tools, 'memory_search', { query: 'hunter2-secret' });
+    assert.doesNotMatch(recalled, /hunter2-secret/, '检索泄漏：' + recalled);
+  } finally {
+    if (savedDatabase === undefined) delete process.env.DSH_SOUL_DATABASE;
+    else process.env.DSH_SOUL_DATABASE = savedDatabase;
+  }
+});
 const result = t.finish();
 await home.cleanup();
 if (result.fail === 0) console.log('核心记忆自检通过。');

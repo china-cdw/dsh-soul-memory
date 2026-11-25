@@ -5,7 +5,7 @@
 // 2. registerSoulUiRoutes 注册的三条路由——真实调 handler，喂假 req/res，
 //    覆盖安全守卫（缺请求头、跨源、方法、Content-Type）与正常读写。
 // 浏览器端 client.js 不进 Node 加载（依赖 window），只做语法解析。
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -15,6 +15,7 @@ import {
   normalizeUiSettings, validateUiPatch, readUiSettings, writeUiSettings, uiSettingsPath,
 } from '../src/ui-settings.js';
 import { registerSoulUiRoutes } from '../src/ui-routes.js';
+import { loadWriteToken } from '../src/memory/web-guard.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const home = await makeHome();
@@ -182,16 +183,20 @@ try {
     writeToken = json.token;
   });
 
-  await s.test('写接口缺令牌一律 403', async () => {
+  await s.test('八个写接口缺令牌一律 403', async () => {
     const saved = writeToken;
     writeToken = '';
     try {
-      const { res } = await hit(uiRoute, fakeReq({
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ nickname: '没令牌' }),
-      }));
-      assert.equal(res.statusCode, 403);
+      for (const name of ['/ui', '/pending', '/tier', '/rules', '/dreaming', '/backup', '/notes', '/session']) {
+        const route = routes.find((r) => r.path.endsWith(name));
+        assert.ok(route, '缺少路由：' + name);
+        const { res } = await hit(route, fakeReq({
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'list' }),
+        }));
+        assert.equal(res.statusCode, 403, name + ' 没令牌也放行了');
+      }
     } finally {
       writeToken = saved;
     }
@@ -252,6 +257,38 @@ try {
     assert.ok(json && typeof json.error === 'string');
   });
 
+  const backupRoute = routes.find((r) => r.path.endsWith('/backup'));
+
+  await s.test('M-4 backup 导入不存在文件：400 且不回显本机路径', async () => {
+    const { res } = await hit(backupRoute, fakeReq({
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'import', file: 'no-such-bundle-xyz.json', apply: true }),
+    }));
+    assert.equal(res.statusCode, 400);
+    assert.doesNotMatch(res.body, /ENOENT|no-such-bundle-xyz|[A-Za-z]:[\\/]/);
+    assert.ok(!res.body.includes(home.dir), '响应里带出了 DSH_HOME：' + res.body);
+  });
+
+  await s.test('M-5 写令牌文件只有本用户可读（POSIX）', async () => {
+    if (process.platform === 'win32') { s.skip('写令牌 0600：Windows 不看 POSIX 权限位'); return; }
+    loadWriteToken();
+    const mode = statSync(join(home.dir, 'memory', '.ui-token')).mode & 0o777;
+    assert.equal(mode, 0o600, '令牌文件权限应为 0600，实际 ' + mode.toString(8));
+  });
+
+  await s.test('守卫只在 web-guard.js 定义一次，两个路由文件都引用它', async () => {
+    const shared = readFileSync(join(root, 'src/memory/web-guard.js'), 'utf8');
+    for (const name of ['export function guard', 'export function requireToken', 'export function isLoopbackHost', 'export const WRITE_TOKEN']) {
+      assert.ok(shared.includes(name), 'web-guard.js 缺少：' + name);
+    }
+    for (const file of ['src/ui-routes.js', 'src/core-memory.js']) {
+      const code = readFileSync(join(root, file), 'utf8');
+      assert.ok(code.includes("'./memory/web-guard.js'"), file + ' 没有引用共享守卫');
+      assert.doesNotMatch(code, /function\s+(?:guard|isLoopbackHost|requireToken)\s*\(/, file + ' 又定义了一份守卫');
+      assert.doesNotMatch(code, /const WRITE_TOKEN/, file + ' 又定义了一份令牌');
+    }
+  });
   await s.test('GET 只读接口拒绝 POST', async () => {
     const { res } = await hit(stateRoute, fakeReq({ method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }));
     assert.equal(res.statusCode, 405);

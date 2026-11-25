@@ -1,5 +1,16 @@
 # 变更日志
 
+## 0.4.17
+
+- 严重修复：`<private>` 的脱敏结果此前只用于判空，回合日志与纠正记录两条落盘路径仍写原文。现在 `intent`、`state.text`、`recordCorrection`、检索线索全部改用摘掉私密段后的文本；`appendTurn` 写盘前再摘一次兜底。回归测试跑完整 step：三个回合后 `turns/*.md`、图谱纠正节点、系统提示注入与 `memory_search` 都不含私密串。
+- 严重修复：persona 写路由补上令牌校验，并把 Host/Origin/自定义头/令牌这套 HTTP 守卫抽到 `src/memory/web-guard.js`，`ui-routes.js` 与 `core-memory.js` 共用一份（不再各自实现、也不再漂移）。回归：persona 不带令牌 403、带令牌 200；其余 8 条写路由缺令牌仍 403；守卫只在共享模块定义一次。
+- `GUARD.json` 里一条坏正则不再让全部 token 规则静默失效：`hasReject` / `hasSensitive` 改按编译后的结果计算，并在「原始规则非空、一条都编不出来」时点名告警。回归覆盖坏正则与坏 reject + 正常 sensitive 两种场景，sk-/ghp_/AKIA/glpat- 四类仍被拒收。
+- `<private>` 改为按标签深度扫描：认得大小写、标签内/前空格、零宽字符、HTML 实体写法；未闭合从起点摘到文末；孤立的 `</private>` 按「上一分片开了口」摘到文末；嵌套不漏外层。`memory_write` 的 title 也过一遍脱敏，分片写入按会话保持未闭合状态。回归覆盖八种形态、title 与跨分片。
+- 备份导入失败只剩一句能行动的提示，不再把 `ENOENT` 与本机绝对路径回给页面；详情进宿主日志。
+- 写令牌 `.ui-token` 以 `0600` 落盘，已存在的过宽权限文件会被修正；Windows 不看 POSIX 权限位，这一项在 Windows 上明确跳过。
+- 私钥正则统一到 `src/memory/secrets.js`，覆盖 RSA、`PGP PRIVATE KEY BLOCK`、`SSH2 ENCRYPTED PRIVATE KEY`；guard、`src/util.js`、`src/memory/util.js` 共用同一份。删除从未被调用、语义也与新实现不一致的 `hasPrivate()`。
+- 文档随代码对齐：配置一节分开「cordis.patch.yml 里写了什么」与「代码内建默认值」（补 `codegraph`）；order 说明改为排序权重键并区分 `systemPrompt.context` 与 `systemPrompt.section` 两套 API；补上 `[err:CODE]` 的两处例外；`upstream-manifest.json` 注明 core-memory 与 persona 是按行为重写、不在 sha256 可核验范围。
+- 自检：核心层 91 → 96 项（私密八形态/title/分片、坏正则回落、三种私钥头、S-1 整链），设置页 20 → 23 项（八条写路由令牌、备份路径不回显、令牌权限、守卫单一实现），共 303 项。
 ## 0.4.16
 
 - 新增 `memory_doctor`：只读体检，把「坏了没人会发现」的地方变成可机械跑的检查——核心记忆预算（超 3000 字时尾部多少字没注入、全文在哪）、`index.json` 与 `notes/` 对账（孤儿文件与索引指向缺失文件都点名）、踩坑日志逐行可解析、最近备份能否打开、图谱能否打开与回收数量、billion-context 是否可达。输出最后固定列「这台机器测不到什么」，避免全绿被当成一切正常。
@@ -12,7 +23,7 @@
 - `memory_brief` 现在会报组件状态（快照/图谱/分级/桥接谁没读成），不再用「少一行」冒充正常。
 - 发布闸门修复：`preflight` 放行 `.codegraph/` 与 `NOTICE`，不再恒红；外部转录测试补上 `finish()`，失败会真正非零退出；`files` 补 `upstream-manifest.json`。
 - 修三处会静默伤记忆的地方：①「怎么关闭记忆？」「不要关闭记忆」不再被当成切档指令（会关掉整段会话的写入），切档前先过否定词与疑问句；②超出 `maxNodes` 时不再硬删节点，改为退休（可 restore，30 天后才清理）；③设置页保存/删除笔记改原子写并加锁，保存一半断电不会再用半截正文覆盖唯一备份。
-- `<private>` 改为按标签深度扫描：未闭合时从它到文末整段摘掉并回报 `unclosed`，嵌套时不会只摘内层就把外层漏出去。
+- `<private>` 改为按标签深度扫描：未闭合时从它到文末整段摘掉（不回传原文），嵌套时不会只摘内层就把外层漏出去。
 - 检索窗口从固定 400 跟到 `maxNodes`（老 constraint 不再永久搜不到），LIKE 回退转义 `%`/`_` 并按新到旧；span 预算不足时截断收下而不是整条丢弃。
 - 自检：核心层加 2 项（未闭合/嵌套私密段、否定与疑问句不切档）、外部转录加 1 项（超上限只退休可恢复），共 295 项。
 

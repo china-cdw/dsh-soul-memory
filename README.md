@@ -67,7 +67,7 @@ dsh plugin --profile desktop add "$PWD"
 | --- | --- | --- | --- | --- | --- |
 | 核心记忆 | 长期稳定的事实、偏好、环境 | `$DSH_HOME/memory/MEMORY.md` | 每轮，`order 60` | 3000 字 | `memory_core` |
 | 归档笔记 | 需要时才查的经历、结论 | `$DSH_HOME/memory/notes/*.md` | 只注入最近 12 条标题 | — | `memory_write` / `memory_read` / `memory_list` / `memory_search` / `memory_delete` |
-| 会话图谱 | 约束、决策、产物、历史原文 | `$DSH_HOME/dsh-soul/<profile>/evolve.sqlite` | 每轮注入一段图谱摘要（600 字节；`order 940` 指它排在系统提示第几位） | 600 字节 | `soul_recall` / `soul_expand` |
+| 会话图谱 | 约束、决策、产物、历史原文 | `$DSH_HOME/dsh-soul/<profile>/evolve.sqlite` | 每轮注入一段图谱摘要（600 字节）。`order` 是排序权重键：图谱用上游的 `systemPrompt.context`（900–960 权重段），其余三层用 `systemPrompt.section`，两套 API 的权重互不相干 | 600 字节 | `soul_recall` / `soul_expand` |
 | 踩坑记录 | 工具报错 → 后来怎么改对 | `$DSH_HOME/memory/LESSONS.jsonl` | 每轮，`order 62` | 600 字 | `lessons` |
 | 编码规范 | 全局规矩 + 项目规则文件 | `$DSH_HOME/memory/CODING.md` + 项目目录 | 每轮，`order 61` | 3500 字（设置页可调） | `coding_rules` |
 
@@ -189,7 +189,7 @@ dsh plugin --profile desktop add "$PWD"
 
 ## 工具
 
-下表是默认注册的 21 个工具；开启演化（`config.enabled: true` 并配置 provider/model）后还会注册 `evolve_status`、`evolve_diagnose`、`evolve_request`、`evolve_tree` 等 `evolve_*` 工具，总数最多 25 个。
+下表是默认注册的 21 个工具，总开关是 `config.memory.enabled`（设成 false，`memory_*` 与 `soul_*` 一起不注册）。`evolve_status`、`evolve_diagnose`、`evolve_request`、`evolve_tree` 等 `evolve_*` 是另一组，由顶层 `config.enabled` 控制；打开它会同时要求配好 provider/model，否则加载时报错。两组都开时最多 25 个。
 
 代码图谱两个工具（`code_explore` / `code_impact`）是可选的：需要额外装一次 [CodeGraph](https://github.com/colbymchenry/codegraph)（`npm i -g @colbymchenry/codegraph`），并在目标仓库跑一次 `codegraph init`。没装或没建索引时它们只回复「怎么装 / 怎么建」，不影响其余记忆功能；`config.codegraph.enabled: false` 可以整个关掉。
 
@@ -249,11 +249,13 @@ dsh plugin --profile desktop add "$PWD"
 
 工具失败时，返回文本末尾带机器可读后缀 `[err:CODE]`（例如 `[err:E_NOT_FOUND]`、`[err:E_GUARD]`）；注意宿主层仍把这类结果当作成功（`isError` 为 false），调用方要自己认出这个后缀，才能走失败分支。
 
+有两处例外：`evolve_*` 出错时返回 JSON 形式的 error 对象，不走文本后缀；`code_explore` / `code_impact` 在「没装 CodeGraph」或「还没建索引」时有意返回普通说明文字——那是使用指引，不是失败。
+
 ---
 
 ## 配置
 
-`cordis.patch.yml` 默认值：
+仓库里的 `cordis.patch.yml` 是随插件分发的示例，**里面只写了下面这些键**（没写的走代码默认值）：
 
 ```yaml
 config:
@@ -269,23 +271,23 @@ config:
   lessons:
     enabled: true
     budget: 600             # 踩坑注入预算（200–4000）
+  codegraph:
+    enabled: true           # CodeGraph 两个工具；没装包时只回复怎么装
+    maxChars: 8000          # 单个结果最多返回多少字符（1000–40000）
   bridge:
     enabled: true
     sessionsDir: ''         # 留空 = 自动找 billion-context 默认目录
     maxSessions: 4
     maxChars: 1200          # 桥接段输出上限（200–4000）
-  dreaming:
-    enabled: false          # 闲时整理：默认关；开启后只新增 digest 笔记
-    autoApply: false        # 空闲到期是否自动改库；默认 false，只能手动 run
-    idleDelaySeconds: 120   # turn 结束后等多少秒再跑（10–3600）
-    minIntervalMinutes: 180 # 两次自动整理的最小间隔（0–10080）
-    maxNotes: 3             # 单次最多写几条（1–10）
-    ai: true                # 让模型判垃圾（noise/duplicate → retire，可逆）
-    provider: ''            # 留空用全局默认模型
-    model: ''
-    maxScanNodes: 60        # 单次送模型判定的节点上限（10–300）
-    maxRetirePerRun: 20     # 单次最多 retire 多少节点（1–100）
 ```
+
+示例里**没写**的键用代码默认值（`index.js` 的 `readConfig`），这也给出各自的可调范围：
+
+- `dreaming.*`：`enabled: false`、`autoApply: false`、`idleDelaySeconds: 120`、`minIntervalMinutes: 180`、`maxNotes: 3`、`ai: true`、`provider: ''`、`model: ''`、`maxScanNodes: 60`、`maxRetirePerRun: 20`；
+- `memory.maxNodes: 500`（50–5000）、`verifyArtifacts: true`、`dynamics: true`、`turnLog: true`、`promote: false`、`maintenanceTurns: 20`（5–500）；
+- `codegraph.maxChars: 8000`（1000–40000）、`coding.budget: 3500`（400–8000）、`lessons.budget: 600`（200–4000）。
+
+所以想开 dreaming、改 `maxNodes` 或调预算，直接写进自己的 `cordis.patch.yml` 即可——它们本来就不在示例里，不是不能配。
 
 `bridge.sessionsDir` 留空时依次找：环境变量 `BILI_SESSIONS_DIR` → `%USERPROFILE%\.local\share\billion-context\sessions`（Linux/macOS 为 `~/.local/share/billion-context/sessions`）。
 
@@ -363,6 +365,8 @@ node scripts/sync-upstream.mjs --from <dsh-soul 目录>  # 同步上游新版本
 
 `package.json` 的 `dshMemory` 字段记录了上游版本与移植来源；`upstream-manifest.json` 存每个镜像文件的 sha256。
 
+`src/core-memory.js` 与 persona 相关实现是按 dsh-core-memory 1.0.1 的行为重写的，不是逐字节镜像（上游改动要人工判断怎么合），所以**不在 sha256 可核验范围内**——`sync-upstream.mjs --check` 不拿它们做对比，改过也不会报漂移。
+
 ---
 
 ## 每个位置谁是权威
@@ -375,7 +379,7 @@ node scripts/sync-upstream.mjs --from <dsh-soul 目录>  # 同步上游新版本
 
 - 系统提示里的核心记忆是衍生视图：超 3000 字会被截断，**文件才是权威**；截断说明里会写「尾部多少字没注入、全文在哪」。
 - `index.json` 只是目录缓存：唯一认的是 `notes/*.md`；只改索引，下次自动核对时会被改回去。
-- 图谱节点是摘要，不是原话：`soul_recall` 的每条结果都标 `evidence`（原文 / 图谱摘要 / 关联推断），引用原话必须用「原文」。
+- 图谱节点是摘要，不是原话：`soul_recall` 的每条结果都标 `evidence`（原文副本 / 图谱摘要 / 关联推断）。原文副本是会话日志的脱敏索引，用来定位，不保证逐字；要逐字原话用 `soul_expand` 展开。
 - 备份只是历史存档，不参与读取；`memory_backup import` 默认只预演（dry-run），写之前自动快照。
 
 还有一条分界：**身份半**（记忆、规则、风格、设置）只属于这台机器和这个人，可以带走但不可移植；**能力半**（代码、工具、判据）可复制。升级插件只动能力半，永远不用新代码去重建别人的身份文件。
@@ -416,7 +420,7 @@ npm run preflight
 npm test          # 全部自检脚本；任何一项失败即非零退出
 ```
 
-自检脚本随包发布在 `scripts/` 下：核心层 91 项、编码层 14 项、踩坑层 16 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 20 项、备份/回合日志 5 项、记忆体检 5 项、外部转录 6 项、记忆主题 4 项、评审 brief 5 项、代码图谱 17 项，共 295 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
+自检脚本随包发布在 `scripts/` 下：核心层 96 项、编码层 14 项、踩坑层 16 项、记住意图 30 项、事件重放 11 项、billion-context 桥接 14 项、修复项回归 26 项、记忆分级 16 项、规则晋升 15 项、设置页 23 项、备份/回合日志 5 项、记忆体检 5 项、外部转录 6 项、记忆主题 4 项、评审 brief 5 项、代码图谱 17 项，共 303 项断言，覆盖写入/检索/取代/守卫/快照/索引锁/并发/缓存失效/桥接的边界情况。单跑某一个：`node scripts/dsh-memory-audit.mjs`。
 
 ---
 

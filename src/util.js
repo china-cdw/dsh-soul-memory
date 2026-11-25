@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { PRIVATE_KEY_BLOCK_RE } from './memory/secrets.js'
 
 export const hash = value => createHash('sha256').update(String(value)).digest('hex')
 export const id = () => randomUUID()
@@ -19,7 +20,7 @@ export const bytes = text => Buffer.byteLength(String(text ?? ''))
  */
 export function redact(text) {
   return String(text ?? '')
-    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, '[REDACTED KEY]')
+    .replace(PRIVATE_KEY_BLOCK_RE, '[REDACTED KEY]')
     .replace(/\b(?:sk-|gh[pousr]_|xox[baprs]-|AKIA)[A-Za-z0-9_\-]{12,}/g, '[REDACTED TOKEN]')
     .replace(/((?:api[_-]?key|access[_-]?token|password|passwd|secret|sessdata|authorization|cookie)\s*[=:]\s*)([^\r\n]+)/gi, '$1[REDACTED]')
     .replace(/(\bBearer\s+)[A-Za-z0-9._~+\/-]+=*/gi, '$1[REDACTED]')

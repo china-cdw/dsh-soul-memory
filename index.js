@@ -562,20 +562,6 @@ export function apply(ctx, input = {}) {
 
 // 会话级记忆开关：规则在 src/memory/mode-intent.js（否定/疑问句有否决，避免一句话关掉整段会话）。
 
-    // <private>…</private>：这一轮原话照常给模型看（回答要用），但存进会话缓冲的副本要摘掉。
-    const privateMessage = (message) => {
-      const blocks = message && message.content
-      if (!Array.isArray(blocks)) return message
-      let touched = false
-      const content = blocks.map((block) => {
-        if (!block || block.type !== 'text' || typeof block.text !== 'string') return block
-        const clean = stripPrivate(block.text)
-        if (!clean.removed) return block
-        touched = true
-        return { ...block, text: clean.text }
-      })
-      return touched ? { ...message, content } : message
-    }
 
     // ---- observation ------------------------------------------------------
     listen('agent/pre-step', async (payload, next) => {
@@ -609,14 +595,18 @@ export function apply(ctx, input = {}) {
           }
           // Buffer the raw message: one normalizer decides what a block is, and it is the
           // same one that the offline bench exercises.
-          if (config.memory.enabled && !memoryPaused && sessionWritable) memory.push(sid, { type: 'user/message', data: { message: privateMessage(message) } })
+          // 原话照常给模型看（回答要用）；缓冲入口的 stripPrivateDeep 会摘掉 <private> 段，
+          // 并按会话保存「跨分片未闭合」状态——泄漏面收在一处，不靠调用方各自记得脱敏。
+          if (config.memory.enabled && !memoryPaused && sessionWritable) {
+            memory.push(sid, { type: 'user/message', data: { message } })
+          }
           if (config.memory.enabled) {
             // Rule-based sufficiency router: no model call, just "does this question touch
             // anything the card already says?". Below the threshold the model is about to
             // answer from a card that cannot contain the answer.
             const { scope } = describe(payload.agent)
             const card = projectionText(store, scope, config.memory.projectionBytes, { sessionId: String(payload.agent.session.id), dynamics: config.memory.dynamics, promote: config.memory.promote })
-            const wanted = new Set(termSet(text))
+            const wanted = new Set(termSet(cleanText))
             const have = new Set(termSet(card))
             let shared = 0
             for (const term of wanted) if (have.has(term)) shared++
@@ -625,7 +615,7 @@ export function apply(ctx, input = {}) {
             lookups.delete(sid)
           }
           const correction = !!previous?.intent && isCorrection(text)
-          const intent = correction ? previous.intent : text
+          const intent = correction ? previous.intent : cleanText
           lastTurn.set(sid, { intent: bounded(intent, 2000) })
           if (!recorder.get(sid)) {
             const state = recorder.start(sid, { scope: describe(payload.agent).scope, turn: Date.now(), intent })
@@ -634,12 +624,12 @@ export function apply(ctx, input = {}) {
           if (correction) {
             recorder.markCorrection(sid)
             const state = recorder.get(sid)
-            state.text = bounded(`${intent}\n用户纠正：${text}`, 2000)
+            state.text = bounded(`${intent}\n用户纠正：${cleanText}`, 2000)
             // The correction refers to the preceding task, even when its wording differs.
             evolve?.observe({ scope: state.scope, taskKey: state.taskKey, taskTerms: state.terms, corrections: 1, toolErrors: 0, complete: true })
             // And it is a memory, not only an evolution signal: the one thing the user stopped
             // to correct is the one thing that must survive the next compaction.
-            if (config.memory.enabled) safe(() => recordCorrection(store, state.scope, { text, intent, seq: 0 }))()
+            if (config.memory.enabled) safe(() => recordCorrection(store, state.scope, { text: cleanText, intent, seq: 0 }))()
           }
         }
       })()

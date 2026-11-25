@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { copyFile, cp, mkdir, readdir, rename, rm, stat, writeFile, open, utimes, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { PRIVATE_KEY_BLOCK_RE } from './secrets.js';
 
 /**
  * 凭据形状：只认 key:value / key=value（值 ≥6 字符），裸词不算。
@@ -19,7 +20,7 @@ import { dirname, join } from 'node:path';
  */
 const SECRET_VALUE = /((?:password|passwd|secret|token|api[-_ ]?key|access[-_ ]?key|access[-_ ]?token|client[-_ ]?secret|private[-_ ]?key|bearer|authorization)\s*[:=]\s*)("[^"\n]{5,}"|'[^'\n]{5,}'|`[^`\n]{5,}`|[^\s'",;)]{6,})/gi;
 /** 与键值对无关、但一眼就是凭据的字面量：私钥块、JWT、云厂商 AccessKey ID。 */
-const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
+const PRIVATE_KEY_BLOCK = PRIVATE_KEY_BLOCK_RE;
 const JWT_VALUE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
 const CLOUD_KEY_ID = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g;
 const BEARER_VALUE = /(\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi;

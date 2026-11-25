@@ -3,7 +3,7 @@
     "name": "dsh-soul",
     "version": "2.0.1"
   },
-  "note": "由 scripts/sync-upstream.mjs --init 生成：记录镜像文件的 sha256，用于检测本地误改与上游漂移。",
+  "note": "由 scripts/sync-upstream.mjs --init 生成：记录镜像文件的 sha256，用于检测本地误改与上游漂移。src/core-memory.js 与 persona 相关实现按 dsh-core-memory 1.0.1 的行为重写、非逐字节镜像，不在可核验范围内。",
   "files": {
     "CHANGELOG.md": "a001c39a06a01a2fbf77ec3f8eb10456afc1ebb8e560266c65cc7ce942dfaca6",
     "compaction.js": "d5966546ece275dfdf2201985416c2d9687c0572df39b395a7bd0137d47303d0",

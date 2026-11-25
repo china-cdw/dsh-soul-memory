@@ -19,6 +19,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWrite, createQueue, latestSnapshot, memoryPath, safeJson, sliceSafe, snapshotMemory, withFileLock } from './memory/util.js';
 import { checkGuard, isSensitive } from './memory/guard.js';
 import { stripPrivate } from './memory/private.js';
+import { guard, requireToken } from './memory/web-guard.js';
 import { exportBundle, importBundle, listBackups, readBundle } from './backup.js';
 import { readTurns } from './turnlog.js';
 import { BAND_LABELS, scoreText } from './weighting.js';
@@ -756,7 +757,12 @@ async function writeNote(args, exec = null) {
   if (readUiSettings().memoryPaused) {
     return failMessage('E_PAUSED', '记忆写入已暂停（设置 → 灵魂记忆 可关闭），本条没有保存。');
   }
-  const title = typeof args.title === 'string' ? args.title.replace(/\s+/g, ' ').trim() : '';
+  // 标题也会写进 notes 的 front matter，并出现在检索结果里：<private> 段同样不能带进去。
+  const privateTitle = stripPrivate(typeof args.title === 'string' ? args.title : '');
+  const title = privateTitle.text.replace(/\s+/g, ' ').trim();
+  if (privateTitle.removed > 0 && !title) {
+    return failMessage('E_ARG', '保存失败：标题里只有 <private> 段，去掉后没有可保存的标题。');
+  }
   let content = typeof args.content === 'string' ? args.content : '';
   if (!title || !content.trim()) return failMessage('E_ARG', '保存失败：title 和 content 均不能为空。');
   // <private>…</private> 是「这段别存」的明确标记：连标签一起摘掉，不靠打码去猜。
@@ -1896,41 +1902,12 @@ export function registerCoreMemory(ctx, { graphSearch = null, graphStats = null,
           } catch { /* 响应已发出时忽略 */ }
         };
         try {
-          // Host 必须是本机回环：只比 Origin 与 Host 挡不住 DNS rebinding——
-          // 恶意域名解析到 127.0.0.1 后，Origin 与 Host 都是它自己的名字，仍然“同源”。
-          const host = String(req.headers.host || '').toLowerCase();
-          if (host) {
-            const hostName = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.replace(/:\d+$/, '');
-            if (!['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostName)) {
-              sendJson(403, { error: '仅允许本机页面访问' });
-              return;
-            }
-          }
-          // 方法先判：浏览器预检必带跨源 Origin，若先查 Origin，405 + Allow 永远不可达。
-          if (req.method !== 'GET' && req.method !== 'POST') {
-            res.setHeader('Allow', 'GET, POST');
-            sendJson(405, { error: '仅支持 GET / POST' });
-            return;
-          }
-          // 只接受同源页面调用：带 Origin 时必须与 Host 一致（跨站请求一律拒绝）。
-          const origin = req.headers.origin;
-          if (origin) {
-            let sameOrigin = false;
-            try { sameOrigin = new URL(origin).host === req.headers.host; } catch { sameOrigin = false; }
-            if (!sameOrigin) { sendJson(403, { error: '跨源请求被拒绝' }); return; }
-          }
-          // 同源页面必须带自定义请求头：跨站表单/链接无法伪造，且会触发 CORS 预检，挡住跨源读取。
-          if (String(req.headers['x-dsh-soul-memory'] || '') !== '1') {
-            sendJson(403, { error: '缺少 x-dsh-soul-memory: 1 请求头' });
-            return;
-          }
+          // 与设置页共用同一份守卫（src/memory/web-guard.js）：方法 → 回环 Host → 同源 Origin →
+          // 自定义头 →（POST）JSON。以前这里是自己抄的一份，抄漏了写令牌，就成了唯一缺口。
+          if (!guard(req, res, req.method === 'POST')) return;
+          // 写操作要令牌：PERSONA.md 会注入每一个会话，不能只靠「本机」当前提。
+          if (req.method === 'POST' && !requireToken(req, res)) return;
           if (req.method === 'POST') {
-            // 浏览器跨站表单只能发 urlencoded/plain，要求 JSON 也就挡住了 CSRF 表单。
-            const ctype = String(req.headers['content-type'] || '').toLowerCase();
-            if (!ctype.startsWith('application/json')) {
-              sendJson(415, { error: 'Content-Type 必须是 application/json' });
-              return;
-            }
             const bodyRes = await readBody(req);
             if (bodyRes.tooLarge) { sendJson(413, { error: '请求体过大（上限 16KB）' }); return; }
             const patch = safeJson(bodyRes.body || '{}', null);

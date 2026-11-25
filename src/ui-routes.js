@@ -25,108 +25,12 @@ import { readDreamingState, writeDreamingState, withDreamingRunLock } from './dr
 import { readTurns } from './turnlog.js';
 import { BAND_LABELS, scoreText } from './weighting.js';
 import { TOPIC_LABELS, TOPICS, normalizeTopic, topicOf } from './topics.js';
+import { GUARD_HEADER, TOKEN_HEADER, WRITE_TOKEN, guard, isLoopbackHost, requireToken, sendJson } from './memory/web-guard.js';
 
 const PREFIX = '/dsh-soul-memory/';
 const BODY_LIMIT = 64 * 1024; // 待批批量操作与规则预览；与 persona 的 16KB 不同是有意的（批量批准）。
 const MAX_PENDING_IDS = 40; // 待批上限 20，留一倍余量，防止构造超长 ids。
-const GUARD_HEADER = 'x-dsh-soul-memory';
-const TOKEN_HEADER = 'x-dsh-soul-memory-token';
-/**
- * 写操作令牌：写接口要求带上它。
- * GET /state 会返回它，所以它挡不住「先读再写」的本机脚本，只挡不知道要两步的顺手调用；
- * 真正的边界仍是回环 Host + 同源 Origin + 自定义头这三道。
- *
- * It is persisted rather than generated per module load: a hot reload used to mint a new
- * token while the open page still held the old one, and every write the user then made was
- * rejected with 403 until a manual refresh. Reading it back from the memory dir keeps the
- * page working across reloads; the file is inside the user's own home, not world-readable.
- */
-function loadWriteToken() {
-  const file = join(memoryPath(), '.ui-token');
-  try {
-    const existing = readFileSync(file, 'utf8').trim();
-    if (/^[0-9a-f]{32}$/.test(existing)) return existing;
-  } catch { /* first run: mint one below */ }
-  const token = randomBytes(16).toString('hex');
-  try {
-    mkdirSync(memoryPath(), { recursive: true });
-    writeFileSync(file, token, 'utf8');
-  } catch { /* read-only home: the in-memory token still works for this process */ }
-  return token;
-}
-const WRITE_TOKEN = loadWriteToken();
 
-function sendJson(res, code, payload) {
-  try {
-    const body = JSON.stringify(payload);
-    res.statusCode = code;
-    res.setHeader('content-type', 'application/json; charset=utf-8');
-    // 记忆与设置都是个人数据，禁止任何缓存。
-    res.setHeader('cache-control', 'no-store');
-    res.end(body);
-  } catch {
-    /* 响应已发出时忽略 */
-  }
-}
-
-/** 只允许本机回环 Host：DNS rebinding 下 Origin 与 Host 都是攻击者域名，必须单独挡。 */
-function isLoopbackHost(req) {
-  const host = String(req.headers.host || '').toLowerCase();
-  if (!host) return true;
-  const name = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.replace(/:\d+$/, '');
-  return ['localhost', '127.0.0.1', '[::1]', '::1'].includes(name);
-}
-
-/**
- * 统一入口守卫。通过返回 true；否则已写响应并返回 false。
- * @param {boolean} needsJson POST 时要求 application/json。
- */
-function guard(req, res, needsJson) {
-  if (!isLoopbackHost(req)) {
-    sendJson(res, 403, { error: '仅允许本机页面访问' });
-    return false;
-  }
-  if (req.method !== 'GET' && req.method !== 'POST') {
-    res.setHeader('Allow', 'GET, POST');
-    sendJson(res, 405, { error: '仅支持 GET / POST' });
-    return false;
-  }
-  const origin = req.headers.origin;
-  if (origin) {
-    let sameOrigin = false;
-    try {
-      sameOrigin = new URL(origin).host === req.headers.host;
-    } catch {
-      sameOrigin = false;
-    }
-    if (!sameOrigin) {
-      sendJson(res, 403, { error: '跨源请求被拒绝' });
-      return false;
-    }
-  }
-  // 跨站表单/链接无法带自定义头，且会触发 CORS 预检。
-  if (String(req.headers[GUARD_HEADER] || '') !== '1') {
-    sendJson(res, 403, { error: '缺少 ' + GUARD_HEADER + ': 1 请求头' });
-    return false;
-  }
-  if (needsJson) {
-    const ctype = String(req.headers['content-type'] || '').toLowerCase();
-    if (!ctype.startsWith('application/json')) {
-      sendJson(res, 415, { error: 'Content-Type 必须是 application/json' });
-      return false;
-    }
-  }
-  return true;
-}
-
-/** 写接口额外要求令牌；失败时已写响应并返回 false。 */
-function requireToken(req, res) {
-  if (String(req.headers[TOKEN_HEADER] || '') !== WRITE_TOKEN) {
-    sendJson(res, 403, { error: '缺少或错误的写操作令牌，先刷新一次页面' });
-    return false;
-  }
-  return true;
-}
 
 /** 读 JSON 请求体；超限返回 tooLarge，坏 JSON 返回 null。 */
 function readJsonBody(req) {
@@ -714,7 +618,14 @@ export function registerSoulUiRoutes(ctx, deps = {}) {
           try {
             bundle = await readBundle(file.trim());
           } catch (error) {
-            return sendJson(res, 400, { error: String(error && error.message ? error.message : error) });
+            // 读/解析备份失败的原始 message 里带用户目录的绝对路径（磁盘符 + 用户名），
+            // 而浏览器端的错误可能被截图贴出来。细节只进宿主日志，回给页面一句能行动的提示。
+            console.error('dsh-soul-memory: 读取备份失败', error);
+            const code = error && error.code;
+            const reason = code === 'ENOENT'
+              ? '没有这个备份文件（用 action=list 看有哪些）'
+              : '这个文件读不成备份（不是本插件导出的 JSON，或已损坏）';
+            return sendJson(res, 400, { error: reason });
           }
           const result = await importBundle(bundle, { apply: apply === true });
           return sendJson(res, 200, { ok: true, action, apply: apply === true, result });

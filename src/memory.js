@@ -4,7 +4,7 @@ import { bounded, hash, terms as termSet } from './util.js'
 import { extract, identifierTerms, normalize, project } from './skeleton.js'
 import { memoryView, propagate, render } from './graph-memory.js'
 import { promoteUncovered } from './consolidation.js'
-import { stripPrivateDeep } from './memory/private.js'
+import { createPrivateStripper, stripPrivateDeep } from './memory/private.js'
 
 /**
  * Session-side memory: buffer raw surface events, then compile them into nodes at turn end.
@@ -18,13 +18,19 @@ export class MemoryBuffer {
   constructor({ maxEvents = 800 } = {}) {
     this.maxEvents = maxEvents
     this.sessions = new Map()
+    // 每个会话一个「私密段还没闭合」的状态：一条消息被拆成两次 push 时，
+    // 后半段要接着按私密处理，否则第二段会整段落盘。
+    this.strippers = new Map()
   }
 
   push(sessionId, event) {
     if (!sessionId || !event) return
     const entry = this.sessions.get(sessionId) ?? { seq: 0, events: [] }
     // <private> 的承诺是「连缓冲都不留」：在唯一的入口摘掉，后面的 capture/promote 就都不可能再拿到它。
-    const clean = stripPrivateDeep(event)
+    // 用有状态的摘除器，分片写入的后半段同样留不下私密正文。
+    let stripper = this.strippers.get(sessionId)
+    if (!stripper) { stripper = createPrivateStripper(); this.strippers.set(sessionId, stripper) }
+    const clean = stripPrivateDeep(event, stripper)
     entry.events.push({ ...clean, seq: entry.seq++ })
     if (entry.events.length > this.maxEvents) entry.events.splice(0, entry.events.length - this.maxEvents)
     this.sessions.set(sessionId, entry)
@@ -38,7 +44,7 @@ export class MemoryBuffer {
   }
 
   peek(sessionId) { return this.sessions.get(sessionId)?.events ?? [] }
-  clear(sessionId) { this.sessions.delete(sessionId) }
+  clear(sessionId) { this.sessions.delete(sessionId); this.strippers.delete(sessionId) }
   get size() { return this.sessions.size }
 }
 

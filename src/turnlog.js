@@ -9,6 +9,7 @@
 import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { memoryPath } from './memory/util.js'
+import { stripPrivate } from './memory/private.js'
 
 const MAX_LINE = 400
 
@@ -32,6 +33,11 @@ function clip(text, limit = 90) {
  */
 export async function appendTurn({ ask = '', action = '', nodes = 0, kinds = [], files = [], now = Date.now() } = {}) {
   if (!nodes || nodes <= 0) return null
+  // 第二道防线：写盘前再摘一次 <private>。上游（index.js）已经传脱敏后的 ask，
+  // 但回合日志是数据外流面（设置页会读），不能只依赖调用方记得脱敏。
+  ask = stripPrivate(String(ask ?? '')).text
+  action = stripPrivate(String(action ?? '')).text
+  files = (Array.isArray(files) ? files : []).map(file => stripPrivate(String(file ?? '')).text)
   const { key, time } = dayOf(now)
   const parts = [`- ${time}`]
   if (ask) parts.push(`「${clip(ask)}」`)
